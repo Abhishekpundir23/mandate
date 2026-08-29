@@ -1,0 +1,54 @@
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/roboto-condensed/700.css';
+@import './tokens.css';
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-operational);
+}
+
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #1648e6;
+  outline-offset: 2px;
+}
+
+.app-shell {
+  display: grid;
+  min-height: 100vh;
+  grid-template-rows: auto 1fr auto;
+}
+
+.app-header,
+.app-footer {
+  padding: 16px 24px;
+}
+
+.app-header {
+  border-bottom: 1px solid var(--rule);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-family: var(--font-wordmark);
+  font-size: 2rem;
+  letter-spacing: 0.04em;
+}
+
+.app-footer {
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+}
+
+.app-footer p {
+  margin: 0;
+}

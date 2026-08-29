@@ -1,0 +1,8 @@
+:root {
+  --canvas: #fffefd;
+  --ink: #101010;
+  --muted: #6b6b6b;
+  --rule: #cfcfcf;
+  --font-operational: 'IBM Plex Mono', SFMono-Regular, Consolas, monospace;
+  --font-wordmark: 'Roboto Condensed', 'Arial Narrow', sans-serif;
+}
