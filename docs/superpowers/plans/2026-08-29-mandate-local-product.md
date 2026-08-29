@@ -254,7 +254,7 @@ git commit -m "feat: version user authority as immutable diffs"
 
 **Interfaces:**
 - Consumes: active clauses, normalized `ActionProposal`, contract version, checksum.
-- Produces: `fingerprintAction(proposal): string`, `evaluateAction(version, proposal, confirmation?): GateDecision`, `issueConfirmation(version, proposal): ConfirmationToken`, `consumeConfirmation(token, version, proposal): ConfirmationResult`.
+- Produces: `fingerprintAction(proposal): string`, `evaluateAction(version, proposal, confirmation?): GateDecision`, `issueConfirmation(version, proposal): ConfirmationToken`, `consumeConfirmation(store, token, version, proposal): { readonly ok: boolean; readonly store: ConfirmationStore }`.
 
 - [ ] **Step 1: Write the gate precedence tests**
 
@@ -292,20 +292,21 @@ Normalize tool, operation, resource, effect, and recursively sorted args before 
 ```ts
 it('invalidates confirmation after the contract changes', () => {
   const token = issueConfirmation(v2, deleteBranchProposal);
-  expect(consumeConfirmation(token, v3, deleteBranchProposal).ok).toBe(false);
+  expect(consumeConfirmation(emptyConfirmationStore, token, v3, deleteBranchProposal).ok).toBe(false);
 });
 
 it('rejects replay and argument mutation', () => {
   const token = issueConfirmation(v2, sendToBob);
-  expect(consumeConfirmation(token, v2, sendToAlice).ok).toBe(false);
-  expect(consumeConfirmation(token, v2, sendToBob).ok).toBe(true);
-  expect(consumeConfirmation(token, v2, sendToBob).ok).toBe(false);
+  expect(consumeConfirmation(emptyConfirmationStore, token, v2, sendToAlice).ok).toBe(false);
+  const first = consumeConfirmation(emptyConfirmationStore, token, v2, sendToBob);
+  expect(first.ok).toBe(true);
+  expect(consumeConfirmation(first.store, token, v2, sendToBob).ok).toBe(false);
 });
 ```
 
 - [ ] **Step 5: Implement single-use confirmation tokens**
 
-Tokens contain only `id`, `contractVersion`, `actionFingerprint`, `issuedAtLogicalStep`, and `used`. `evaluateAction` still checks denial clauses before accepting a confirmation.
+Tokens contain only immutable `id`, `contractVersion`, `actionFingerprint`, and `issuedAtLogicalStep` values. `ConfirmationStore` returns a new consumed-id set after a successful use; neither token nor prior store is mutated. `evaluateAction` still checks denial clauses before accepting a confirmation.
 
 - [ ] **Step 6: Verify and commit**
 
