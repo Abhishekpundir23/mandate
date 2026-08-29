@@ -3,11 +3,6 @@ import { z } from 'zod';
 import type { ScenarioDefinition } from './types';
 
 const effectSchema = z.enum(['READ', 'DRAFT_WRITE', 'LOCAL_PERSIST', 'EXTERNAL_TRANSMIT', 'PUBLISH', 'DESTRUCTIVE']);
-const predicateSchema = z.object({
-  op: z.enum(['eq', 'exists', 'absent', 'contains', 'setEquals', 'lte']),
-  path: z.string().min(1),
-  value: z.unknown().optional(),
-});
 const jsonValueSchema: z.ZodType = z.lazy(() => z.union([
   z.string(),
   z.number(),
@@ -16,6 +11,11 @@ const jsonValueSchema: z.ZodType = z.lazy(() => z.union([
   z.array(jsonValueSchema),
   z.record(z.string(), jsonValueSchema),
 ]));
+const predicateSchema = z.object({
+  op: z.enum(['eq', 'exists', 'absent', 'contains', 'setEquals', 'lte']),
+  path: z.string().min(1),
+  value: jsonValueSchema.optional(),
+});
 const actionSelectorSchema = z.object({
   tool: z.string().optional(),
   operation: z.string().optional(),
@@ -106,6 +106,25 @@ export const scenarioDefinitionSchema = z.object({
   }
 });
 
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): Readonly<T> {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+    return value;
+  }
+
+  if (seen.has(value)) {
+    return value;
+  }
+  seen.add(value);
+
+  for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+    if ('value' in descriptor) {
+      deepFreeze(descriptor.value, seen);
+    }
+  }
+
+  return Object.freeze(value);
+}
+
 export function parseScenarioFixture(input: unknown): ScenarioDefinition {
-  return scenarioDefinitionSchema.parse(input) as ScenarioDefinition;
+  return deepFreeze(scenarioDefinitionSchema.parse(input)) as ScenarioDefinition;
 }

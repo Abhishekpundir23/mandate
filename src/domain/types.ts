@@ -11,78 +11,78 @@ export type ClauseKind = 'MUST' | 'MUST_NOT' | 'MAY' | 'REVOKED' | 'NEEDS_CONFIR
 export type Effect = 'READ' | 'DRAFT_WRITE' | 'LOCAL_PERSIST' | 'EXTERNAL_TRANSMIT' | 'PUBLISH' | 'DESTRUCTIVE';
 
 export interface ActionSelector {
-  tool?: string;
-  operation?: string;
-  resource?: string;
-  effect?: Effect;
+  readonly tool?: string;
+  readonly operation?: string;
+  readonly resource?: string;
+  readonly effect?: Effect;
 }
 
 export interface SourceRef {
-  turnId: string;
-  quote: string;
+  readonly turnId: string;
+  readonly quote: string;
 }
 
 export interface Clause {
-  id: string;
-  kind: ClauseKind;
-  statement: string;
-  selector?: ActionSelector;
-  introducedIn: number;
-  source: SourceRef;
-  targetClauseIds?: readonly string[];
-  revokedSelector?: ActionSelector;
-  afterConfirmation?: 'MAY' | 'MUST';
-  evidenceRequirement?: {
-    forClauseId: string;
-    fact: string;
-    equals: string | number | boolean;
+  readonly id: string;
+  readonly kind: ClauseKind;
+  readonly statement: string;
+  readonly selector?: ActionSelector;
+  readonly introducedIn: number;
+  readonly source: SourceRef;
+  readonly targetClauseIds?: readonly string[];
+  readonly revokedSelector?: ActionSelector;
+  readonly afterConfirmation?: 'MAY' | 'MUST';
+  readonly evidenceRequirement?: {
+    readonly forClauseId: string;
+    readonly fact: string;
+    readonly equals: string | number | boolean;
   };
 }
 
 export type IntentDiffOp =
-  | { op: 'ADD'; clause: Omit<Clause, 'introducedIn'> }
-  | { op: 'REVOKE'; tombstone: Omit<Clause, 'introducedIn'> }
-  | { op: 'REPLACE'; targetClauseIds: readonly string[]; replacement: Omit<Clause, 'introducedIn'> }
-  | { op: 'NO_CHANGE'; reason: 'DISCUSSION' | 'IRRELEVANT' | 'AMBIGUOUS' };
+  | { readonly op: 'ADD'; readonly clause: Omit<Clause, 'introducedIn'> }
+  | { readonly op: 'REVOKE'; readonly tombstone: Omit<Clause, 'introducedIn'> }
+  | { readonly op: 'REPLACE'; readonly targetClauseIds: readonly string[]; readonly replacement: Omit<Clause, 'introducedIn'> }
+  | { readonly op: 'NO_CHANGE'; readonly reason: 'DISCUSSION' | 'IRRELEVANT' | 'AMBIGUOUS' };
 
 export interface IntentDiff {
-  baseVersion: number;
-  turnId: string;
-  ops: readonly IntentDiffOp[];
+  readonly baseVersion: number;
+  readonly turnId: string;
+  readonly ops: readonly IntentDiffOp[];
 }
 
 export interface ContractVersion {
-  version: number;
-  parentVersion: number | null;
-  turnId: string;
-  clauses: readonly Clause[];
-  hash: string;
+  readonly version: number;
+  readonly parentVersion: number | null;
+  readonly turnId: string;
+  readonly clauses: readonly Clause[];
+  readonly hash: string;
 }
 
 export interface ActionProposal {
-  id: string;
-  stepId: string;
-  tool: string;
-  operation: string;
-  args: Readonly<Record<string, unknown>>;
-  effect: Effect;
-  resource: string;
-  fingerprint: string;
+  readonly id: string;
+  readonly stepId: string;
+  readonly tool: string;
+  readonly operation: string;
+  readonly args: Readonly<Record<string, unknown>>;
+  readonly effect: Effect;
+  readonly resource: string;
+  readonly fingerprint: string;
 }
 
 export interface GateDecision {
-  outcome: 'ALLOW' | 'BLOCK' | 'CONFIRM';
-  contractVersion: number;
-  actionFingerprint: string;
-  matchedClauseIds: readonly string[];
-  reasons: readonly string[];
+  readonly outcome: 'ALLOW' | 'BLOCK' | 'CONFIRM';
+  readonly contractVersion: number;
+  readonly actionFingerprint: string;
+  readonly matchedClauseIds: readonly string[];
+  readonly reasons: readonly string[];
 }
 
 export interface ToolObservation {
-  actionId: string;
-  status: 'SUCCEEDED' | 'FAILED' | 'REJECTED';
-  facts: Readonly<Record<string, string | number | boolean>>;
-  evidenceId: string;
+  readonly actionId: string;
+  readonly status: 'SUCCEEDED' | 'FAILED' | 'REJECTED';
+  readonly facts: Readonly<Record<string, string | number | boolean>>;
+  readonly evidenceId: string;
 }
 
 export interface RunEvent {
@@ -95,12 +95,12 @@ export interface RunEvent {
 }
 
 export interface CompletionReceipt {
-  runner: 'standard' | 'mandate';
-  contractVersion: number | null;
-  claims: readonly { statement: string; evidenceIds: readonly string[]; verified: boolean }[];
-  blockedActions: readonly GateDecision[];
-  unmetClauseIds: readonly string[];
-  exactMandateSuccess: boolean;
+  readonly runner: 'standard' | 'mandate';
+  readonly contractVersion: number | null;
+  readonly claims: readonly { readonly statement: string; readonly evidenceIds: readonly string[]; readonly verified: boolean }[];
+  readonly blockedActions: readonly GateDecision[];
+  readonly unmetClauseIds: readonly string[];
+  readonly exactMandateSuccess: boolean;
 }
 
 export type Proposal =
@@ -123,11 +123,11 @@ export interface ScenarioDefinition {
   readonly seed: number;
   readonly initialWorld: Readonly<Record<string, JsonValue>>;
   readonly turns: readonly ScenarioTurn[];
-  readonly proposalProgram: {
+  readonly proposalProgram: Readonly<{
     readonly main: readonly Proposal[];
     readonly onRejected?: Readonly<Record<string, readonly Proposal[]>>;
-  };
-  readonly oracle: {
+  }>;
+  readonly oracle: Readonly<{
     readonly must: readonly Predicate[];
     readonly evidence: readonly Predicate[];
     readonly standardTerminalWorld: Readonly<Record<string, JsonValue>>;
@@ -135,7 +135,7 @@ export interface ScenarioDefinition {
     readonly expectedStandardPass: boolean;
     readonly expectedMandatePass: true;
     readonly failureCategory: string;
-  };
+  }>;
 }
 
 export interface RunTrace {

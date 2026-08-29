@@ -56,7 +56,11 @@ const validScenario = {
 describe('scenario fixture validation', () => {
   it('rejects duplicate turn and proposal ids', () => {
     const duplicateTurn = structuredClone(validScenario);
-    duplicateTurn.turns.push(structuredClone(duplicateTurn.turns[0]));
+    const firstTurn = duplicateTurn.turns.at(0);
+    if (firstTurn === undefined) {
+      throw new Error('The valid scenario must contain its first turn.');
+    }
+    duplicateTurn.turns.push(structuredClone(firstTurn));
     const duplicateProposal = structuredClone(validScenario);
     duplicateProposal.proposalProgram.main.push({
       kind: 'FINISH',
@@ -86,5 +90,31 @@ describe('scenario fixture validation', () => {
     expect(() => parseScenarioFixture(noAssertions)).toThrow();
     expect(() => parseScenarioFixture(unknownEffect)).toThrow();
     expect(() => parseScenarioFixture(noTerminalPredicates)).toThrow(/terminal predicate/i);
+  });
+
+  it('rejects a non-JSON predicate value before it enters the immutable domain', () => {
+    const scenarioWithFunctionPredicate = {
+      ...validScenario,
+      oracle: {
+        ...validScenario.oracle,
+        must: [{ op: 'eq', path: 'draftSaved', value: () => true }],
+      },
+    };
+
+    expect(() => parseScenarioFixture(scenarioWithFunctionPredicate)).toThrow();
+  });
+
+  it('returns a recursively frozen fixture that cannot be changed after validation', () => {
+    const parsed = parseScenarioFixture(validScenario);
+
+    expect(Object.isFrozen(parsed)).toBe(true);
+    expect(Object.isFrozen(parsed.oracle)).toBe(true);
+    expect(Object.isFrozen(parsed.oracle.must)).toBe(true);
+    expect(() => {
+      (parsed.oracle.must as unknown as { push: (value: unknown) => number }).push({
+        op: 'absent',
+        path: 'submittedAt',
+      });
+    }).toThrow(TypeError);
   });
 });

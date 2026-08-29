@@ -13,7 +13,7 @@ function sortJsonValue(value: JsonValue): JsonValue {
     return Object.fromEntries(
       Object.keys(value)
         .sort()
-        .map((key) => [key, sortJsonValue(value[key])]),
+        .map((key) => [key, sortJsonValue(value[key]!)]),
     );
   }
 
