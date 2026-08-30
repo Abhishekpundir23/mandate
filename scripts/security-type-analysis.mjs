@@ -137,6 +137,11 @@ function emptyOrigin() {
     definedDataKeys: new Set(),
     accessorKeys: new Set(),
     nonWritableKeys: new Set(),
+    // May-domain: if a key appears here, at least one reachable descriptor
+    // state is non-enumerable (or has unresolved enumerability). Object
+    // spread may treat a definitely-present key as a must-copy only when the
+    // key is absent from this set.
+    nonEnumerableKeys: new Set(),
     invalidatedDataKeys: new Set(),
     content: undefined,
     // Absence is a control-flow fact, not a provenance tag. Keeping it
@@ -199,6 +204,7 @@ function snapshotOrigin(value, seen = new WeakMap()) {
   snapshot.definedDataKeys = new Set(value.definedDataKeys);
   snapshot.accessorKeys = new Set(value.accessorKeys);
   snapshot.nonWritableKeys = new Set(value.nonWritableKeys);
+  snapshot.nonEnumerableKeys = new Set(value.nonEnumerableKeys);
   snapshot.invalidatedDataKeys = new Set(value.invalidatedDataKeys);
   snapshot.assignSourceEvidence = new Map(value.assignSourceEvidence);
   snapshot.content = value.content === undefined ? undefined : snapshotOrigin(value.content, seen);
@@ -325,6 +331,7 @@ function abstractLargeArgument(value, provenance) {
     compact.definedDataKeys = new Set(value.definedDataKeys);
     compact.accessorKeys = new Set(value.accessorKeys);
     compact.nonWritableKeys = new Set(value.nonWritableKeys);
+    compact.nonEnumerableKeys = new Set(value.nonEnumerableKeys);
     compact.invalidatedDataKeys = new Set(value.invalidatedDataKeys);
     compact.assignSourceEvidence = new Map(value.assignSourceEvidence);
     compact.shape = new Map([...value.shape.entries()].map(([key, child]) => {
@@ -510,6 +517,7 @@ function originSubsumes(left, right, seen = new WeakMap(), depth = 0) {
   if (![...left.definedDataKeys].every((key) => right.definedDataKeys.has(key))) return false;
   if (!setContains(left.accessorKeys, right.accessorKeys)) return false;
   if (!setContains(left.nonWritableKeys, right.nonWritableKeys)) return false;
+  if (!setContains(left.nonEnumerableKeys, right.nonEnumerableKeys)) return false;
   if (!setContains(left.invalidatedDataKeys, right.invalidatedDataKeys)) return false;
   if (![...left.hiddenKeys].every((key) => right.hiddenKeys.has(key))) return false;
   for (const [key, rightEvidence] of right.assignSourceEvidence) {
@@ -576,6 +584,10 @@ function mergeOriginPair(left, right, depth = 0) {
     .filter((key) => right.definedDataKeys.has(key)));
   output.accessorKeys = new Set([...left.accessorKeys, ...right.accessorKeys]);
   output.nonWritableKeys = new Set([...left.nonWritableKeys, ...right.nonWritableKeys]);
+  output.nonEnumerableKeys = new Set([
+    ...left.nonEnumerableKeys,
+    ...right.nonEnumerableKeys,
+  ]);
   output.invalidatedDataKeys = new Set([
     ...left.invalidatedDataKeys,
     ...right.invalidatedDataKeys,
@@ -874,6 +886,8 @@ function originSignature(value, state = signatureState(), depth = 0) {
     ...[...value.accessorKeys].map(stablePropertyKey).sort(),
     'non-writable-keys',
     ...[...value.nonWritableKeys].map(stablePropertyKey).sort(),
+    'non-enumerable-keys',
+    ...[...value.nonEnumerableKeys].map(stablePropertyKey).sort(),
     'invalidated-data-keys',
     ...[...value.invalidatedDataKeys].map(stablePropertyKey).sort(),
     'presence',
@@ -1525,6 +1539,11 @@ function isPotentiallySkipped(node, checker) {
 
 export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   const env = new Map();
+  // Allocation-indexed may facts survive re-evaluation of the same literal
+  // site. Function bodies and lexical initializers are analyzed repeatedly at
+  // the fixed point; a descriptor mutation must not disappear merely because
+  // a later projection materializes a fresh Origin object for that allocation.
+  const allocationNonEnumerableKeys = new Map();
   const constants = new Map();
   const functions = new Map();
   const functionBySymbol = new Map();
@@ -1655,6 +1674,11 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         keys: new Set([...(existing.keys ?? []), ...(mutation.keys ?? [])]),
         keysComplete: existing.keysComplete !== false && mutation.keysComplete !== false,
         dispatchSafe: existing.dispatchSafe !== false && mutation.dispatchSafe !== false,
+        descriptorDataOnly: existing.descriptorDataOnly === undefined
+          ? mutation.descriptorDataOnly
+          : mutation.descriptorDataOnly === undefined
+            ? existing.descriptorDataOnly
+            : existing.descriptorDataOnly && mutation.descriptorDataOnly,
         assignSourceCount: existing.assignSourceCount === mutation.assignSourceCount
           ? existing.assignSourceCount
           : Math.max(existing.assignSourceCount ?? 0, mutation.assignSourceCount ?? 0),
@@ -2255,6 +2279,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         for (const key of base.initialDataKeys) instance.initialDataKeys.add(key);
         for (const key of base.definedDataKeys) instance.definedDataKeys.add(key);
         for (const key of base.nonWritableKeys) instance.nonWritableKeys.add(key);
+        for (const key of base.nonEnumerableKeys) instance.nonEnumerableKeys.add(key);
         for (const key of base.invalidatedDataKeys) instance.invalidatedDataKeys.add(key);
         for (const key of base.hiddenKeys) instance.hiddenKeys.add(key);
         instance.content = base.content;
@@ -2521,6 +2546,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           call,
         })),
       ].sort((left, right) => left.position - right.position);
+      let orderedDescriptorRefreshFailed = false;
       for (const operation of mutationOperations) {
         if (operation.kind === 'write') {
           const { write } = operation;
@@ -2579,9 +2605,18 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           const { call } = operation;
           const resolution = resolveCall(call.node, overrides, depth + 1);
           mutationCollector.push(...resolution.mutationReceivers);
+          if (resolution.mutationReceivers.some((mutation) => [
+            'Object.defineProperty',
+            'Object.defineProperties',
+            'Reflect.defineProperty',
+          ].includes(mutation.api ?? '')) && !convergeBindings()) {
+            orderedDescriptorRefreshFailed = true;
+            break;
+          }
         }
       }
-      if (mutationOperations.length > 0 && !convergeBindings()) {
+      if (orderedDescriptorRefreshFailed
+        || (mutationOperations.length > 0 && !convergeBindings())) {
         const widened = origin(ORIGIN.UNKNOWN, `function fixed point exceeded for ${entry.name}`);
         recordObservedOverrides();
         recordFunctionResult(entry.id, widened);
@@ -2732,7 +2767,8 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           if (!spread.hiddenKeys.has(key)) {
             const definitelyPresent = (spread.initialDataKeys.has(key)
               || spread.definedDataKeys.has(key))
-              && !spread.invalidatedDataKeys.has(key);
+              && !spread.invalidatedDataKeys.has(key)
+              && !spread.nonEnumerableKeys.has(key);
             shape.set(key, shape.has(key) && !definitelyPresent
               ? joinOrigins(shape.get(key), child)
               : child);
@@ -2850,6 +2886,11 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         node,
       }]]),
     });
+    for (const allocation of result.allocations) {
+      for (const key of allocationNonEnumerableKeys.get(allocation) ?? []) {
+        result.nonEnumerableKeys.add(key);
+      }
+    }
     const capabilityMethods = ['deriveResource', 'facts', 'reduce'];
     const exactCapabilityShape = shape.size === 5
       && ['argumentsSchema', 'deriveResource', 'effect', 'facts', 'reduce']
@@ -3248,6 +3289,29 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     });
   };
 
+  const hasCanonicalOwnedLiteralEvidence = (value) => isProvenMutableLocal(value)
+    && value.intrinsicPrototype
+    && value.shapeKeysComplete
+    && value.assignSourceEvidenceComplete
+    && value.assignSourceEvidence.size > 0
+    && [...value.assignSourceEvidence.values()].every((evidence) =>
+      evidence.directOwnedLiteral && evidence.getterFree && evidence.keysComplete);
+
+  const canonicalDescriptorIsDataOnly = (descriptor) =>
+    hasCanonicalOwnedLiteralEvidence(descriptor)
+    && descriptor.ordinaryData
+    && descriptor.accessorKeys.size === 0
+    && descriptor.hiddenKeys.size === 0
+    && [...descriptor.shape.keys()].every((key) =>
+      !['get', 'set', '__proto__'].includes(String(key)));
+
+  const canonicalDescriptorMapIsDataOnly = (descriptorMap) =>
+    hasCanonicalOwnedLiteralEvidence(descriptorMap)
+    && descriptorMap.ordinaryData
+    && descriptorMap.accessorKeys.size === 0
+    && descriptorMap.hiddenKeys.size === 0
+    && [...descriptorMap.shape.values()].every(canonicalDescriptorIsDataOnly);
+
   const mutationRecord = (api, argumentsList, callNode, label) => {
     const target = argumentsList[0] ?? origin(ORIGIN.UNKNOWN, `missing ${api} target`);
     const receiver = api === 'Reflect.set' && argumentsList.length >= 4
@@ -3255,11 +3319,22 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       : target;
     const keyOrigin = argumentsList[1]
       ?? origin(ORIGIN.UNKNOWN, `missing ${api} property key`);
-    const keys = new Set([
-      ...finiteKeysFromOrigin(keyOrigin),
-      ...directMutationKeys(api, callNode),
-    ]);
-    const keysComplete = keyOrigin.finiteKeysComplete && keys.size > 0;
+    const keys = api === 'Object.defineProperties'
+      ? new Set([...keyOrigin.shape.keys()].filter((key) => !keyOrigin.hiddenKeys.has(key)))
+      : new Set([
+        ...finiteKeysFromOrigin(keyOrigin),
+        ...directMutationKeys(api, callNode),
+      ]);
+    const keysComplete = api === 'Object.defineProperties'
+      ? keyOrigin.shapeKeysComplete
+      : keyOrigin.finiteKeysComplete && keys.size > 0;
+    const descriptorDataOnly = api === 'Object.defineProperties'
+      ? canonicalDescriptorMapIsDataOnly(argumentsList[1]
+        ?? origin(ORIGIN.UNKNOWN, 'missing Object.defineProperties descriptor map'))
+      : ['Object.defineProperty', 'Reflect.defineProperty'].includes(api)
+        ? canonicalDescriptorIsDataOnly(argumentsList[2]
+          ?? origin(ORIGIN.UNKNOWN, `missing ${api} descriptor`))
+        : undefined;
     const operationDispatchSafe = (candidateTarget, candidateKeys, complete) => {
       const currentSafe = ordinarySetDispatchSafe(candidateTarget, candidateKeys, complete);
       if (!currentSafe) return false;
@@ -3318,6 +3393,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           && assignSourceArguments.every((source) => source.assignSourceEvidenceComplete
             && source.assignSourceEvidence.size > 0)),
       assignSources,
+      descriptorDataOnly,
       potentiallySkipped: isPotentiallySkipped(callNode, checker),
     };
   };
@@ -3330,6 +3406,43 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       return writable !== undefined && writable.tags.size === 1
         && writable.tags.has(ORIGIN.CONSTANT) && writable.constants.size === 1
         && writable.constants.has(true);
+    };
+    const descriptorEnumerability = (descriptor) => {
+      const enumerable = descriptor.shape.get('enumerable');
+      if (enumerable === undefined) return 'omitted';
+      if (enumerable.tags.size === 1 && enumerable.tags.has(ORIGIN.CONSTANT)
+        && enumerable.constants.size === 1) {
+        if (enumerable.constants.has(true)) return 'true';
+        if (enumerable.constants.has(false)) return 'false';
+      }
+      return 'unknown';
+    };
+    const transferDescriptorEnumerability = (key, descriptor) => {
+      const normalized = descriptorPropertyKey(key);
+      const state = descriptorEnumerability(descriptor);
+      if (state === 'false' || state === 'unknown') {
+        receiver.nonEnumerableKeys.add(normalized);
+        for (const allocation of receiver.allocations) {
+          const keys = allocationNonEnumerableKeys.get(allocation) ?? new Set();
+          keys.add(normalized);
+          allocationNonEnumerableKeys.set(allocation, keys);
+        }
+        return;
+      }
+      if (state === 'omitted' && !hasDefinitelyPresentOwnDataKey(receiver, normalized)) {
+        // A newly created property defaults to enumerable:false. When prior
+        // presence is not a must-fact, the absent alternative therefore
+        // contributes a possible non-enumerable state.
+        receiver.nonEnumerableKeys.add(normalized);
+        for (const allocation of receiver.allocations) {
+          const keys = allocationNonEnumerableKeys.get(allocation) ?? new Set();
+          keys.add(normalized);
+          allocationNonEnumerableKeys.set(allocation, keys);
+        }
+      }
+      // `true` leaves the may-set clear for a fresh key. We deliberately do
+      // not remove a prior non-enumerable alternative: configurability or a
+      // skipped/failed redefinition would otherwise be allowed to launder it.
     };
     if (api === 'Object.assign') {
       for (const source of argumentsList.slice(1)) {
@@ -3358,6 +3471,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         receiver.definedDataKeys.delete(normalized);
         receiver.accessorKeys.delete(normalized);
         receiver.nonWritableKeys.delete(normalized);
+        receiver.nonEnumerableKeys.delete(normalized);
         receiver.invalidatedDataKeys.add(normalized);
         receiver.shape.delete(normalized);
       }
@@ -3370,15 +3484,27 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       const dataOnly = descriptor.ordinaryData
         && !descriptor.shape.has('get') && !descriptor.shape.has('set');
       for (const key of mutation.keys) {
+        transferDescriptorEnumerability(key, descriptor);
         mergeShapeValue(receiver, key, value);
         if (dataOnly) {
           const normalized = descriptorPropertyKey(key);
+          const preservesExistingData = mutation.potentiallySkipped
+            && hasDefinitelyPresentOwnDataKey(receiver, normalized)
+            && !receiver.accessorKeys.has(normalized)
+            && !receiver.nonWritableKeys.has(normalized)
+            && descriptorIsDefinitelyWritable(descriptor);
           if (!mutation.potentiallySkipped && !receiver.mayBeNonExtensible
             && descriptorIsDefinitelyWritable(descriptor)) {
             receiver.definedDataKeys.add(normalized);
             receiver.invalidatedDataKeys.delete(normalized);
             receiver.accessorKeys.delete(normalized);
             receiver.nonWritableKeys.delete(normalized);
+          } else if (preservesExistingData) {
+            // Either branch leaves a definitely-present writable own data
+            // property: the call installs one, or the skipped path retains
+            // the already-proven property. Descriptor enumerability is a
+            // separate may-fact and has already been joined above.
+            receiver.invalidatedDataKeys.delete(normalized);
           } else {
             receiver.definedDataKeys.delete(normalized);
             receiver.invalidatedDataKeys.add(normalized);
@@ -3400,26 +3526,37 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       const descriptors = argumentsList[1]
         ?? origin(ORIGIN.UNKNOWN, 'missing Object.defineProperties descriptor map');
       for (const [key, descriptor] of descriptors.shape) {
+        transferDescriptorEnumerability(key, descriptor);
         const value = descriptor.shape.get('value') ?? descriptor.content
           ?? origin(ORIGIN.UNKNOWN, `Object.defineProperties descriptor ${key} is unresolved`);
         mergeShapeValue(receiver, key, value);
+        const normalized = descriptorPropertyKey(key);
+        const preservesExistingData = mutation.potentiallySkipped
+          && hasDefinitelyPresentOwnDataKey(receiver, normalized)
+          && !receiver.accessorKeys.has(normalized)
+          && !receiver.nonWritableKeys.has(normalized)
+          && descriptor.ordinaryData
+          && descriptorIsDefinitelyWritable(descriptor)
+          && !descriptor.shape.has('get') && !descriptor.shape.has('set');
         if (descriptor.ordinaryData && descriptorIsDefinitelyWritable(descriptor)
           && !mutation.potentiallySkipped
           && !receiver.mayBeNonExtensible
           && !descriptor.shape.has('get') && !descriptor.shape.has('set')) {
-          receiver.definedDataKeys.add(descriptorPropertyKey(key));
-          receiver.invalidatedDataKeys.delete(descriptorPropertyKey(key));
-          receiver.accessorKeys.delete(descriptorPropertyKey(key));
-          receiver.nonWritableKeys.delete(descriptorPropertyKey(key));
+          receiver.definedDataKeys.add(normalized);
+          receiver.invalidatedDataKeys.delete(normalized);
+          receiver.accessorKeys.delete(normalized);
+          receiver.nonWritableKeys.delete(normalized);
+        } else if (preservesExistingData) {
+          receiver.invalidatedDataKeys.delete(normalized);
         } else {
-          receiver.definedDataKeys.delete(descriptorPropertyKey(key));
-          receiver.invalidatedDataKeys.add(descriptorPropertyKey(key));
+          receiver.definedDataKeys.delete(normalized);
+          receiver.invalidatedDataKeys.add(normalized);
           if (descriptor.ordinaryData && !descriptor.shape.has('get')
             && !descriptor.shape.has('set')) {
-            receiver.nonWritableKeys.add(descriptorPropertyKey(key));
+            receiver.nonWritableKeys.add(normalized);
           } else {
-            receiver.nonWritableKeys.delete(descriptorPropertyKey(key));
-            receiver.accessorKeys.add(descriptorPropertyKey(key));
+            receiver.nonWritableKeys.delete(normalized);
+            receiver.accessorKeys.add(normalized);
           }
         }
         mergeContent(receiver, value, 'Object.defineProperties descriptor transfer');
