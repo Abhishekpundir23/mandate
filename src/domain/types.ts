@@ -82,6 +82,17 @@ export interface GateDecision {
   readonly reasons: readonly string[];
 }
 
+export interface ConfirmationToken {
+  readonly id: string;
+  readonly contractVersion: number;
+  readonly actionFingerprint: string;
+  readonly issuedAtLogicalStep: string;
+}
+
+export interface ConfirmationStore {
+  readonly consumedTokenIds: readonly string[];
+}
+
 export interface ToolObservation {
   readonly actionId: string;
   readonly status: 'SUCCEEDED' | 'FAILED' | 'REJECTED';

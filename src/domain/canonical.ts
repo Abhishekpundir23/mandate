@@ -20,6 +20,56 @@ function sortJsonValue(value: JsonValue): JsonValue {
   return value;
 }
 
+function normalizeUnknown(value: unknown, ancestors: WeakSet<object>, path: string): JsonValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`Non-finite number at ${path}.`);
+    }
+    return value;
+  }
+
+  if (typeof value !== 'object') {
+    throw new TypeError(`Non-JSON value at ${path}.`);
+  }
+
+  if (ancestors.has(value)) {
+    throw new TypeError(`Cyclic value at ${path}.`);
+  }
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item, index) => normalizeUnknown(item, ancestors, `${path}[${index}]`));
+    }
+
+    const prototype = Object.getPrototypeOf(value) as object | null;
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError(`Non-plain object at ${path}.`);
+    }
+
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, normalizeUnknown(
+          (value as Readonly<Record<string, unknown>>)[key],
+          ancestors,
+          `${path}.${key}`,
+        )]),
+    );
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+/** Validate, clone, and recursively key-sort an unknown JSON-compatible value. */
+export function normalizeJsonValue(value: unknown): JsonValue {
+  return normalizeUnknown(value, new WeakSet<object>(), '$');
+}
+
 export function canonicalize(value: JsonValue): string {
   return JSON.stringify(sortJsonValue(value));
 }
