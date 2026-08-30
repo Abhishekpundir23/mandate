@@ -70,7 +70,9 @@ function lowerBindingPattern(pattern, source, projection, channel, file, output)
       lowerTarget(
         element.name,
         source,
-        [...projection, element.dotDotDotToken === undefined ? index : '*'],
+        [...projection, element.dotDotDotToken === undefined
+          ? element.initializer === undefined ? index : { index, fallback: element.initializer }
+          : { rest: 'array', from: index }],
         element.dotDotDotToken === undefined ? channel : `${channel}:rest`,
         file,
         output,
@@ -78,6 +80,13 @@ function lowerBindingPattern(pattern, source, projection, channel, file, output)
     });
     return;
   }
+  const excluded = pattern.elements
+    .filter((element) => element.dotDotDotToken === undefined)
+    .map((element) => literalProperty(element.propertyName)
+      ?? (element.propertyName === undefined && ts.isIdentifier(element.name)
+        ? element.name.text
+        : undefined))
+    .filter((property) => property !== undefined);
   for (const element of pattern.elements) {
     const property = literalProperty(element.propertyName)
       ?? (element.propertyName === undefined && ts.isIdentifier(element.name)
@@ -90,8 +99,8 @@ function lowerBindingPattern(pattern, source, projection, channel, file, output)
       element.name,
       source,
       [...projection, element.dotDotDotToken === undefined
-        ? { property, keyNode }
-        : '*'],
+        ? { property, keyNode, fallback: element.initializer }
+        : { rest: 'object', excluded }],
       element.dotDotDotToken === undefined ? channel : `${channel}:rest`,
       file,
       output,
@@ -107,7 +116,7 @@ function lowerAssignmentPattern(pattern, source, projection, channel, file, outp
       addLeaf(
         spread ? element.expression : element,
         source,
-        [...projection, spread ? '*' : index],
+        [...projection, spread ? { rest: 'array', from: index } : index],
         spread ? `${channel}:rest` : channel,
         file,
         output,
@@ -115,12 +124,20 @@ function lowerAssignmentPattern(pattern, source, projection, channel, file, outp
     });
     return;
   }
+  const excluded = pattern.properties
+    .filter((property) => !ts.isSpreadAssignment(property))
+    .map((property) => ts.isShorthandPropertyAssignment(property)
+      ? property.name.text
+      : ts.isPropertyAssignment(property)
+        ? literalProperty(property.name)
+        : undefined)
+    .filter((property) => property !== undefined);
   for (const property of pattern.properties) {
     if (ts.isSpreadAssignment(property)) {
       addLeaf(
         property.expression,
         source,
-        [...projection, '*'],
+        [...projection, { rest: 'object', excluded }],
         `${channel}:rest`,
         file,
         output,
@@ -131,7 +148,10 @@ function lowerAssignmentPattern(pattern, source, projection, channel, file, outp
       addLeaf(
         property.name,
         source,
-        [...projection, { property: property.name.text }],
+        [...projection, {
+          property: property.name.text,
+          fallback: property.objectAssignmentInitializer,
+        }],
         channel,
         file,
         output,
@@ -146,7 +166,14 @@ function lowerAssignmentPattern(pattern, source, projection, channel, file, outp
     addLeaf(
       property.initializer,
       source,
-      [...projection, { property: propertyName, keyNode }],
+      [...projection, {
+        property: propertyName,
+        keyNode,
+        fallback: ts.isBinaryExpression(property.initializer)
+          && property.initializer.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? property.initializer.right
+          : undefined,
+      }],
       channel,
       file,
       output,
@@ -227,12 +254,13 @@ export function normalizeProgram(sourceFiles) {
       }
       if (ts.isForOfStatement(node) || ts.isForInStatement(node)) {
         const channel = ts.isForOfStatement(node) ? 'for-of' : 'for-in';
+        const projection = ts.isForOfStatement(node) ? ['@element'] : ['@key'];
         if (ts.isVariableDeclarationList(node.initializer)) {
           for (const declaration of node.initializer.declarations) {
-            lowerTarget(declaration.name, node.expression, [], channel, file.fileName, output);
+            lowerTarget(declaration.name, node.expression, projection, channel, file.fileName, output);
           }
         } else {
-          lowerTarget(node.initializer, node.expression, [], channel, file.fileName, output);
+          lowerTarget(node.initializer, node.expression, projection, channel, file.fileName, output);
         }
       }
       if (ts.isCallExpression(node)

@@ -3,6 +3,7 @@ import { readdir } from 'node:fs/promises';
 import { extname, join, relative, resolve } from 'node:path';
 
 import { scanBuiltAssets } from './security-built-policy.mjs';
+import { collectHtmlRuntimeSourceGraph } from './security-source-inventory.mjs';
 import { scanSourceFiles } from './security-source-scan.mjs';
 
 const sourceRoot = resolve('src');
@@ -18,13 +19,19 @@ async function filesUnder(root) {
   return nested.flat();
 }
 
-const sourceFiles = (await filesUnder(sourceRoot)).filter((file) =>
+const graph = await collectHtmlRuntimeSourceGraph(resolve('index.html'), sourceRoot);
+const analyzedSourceFiles = (await filesUnder(sourceRoot)).filter((file) =>
   ['.ts', '.tsx'].includes(extname(file))
     && !file.includes('.test.')
     && !file.startsWith(join(sourceRoot, 'test')));
-const sourceResult = await scanSourceFiles(sourceFiles, sourceRoot, resolve('tsconfig.app.json'));
-const assetCounts = await scanBuiltAssets(distRoot, filesUnder);
+const sourceResult = await scanSourceFiles(analyzedSourceFiles, sourceRoot, resolve('tsconfig.app.json'));
+const analysisReceipts = new Set(sourceResult.sourceReceipts);
+const missingReceipts = graph.receipts.filter((receipt) => !analysisReceipts.has(receipt));
+if (missingReceipts.length > 0) {
+  throw new Error(`Runtime source graph has no analysis receipt for ${missingReceipts.join(', ')}.`);
+}
+const builtResult = await scanBuiltAssets(distRoot, filesUnder, graph);
 
-console.log(`Structural security gate passed: ${sourceResult.sourceFileCount} production TS/TSX files, closed-world origin/effect policy.`);
+console.log(`Structural security gate passed: entries=${graph.entries.join(',')}; analysis-receipts=${sourceResult.sourceFileCount}; runtime-receipts=${graph.receipts.length}; bundle-receipts=${builtResult.bundleSourceReceiptCount}; closed-world origin/effect policy.`);
 console.log(`Host effect report: ${sourceResult.effectReport}`);
-console.log(`Built asset gate passed: ${JSON.stringify(assetCounts)}, strict CSP/local references/zero network primitives, documented React and Zod vendor allowlists.`);
+console.log(`Built asset gate passed: ${JSON.stringify(builtResult.assetCounts)}, strict CSP/local references/zero network primitives, documented React and Zod vendor allowlists.`);

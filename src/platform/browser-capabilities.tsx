@@ -1,4 +1,11 @@
-import { useCallback, useRef, type ReactNode, type RefCallback } from 'react';
+import {
+  useCallback,
+  useRef,
+  type Dispatch,
+  type DispatchWithoutAction,
+  type ReactNode,
+  type RefCallback,
+} from 'react';
 import { createRoot } from 'react-dom/client';
 
 export type ApprovedMediaQuery =
@@ -28,7 +35,7 @@ export function mediaQueryMatches(query: ApprovedMediaQuery): boolean {
 
 export function subscribeMediaQuery(
   query: ApprovedMediaQuery,
-  listener: (matches: boolean) => void,
+  listener: Dispatch<boolean>,
 ): () => void {
   const media = approvedMediaQuery(query);
   if (media === undefined) return () => undefined;
@@ -37,7 +44,7 @@ export function subscribeMediaQuery(
   return () => media.removeEventListener('change', update);
 }
 
-export function scheduleReplayTick(tick: () => void): ReplayTimer {
+export function scheduleReplayTick(tick: DispatchWithoutAction): ReplayTimer {
   return window.setInterval(tick, 180) as ReplayTimer;
 }
 

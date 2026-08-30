@@ -28,14 +28,30 @@ export const forbiddenCapabilityEffects = new Map([
   ['globalThis.fetch', 'HOST_NETWORK'],
   ['window.fetch', 'HOST_NETWORK'],
   ['navigator.sendBeacon', 'HOST_NETWORK'],
+  ['window.navigator.sendBeacon', 'HOST_NETWORK'],
+  ['globalThis.navigator.sendBeacon', 'HOST_NETWORK'],
   ['localStorage', 'HOST_STORAGE'],
   ['sessionStorage', 'HOST_STORAGE'],
   ['indexedDB', 'HOST_STORAGE'],
   ['caches', 'HOST_STORAGE'],
   ['location.assign', 'HOST_NAVIGATION'],
   ['location.replace', 'HOST_NAVIGATION'],
+  ['window.location.assign', 'HOST_NAVIGATION'],
+  ['window.location.replace', 'HOST_NAVIGATION'],
+  ['globalThis.location.assign', 'HOST_NAVIGATION'],
+  ['globalThis.location.replace', 'HOST_NAVIGATION'],
   ['history.pushState', 'HOST_NAVIGATION'],
   ['history.replaceState', 'HOST_NAVIGATION'],
+  ['window.history.pushState', 'HOST_NAVIGATION'],
+  ['window.history.replaceState', 'HOST_NAVIGATION'],
+  ['globalThis.history.pushState', 'HOST_NAVIGATION'],
+  ['globalThis.history.replaceState', 'HOST_NAVIGATION'],
+  ['document.write', 'HOST_UNSAFE_DOM_WRITE'],
+  ['window.document.write', 'HOST_UNSAFE_DOM_WRITE'],
+  ['globalThis.document.write', 'HOST_UNSAFE_DOM_WRITE'],
+  ['insertAdjacentHTML', 'HOST_UNSAFE_DOM_WRITE'],
+  ['setAttribute', 'HOST_UNSAFE_DOM_WRITE'],
+  ['write', 'HOST_UNSAFE_DOM_WRITE'],
   ['HTMLFormElement.prototype.submit', 'HOST_FORM_SUBMIT'],
   ['submit', 'HOST_FORM_SUBMIT'],
   ['requestSubmit', 'HOST_FORM_SUBMIT'],
@@ -68,6 +84,7 @@ export const pureStandardMethods = new Set([
   'normalize',
   'padStart',
   'reduce',
+  'reduceRight',
   'replace',
   'replaceAll',
   'slice',
@@ -75,12 +92,19 @@ export const pureStandardMethods = new Set([
   'split',
   'startsWith',
   'substring',
+  'test',
   'toLowerCase',
   'toString',
   'toUpperCase',
   'trim',
   'trimStart',
   'values',
+]);
+
+export const pureLocalContractMethods = new Set([
+  'fetch',
+  'focus',
+  'getElementById',
 ]);
 
 export const ownedResultMethods = new Set([
@@ -155,6 +179,7 @@ export const reactCallSummaries = new Map([
 ]);
 
 export const zodPureMethods = new Set([
+  'addIssue',
   'array',
   'boolean',
   'config',
@@ -199,5 +224,7 @@ export const browserFacadeCalls = new Map([
 ]);
 
 export const uiMethods = new Set([
+  'focus',
   'preventDefault',
+  'scrollIntoView',
 ]);

@@ -7,19 +7,47 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 const temporaryRoots: string[] = [];
 
-async function runGate(source: string, sourcePath = 'src/fixture.tsx') {
+async function runGateFiles(files: Record<string, string>) {
   const root = await mkdtemp(join(tmpdir(), 'mandate-security-'));
   temporaryRoots.push(root);
   await mkdir(join(root, 'scripts'), { recursive: true });
-  await mkdir(join(root, dirname(sourcePath)), { recursive: true });
   await cp('dist', join(root, 'dist'), { recursive: true });
   await symlink(resolve('node_modules'), join(root, 'node_modules'), 'dir');
-  await writeFile(join(root, sourcePath), source);
+  for (const [sourcePath, source] of Object.entries(files)) {
+    await mkdir(join(root, dirname(sourcePath)), { recursive: true });
+    await writeFile(join(root, sourcePath), source);
+  }
+  if (!Object.hasOwn(files, 'src/main.tsx')) {
+    const imports = Object.keys(files)
+      .filter((path) => /^src\/.*\.tsx?$/u.test(path))
+      .map((path) => `import './${path.slice('src/'.length).replace(/\.tsx?$/u, '')}';`)
+      .join('\n');
+    await writeFile(join(root, 'src/main.tsx'), `${imports}\nexport {};\n`);
+  }
+  if (!Object.hasOwn(files, 'index.html')) {
+    await writeFile(join(root, 'index.html'), '<!doctype html><script type="module" src="/src/main.tsx"></script>\n');
+  }
+  const receiptModules = [...new Set([
+    ...Object.keys(files).filter((path) => /^src\/.*\.tsx?$/u.test(path)),
+    'src/main.tsx',
+  ])].sort();
+  const productionReceipt = JSON.parse(await readFile('dist/security-module-receipts.json', 'utf8')) as {
+    chunks?: unknown;
+  };
+  expect(productionReceipt.chunks).toEqual(expect.arrayContaining([expect.stringMatching(/\.js$/u)]));
+  await writeFile(join(root, 'dist/security-module-receipts.json'), `${JSON.stringify({
+    version: 3,
+    html: 'index.html',
+    entries: ['src/main.tsx'],
+    modules: receiptModules,
+    chunks: productionReceipt.chunks,
+  }, null, 2)}\n`);
   await cp('tsconfig.app.json', join(root, 'tsconfig.app.json'));
   await cp('scripts/security-gate.mjs', join(root, 'scripts', 'security-gate.mjs'));
   await cp('scripts/security-assignment-analysis.mjs', join(root, 'scripts', 'security-assignment-analysis.mjs'));
   await cp('scripts/security-built-policy.mjs', join(root, 'scripts', 'security-built-policy.mjs'));
   await cp('scripts/security-source-policy.mjs', join(root, 'scripts', 'security-source-policy.mjs'));
+  await cp('scripts/security-source-inventory.mjs', join(root, 'scripts', 'security-source-inventory.mjs'));
   await cp('scripts/security-source-scan.mjs', join(root, 'scripts', 'security-source-scan.mjs'));
   await cp('scripts/security-type-analysis.mjs', join(root, 'scripts', 'security-type-analysis.mjs'));
   const summariesPath = resolve('scripts/security-call-summaries.mjs');
@@ -43,6 +71,10 @@ async function runGate(source: string, sourcePath = 'src/fixture.tsx') {
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 
+async function runGate(source: string, sourcePath = 'src/main.tsx') {
+  return runGateFiles({ [sourcePath]: source });
+}
+
 function runProductionGate() {
   const result = spawnSync(process.execPath, ['scripts/security-gate.mjs'], {
     cwd: resolve('.'),
@@ -62,6 +94,40 @@ async function runStandaloneSecurityWithStaleBuild() {
   }
   await symlink(resolve('node_modules'), join(root, 'node_modules'), 'dir');
   await writeFile(join(root, 'dist', 'stale.js'), `fetch('/stale-product-endpoint')`);
+  const result = spawnSync('npm', ['run', 'test:security'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, NODE_ENV: 'production' },
+  });
+  return { status: result.status, output: `${result.stdout}${result.stderr}` };
+}
+
+async function runStandaloneSecurityWithFiles(
+  files: Record<string, string>,
+  mainPrefix = '',
+  indexTail = '',
+) {
+  const root = await mkdtemp(join(tmpdir(), 'mandate-security-command-'));
+  temporaryRoots.push(root);
+  for (const path of [
+    'package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.app.json',
+    'tsconfig.node.json', 'vite.config.ts', 'index.html', 'src', 'scripts', 'dist',
+  ]) {
+    await cp(path, join(root, path), { recursive: true });
+  }
+  await symlink(resolve('node_modules'), join(root, 'node_modules'), 'dir');
+  for (const [path, source] of Object.entries(files)) {
+    await mkdir(join(root, dirname(path)), { recursive: true });
+    await writeFile(join(root, path), source);
+  }
+  if (mainPrefix !== '') {
+    const main = await readFile(join(root, 'src/main.tsx'), 'utf8');
+    await writeFile(join(root, 'src/main.tsx'), `${mainPrefix}\n${main}`);
+  }
+  if (indexTail !== '') {
+    const html = await readFile(join(root, 'index.html'), 'utf8');
+    await writeFile(join(root, 'index.html'), `${html}\n${indexTail}\n`);
+  }
   const result = spawnSync('npm', ['run', 'test:security'], {
     cwd: root,
     encoding: 'utf8',
@@ -714,4 +780,953 @@ describe('closed-world origin and effect gate', () => {
     expect(result.output).toMatch(/forbidden=0/);
     expect(result.output).toMatch(/unknown=0/);
   }, 30_000);
+});
+
+const reviewFalseGreens: readonly [string, Record<string, string>][] = [
+  ['for-of preserves borrowed element origin', {
+    'src/fixture.ts': `export {};
+declare const borrowedDom: Element;
+let target: unknown = { label: 'owned' };
+for (target of [borrowedDom]) {
+  (target as Record<'innerHTML', string>).innerHTML = '<img>';
+}`,
+  }],
+  ['array spread preserves borrowed element origin', {
+    'src/fixture.ts': `export {};
+declare const borrowedDom: Element;
+const source = [borrowedDom];
+const spread = [...source];
+const target = spread[0]!;
+(target as unknown as Record<'innerHTML', string>).innerHTML = '<img>';`,
+  }],
+  ['nested flat preserves borrowed element origin', {
+    'src/fixture.ts': `export {};
+declare const borrowedDom: Element;
+const nested = [[borrowedDom]];
+const flattened = nested.flat();
+const target = flattened[0]!;
+(target as unknown as Record<'innerHTML', string>).innerHTML = '<img>';`,
+  }],
+  ['concat arguments join into result content', {
+    'src/fixture.ts': `export {};
+declare const borrowedDom: Element;
+const safe = [{ label: 'owned' }];
+const combined = safe.concat(borrowedDom as unknown as { label: string });
+const target = combined[1]!;
+(target as unknown as Record<'innerHTML', string>).innerHTML = '<img>';`,
+  }],
+  ['borrowed map receiver cannot gain an owned result brand', {
+    'src/fixture.ts': `export {};
+declare const borrowedDom: Element & { map(callback: (value: number) => number): Element };
+const target = borrowedDom.map((value) => value + 1);
+(target as unknown as Record<'innerHTML', string>).innerHTML = '<img>';`,
+  }],
+  ['conditional null-prototype certainty uses every path', {
+    'src/fixture.ts': `export function poison(key: string, chooseDictionary: boolean) {
+  const target: Record<string, { polluted?: boolean }> = chooseDictionary
+    ? Object.create(null) as Record<string, { polluted?: boolean }>
+    : {};
+  target[key] = { polluted: true };
+  return target;
+}
+poison('__proto__', false);`,
+  }],
+  ['owned values escape through unresolved boundaries', {
+    'src/fixture.ts': `export function exposeAndMutate(accept: (value: { label: string }) => void): void {
+  const local = { label: 'owned' };
+  accept(local);
+  local.label = 'mutated after escape';
+}`,
+  }],
+  ['unknown tagged-template parameter emits unknown', {
+    'src/fixture.ts': `export function render(tag: (parts: TemplateStringsArray) => string): string {
+  return tag\`payload\`;
+}`,
+  }],
+  ['facade cannot return a raw DOM root', {
+    'src/platform/browser-capabilities.tsx': `export function leakRoot(): HTMLElement | null {
+  return document.getElementById('root');
+}`,
+  }],
+  ['facade cannot return a raw MediaQueryList', {
+    'src/platform/browser-capabilities.tsx': `export function leakMedia(): MediaQueryList {
+  return window.matchMedia('(max-width: 899px)');
+}`,
+  }],
+  ['React ref spread preserves DOM-bearing current origin', {
+    'src/fixture.tsx': `import { useRef } from 'react';
+export function Fixture() {
+  const ref = useRef<Element | null>(null);
+  const wrapper = { ...ref };
+  if (wrapper.current !== null) {
+    (wrapper.current as unknown as Record<'innerHTML', string>).innerHTML = '<img>';
+  }
+  return null;
+}`,
+  }],
+  ['dynamic DOM call remains ambient', {
+    'src/fixture.ts': `export {};
+declare const borrowedDom: Element;
+const method = 'setAttribute' as const;
+borrowedDom[method]('data-host-write', '1');`,
+  }],
+  ['emitless Document declaration remains ambient', {
+    'src/fixture.ts': `export {};
+declare const document: Document;
+document.body.insertAdjacentHTML('beforeend', '<img src=x>');`,
+  }],
+  ['emitless Navigator declaration remains ambient', {
+    'src/fixture.ts': `export {};
+declare const navigator: Navigator;
+navigator.sendBeacon('/escape', 'payload');`,
+  }],
+  ['emitless History declaration remains ambient', {
+    'src/fixture.ts': `export {};
+declare const history: History;
+history.pushState({}, '', '/escape');`,
+  }],
+  ['unknown callable interface emits unknown', {
+    'src/fixture.ts': `export function invoke(channel: { (payload: string): void }): void {
+  channel('payload');
+}`,
+  }],
+  ['window.location.assign resolves navigation effect', {
+    'src/fixture.ts': `window.location.assign('/escape');
+export {};`,
+  }],
+  ['window.document.write resolves unsafe DOM effect', {
+    'src/fixture.ts': `window.document.write('<main>replaced</main>');
+export {};`,
+  }],
+  ['Reflect.set shares prototype-key validation', {
+    'src/fixture.ts': `export function poison(key: string): Record<string, unknown> {
+  const target: Record<string, unknown> = {};
+  Reflect.set(target, key, { polluted: true });
+  return target;
+}
+poison('__proto__');`,
+  }],
+  ['Object.assign rejects resolved computed __proto__ sources', {
+    'src/fixture.ts': `const target: Record<string, unknown> = {};
+Object.assign(target, { ['__' + 'proto__']: { polluted: true } });
+export { target };`,
+  }],
+  ['borrowed prototype cannot reach Function through constructor and call', {
+    'src/fixture.ts': `const proto = Object.getPrototypeOf(() => undefined) as {
+  constructor(source: string): { call(receiver: unknown): unknown };
+};
+proto.constructor('location.assign("/escape")').call(undefined);
+export {};`,
+  }],
+  ['push and pop preserve ambient container content', {
+    'src/fixture.ts': `export {};
+declare const borrowedDom: Element;
+const values: unknown[] = [{ label: 'owned' }];
+values.push(borrowedDom);
+const target = values.pop()!;
+(target as Record<'innerHTML', string>).innerHTML = '<img>';`,
+  }],
+  ['React callback declaration origin survives a safe warm-up call', {
+    'src/fixture.tsx': `import type { RefCallback } from 'react';
+function write(node: { outerHTML: string } | null): void {
+  if (node !== null) node.outerHTML = '<main>replaced</main>';
+}
+write({ outerHTML: 'safe local' });
+const ref: RefCallback<HTMLDivElement> = write;
+export function Fixture() { return <div ref={ref}>content</div>; }`,
+  }],
+];
+
+const reviewSafeFalsePositives: readonly [string, Record<string, string>][] = [
+  ['finite literal-union key parameter', {
+    'src/fixture.ts': `export function update(key: 'left' | 'right') {
+  const row = { left: 'a', right: 'b' };
+  row[key] = 'updated';
+  return row;
+}
+update('left');`,
+  }],
+  ['finite conditional key', {
+    'src/fixture.ts': `const row = { left: 'a', right: 'b' };
+const key = true ? 'left' : 'right';
+row[key] = 'updated';
+export { row };`,
+  }],
+  ['receiver-branded local window.focus method', {
+    'src/fixture.ts': `export function activate(window: { focus: () => void }): void {
+  window.focus();
+}`,
+  }],
+  ['receiver-branded local client.fetch method', {
+    'src/fixture.ts': `export function read(client: { fetch: () => string }): string {
+  return client.fetch();
+}`,
+  }],
+  ['local constructor data field projection', {
+    'src/fixture.ts': `const row = { constructor: 'ordinary data', label: 'safe' };
+const { constructor: description } = row;
+export { description };`,
+  }],
+  ['object rest remains owned after excluding ambient field', {
+    'src/fixture.ts': `export {};
+declare const borrowedDom: Element;
+const source = { host: borrowedDom, safe: { label: 'first' } };
+const { host, ...rest } = source;
+rest.safe.label = 'second';
+void host;`,
+  }],
+  ['nested rest remains fresh owned local data', {
+    'src/fixture.ts': `const source = { nested: { label: 'safe' }, extra: 'data' };
+const { nested: { label }, ...rest } = source;
+rest.extra = label;
+export { rest };`,
+  }],
+  ['bound analyzed local function remains callable', {
+    'src/fixture.ts': `function add(left: number, right: number): number { return left + right; }
+const addOne = add.bind(undefined, 1);
+export const result = addOne(2);`,
+  }],
+  ['local class construction produces owned data', {
+    'src/fixture.ts': `class Box { value = 1; }
+const box = new Box();
+box.value = 2;
+export { box };`,
+  }],
+  ['map callback produces owned result content', {
+    'src/fixture.ts': `const rows = [1, 2].map((value) => ({ value }));
+rows[0]!.value = 3;
+export { rows };`,
+  }],
+  ['nested closure mutates its captured fresh array', {
+    'src/fixture.ts': `export function collect(): readonly number[] {
+  const values: number[] = [];
+  const append = (value: number): void => { values.push(value); };
+  append(1);
+  return values;
+}`,
+  }],
+  ['React ref cell owns a local Map mutation boundary', {
+    'src/fixture.tsx': `import { useCallback, useRef } from 'react';
+export function useRegistry() {
+  const nodes = useRef(new Map<string, HTMLButtonElement>());
+  return useCallback((key: string, node: HTMLButtonElement | null): void => {
+    if (node === null) nodes.current.delete(key);
+    else nodes.current.set(key, node);
+  }, []);
+}`,
+  }],
+];
+
+const facadeLeakForms: readonly [string, string][] = [
+  ['raw exported value', `export const leaked: object = document.getElementById('root')!;`],
+  ['widened function return', `export function leak(): object { return document.getElementById('root')!; }`],
+  ['widened default export', `const leaked: object = document.getElementById('root')!; export default leaked;`],
+  ['nested aggregate output', `export const leaked: { nested: object } = { nested: document.getElementById('root')! };`],
+  ['closure return output', `export function leak(): () => object { const root = document.getElementById('root')!; return () => root; }`],
+  ['class method output', `export class Leak { reveal(): object { return document.getElementById('root')!; } }`],
+  ['aliased function output', `function reveal(): object { return document.getElementById('root')!; } export { reveal as leak };`],
+  ['opaque React root output', `import { createRoot } from 'react-dom/client'; export function leak(): object { return createRoot(document.getElementById('root')!); }`],
+  ['nested callable output', `export const api: { open(): object } = { open: () => window.matchMedia('(max-width: 899px)') };`],
+  ['class static field output', `export class Leak { static raw: object = window.matchMedia('(max-width: 899px)'); }`],
+  ['anonymous default class getter output', `export default class { get raw(): object { return window.matchMedia('(max-width: 899px)'); } }`],
+  ['write-after-allocation output', `const api: { raw: object } = { raw: {} }; api.raw = window.matchMedia('(max-width: 899px)'); export { api };`],
+  ['public string field cannot collide with hard-private field identity', `export class Leak { #raw: object = {}; '#raw': object = document.getElementById('root')!; }`],
+  ['computed public method reveals hard-private capability', `export class Leak { #raw = document.getElementById('root')!; ['reveal'](): object { return this.#raw; } }`],
+  ['finite computed public method reveals hard-private capability', `const reveal = 'reveal' as const; export class Leak { #raw = document.getElementById('root')!; [reveal](): object { return this.#raw; } }`],
+  ['computed public field reveals hard-private capability', `export class Leak { #raw = document.getElementById('root')!; ['reveal'] = (): object => this.#raw; }`],
+  ['same callable cannot hide behind a second non-callable field', `const fn = () => window.matchMedia('(max-width: 899px)').matches; export const api: { safe: () => boolean; hidden: object } = { safe: fn, hidden: fn };`],
+  ['shadow Reflect.set transfers a host into its target', `export function leak(Reflect: { set(target: { raw: object }, key: 'raw', value: object): true }, host: HTMLElement): object { const output: { raw: object } = { raw: {} }; Reflect.set(output, 'raw', host); return output; }`],
+  ['shadow Object.assign transfers a host source', `export function leak(Object: { assign<T extends object>(target: T, source: Partial<T>): T }, host: HTMLElement): object { const output: { raw: object } = { raw: {} }; Object.assign(output, { raw: host }); return output; }`],
+  ['shadow Reflect.get preserves nested host origin', `export function leak(Reflect: { get(target: { node: HTMLElement }, key: 'node'): HTMLElement }, input: { node: HTMLElement }): object { return Reflect.get(input, 'node'); }`],
+  ['function-local direct write transfers host origin', `export function leak(host: HTMLElement): object { const output: { raw: object } = { raw: {} }; output.raw = host; return output; }`],
+  ['function-local computed write transfers host origin', `export function leak(host: HTMLElement): object { const output: { raw: object } = { raw: {} }; output['raw'] = host; return output; }`],
+  ['function-local helper write mutates the passed target', `function mutate(target: { raw: object }, value: object): void { target.raw = value; } export function leak(host: HTMLElement): object { const output: { raw: object } = { raw: {} }; mutate(output, host); return output; }`],
+  ['exported void callable writes a host into an earlier exported slot', `let leaked: object = {}; const host: object = document.getElementById('root')!; export { leaked }; export function expose(): void { leaked = host; }`],
+];
+
+const facadeSafeForms: readonly [string, string][] = [
+  ['ambient scalar projection', `export function compact(): boolean { return window.matchMedia('(max-width: 899px)').matches; }`],
+  ['DOM callback input does not leak out', `export function ref(): (node: HTMLElement | null) => void { return (node) => { node?.focus(); }; }`],
+  ['nested operation callbacks stay opaque', `export const operations: { focus: (node: HTMLElement) => void } = { focus: (node) => node.focus() };`],
+  ['local domain class named Node is inert', `class Node { label = 'local'; } export function make(): Node { return new Node(); }`],
+  ['closure may consume ambient authority without returning it', `export function detach(): () => void { const media = window.matchMedia('(max-width: 899px)'); return () => media.removeEventListener('change', () => undefined); }`],
+  ['nested scalar callback output', `export const api = { viewport: { matches: () => window.matchMedia('(max-width: 899px)').matches } };`],
+  ['hard-private capture exposes scalar only', `export class SafeViewport { #media = window.matchMedia('(max-width: 899px)'); matches(): boolean { return this.#media.matches; } }`],
+];
+
+const mutationKeyHostiles: readonly [string, string][] = [
+  ['direct dynamic key on prototype-bearing object', `export function poison(key: string) { const target: Record<string, unknown> = {}; target[key] = true; return target; } poison('__proto__');`],
+  ['Object.assign alias with computed prototype key', `const assign = Object.assign; const target: Record<string, unknown> = {}; assign(target, { ['__' + 'proto__']: true }); export { target };`],
+  ['Object.assign getter source', `const target = { value: 0 }; Object.assign(target, { get value() { return 1; } }); export { target };`],
+  ['Object.assign spread source', `const source = { value: 1 }; const target = { value: 0 }; Object.assign(target, { ...source }); export { target };`],
+  ['Object.defineProperty dynamic key', `export function poison(key: string) { const target: Record<string, unknown> = {}; Object.defineProperty(target, key, { value: true }); return target; } poison('__proto__');`],
+  ['Object.defineProperties computed prototype key', `const target: Record<string, unknown> = {}; Object.defineProperties(target, { ['__' + 'proto__']: { value: true } }); export { target };`],
+  ['Reflect.defineProperty dynamic key', `export function poison(key: string) { const target: Record<string, unknown> = {}; Reflect.defineProperty(target, key, { value: true }); return target; } poison('__proto__');`],
+  ['Reflect.deleteProperty dynamic key', `export function poison(key: string) { const target: Record<string, unknown> = {}; Reflect.deleteProperty(target, key); return target; } poison('__proto__');`],
+];
+
+const mutationKeySafes: readonly [string, string][] = [
+  ['direct finite union key', `export function update(key: 'left' | 'right') { const target = { left: 1, right: 2 }; target[key] = 3; return target; }`],
+  ['Object.assign finite conditional source key', `const target = { left: 1, right: 2 }; const key = true ? 'left' : 'right'; Object.assign(target, { [key]: 3 }); export { target };`],
+  ['Object.assign prototype data on null-prototype target', `const target = Object.create(null) as Record<string, unknown>; Object.assign(target, { ['__' + 'proto__']: true }); export { target };`],
+  ['Object.defineProperty finite union key', `export function update(key: 'left' | 'right') { const target = { left: 1, right: 2 }; Object.defineProperty(target, key, { value: 3 }); return target; }`],
+  ['Object.defineProperties data map', `const target = { left: 1, right: 2 }; Object.defineProperties(target, { left: { value: 3 }, right: { value: 4 } }); export { target };`],
+  ['Reflect.set finite union key', `export function update(key: 'left' | 'right') { const target = { left: 1, right: 2 }; Reflect.set(target, key, 3); return target; }`],
+  ['Reflect.defineProperty finite union key', `export function update(key: 'left' | 'right') { const target = { left: 1, right: 2 }; Reflect.defineProperty(target, key, { value: 3 }); return target; }`],
+  ['Reflect.deleteProperty on null-prototype dictionary', `export function remove(key: string) { const owned = Object.create(null) as Record<string, unknown>; Reflect.deleteProperty(owned, key); return owned; }`],
+  ['all-branch null-prototype conditional', `export function update(key: string, choose: boolean) { const target: Record<string, unknown> = choose ? Object.create(null) : Object.create(null); target[key] = true; return target; }`],
+];
+
+describe('Task 9 independent-review mechanism matrix', () => {
+  it.each(reviewFalseGreens)('rejects reviewer false green: %s', async (_, files) => {
+    const result = await runGateFiles(files);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/security|effect|origin|ambient|borrowed|unknown|forbidden|capability|prototype/i);
+  });
+
+  it.each(reviewSafeFalsePositives)('accepts reviewer safe control: %s', async (_, files) => {
+    const result = await runGateFiles(files);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('fails closed deterministically for a bodyless declaration instead of crashing', async () => {
+    const result = await runGate(`export {};
+declare function channel(payload: string): void;
+channel('payload');`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+    expect(result.output).not.toMatch(/Cannot read properties|TypeError/i);
+  });
+
+  it('public security rejects a bundle-reachable test-named side-effect module without a source receipt', async () => {
+    const result = await runStandaloneSecurityWithFiles({
+      'src/escape.test.ts': `window.location.assign('/escape');\nexport {};\n`,
+    }, `import './escape.test';`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/163 modules transformed/i);
+    expect(result.output).toMatch(/reachable production module src\/escape\.test\.ts is test-scoped/i);
+  }, 40_000);
+
+  it('public security inventories scripts after raw-text style content', async () => {
+    const result = await runStandaloneSecurityWithFiles({
+      'public/escape.js': `document.body.innerHTML = '<main>escaped</main>';\n`,
+    }, '', `<style><!--</style>
+<script type="module" src="/escape.js"></script>
+-->`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/runtime entry (?:escapes src|does not resolve)|forbidden application sink/i);
+  }, 40_000);
+
+  it('public security rejects HTML meta refresh navigation', async () => {
+    const result = await runStandaloneSecurityWithFiles(
+      {},
+      '',
+      '<meta http-equiv="refresh" content="0;url=/escape">',
+    );
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/meta refresh navigation is forbidden/i);
+  }, 40_000);
+
+  it('public security rejects nested iframe srcdoc navigation', async () => {
+    const currentHtml = await readFile('index.html', 'utf8');
+    const result = await runStandaloneSecurityWithFiles({
+      'index.html': currentHtml.replace(
+        '<div id="root"></div>',
+        `<div id="root"></div>
+    <iframe srcdoc="&lt;meta http-equiv=&quot;refresh&quot; content=&quot;0;url=/escape&quot;&gt;"></iframe>`,
+      ),
+    });
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/iframe|srcdoc|embedded document/i);
+  }, 40_000);
+
+  it('public security rejects a declarative-shadow template hiding an unreceipted runtime script', async () => {
+    const currentHtml = await readFile('index.html', 'utf8');
+    const result = await runStandaloneSecurityWithFiles({
+      'index.html': currentHtml.replace(
+        '<div id="root"></div>',
+        `<div id="root">
+      <template shadowrootmode="open">
+        <script type="module" src="/escape.js"></script>
+      </template>
+    </div>`,
+      ),
+      'public/escape.js': `globalThis['loc' + 'ation']['ass' + 'ign']('/escape');\n`,
+    });
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/template|declarative shadow|javascript|asset inventory|receipt/i);
+  }, 40_000);
+
+  it('public security rejects an unreferenced executable asset without a build receipt', async () => {
+    const result = await runStandaloneSecurityWithFiles({
+      'public/unreceipted.js': `export const apparentlySafe = 'copied without a module receipt';\n`,
+    });
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/javascript|asset inventory|receipt|unexpected/i);
+  }, 40_000);
+
+  it.each([
+    ['CSP meta placed in body', (html: string, csp: string) => html
+      .replace(csp, '')
+      .replace('<body>', `<body>\n    ${csp}`)],
+    ['CSP-looking text hidden in raw style content', (html: string, csp: string) => html
+      .replace(csp, '')
+      .replace('</head>', `    <style>${csp}</style>\n  </head>`)],
+  ])('public security rejects %s', async (_, transform) => {
+    const currentHtml = await readFile('index.html', 'utf8');
+    const csp = currentHtml.match(/<meta http-equiv="Content-Security-Policy"[^>]*\/>/u)?.[0];
+    expect(csp).toBeDefined();
+    const result = await runStandaloneSecurityWithFiles({
+      'index.html': transform(currentHtml, csp ?? ''),
+    });
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/CSP|Content-Security-Policy|head/i);
+  }, 40_000);
+
+  it('public security rejects forged arguments to the canonical CapabilityDefinition contract', async () => {
+    const capabilities = await readFile('src/sandbox/capabilities.ts', 'utf8');
+    const result = await runStandaloneSecurityWithFiles({
+      'src/sandbox/capabilities.ts': `${capabilities}\nexport function forgedCapabilityInvocation(
+  definition: CapabilityDefinition,
+  hostCallback: () => void,
+): SandboxWorld {
+  return definition.reduce(hostCallback as unknown as SandboxWorld, {});
+}\n`,
+    });
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  }, 40_000);
+
+  it('receipts every legitimate TypeScript HTML runtime entry', async () => {
+    const result = await runStandaloneSecurityWithFiles(
+      { 'src/secondary.ts': `export const secondary = 'safe';\n` },
+      '',
+      '<script type="module" src="/src/secondary.ts"></script>',
+    );
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toMatch(/entries=src\/main\.tsx,src\/secondary\.ts/i);
+  }, 40_000);
+});
+
+describe('Task 9 facade and mutation paired controls', () => {
+  it.each(facadeLeakForms)('rejects facade leak form: %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_(?:ESCAPE|CAST)|capability escape/i);
+  });
+
+  it.each(facadeSafeForms)('accepts safe facade form: %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each(mutationKeyHostiles)('rejects mutation key hostile: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/PROTOTYPE_WRITE|UNKNOWN_PROTOTYPE_KEY|UNPROVEN_ASSIGN_SOURCE/i);
+  });
+
+  it.each(mutationKeySafes)('accepts mutation key safe control: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).toBe(0);
+  });
+});
+
+describe('Task 9 bounded totality and summary identity controls', () => {
+  it.each([
+    ['Navigator.sendBeacon', `export {}; declare const navigator: Navigator; navigator.sendBeacon('/escape', 'payload');`, 'HOST_NETWORK'],
+    ['History.pushState', `export {}; declare const history: History; history.pushState({}, '', '/escape');`, 'HOST_NAVIGATION'],
+    ['Location.assign', `export {}; declare const location: Location; location.assign('/escape');`, 'HOST_NAVIGATION'],
+    ['Document.write', `export {}; declare const document: Document; document.write('<main>escape</main>');`, 'HOST_UNSAFE_DOM_WRITE'],
+  ])('classifies emitless typed host effect for %s', async (_, source, effect) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toContain(effect);
+  });
+
+  it.each([
+    ['client.fetch object result', `export function read(client: { fetch(): object }): object { return client.fetch(); }`],
+    ['window.focus object result', `export function activate(window: { focus(): object }): object { return window.focus(); }`],
+    ['document.getElementById object result', `export function lookup(document: { getElementById(id: string): object }): object { return document.getElementById('root'); }`],
+  ])('rejects receiver-branded contract with aggregate return: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it.each([
+    ['client.fetch primitive result', `export function read(client: { fetch(): string }): string { return client.fetch(); }`],
+    ['window.focus void result', `export function activate(window: { focus(): void }): void { window.focus(); }`],
+    ['document.getElementById primitive result', `export function lookup(document: { getElementById(id: string): string }): string { return document.getElementById('root'); }`],
+  ])('accepts receiver-branded contract with scalar or void return: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['client alias with callback argument', `export function run(plugin: { fetch(callback: () => void): string }, hostCallback: () => void): string { const client = plugin; return client.fetch(hostCallback); }`],
+    ['direct client with callback argument', `export function run(client: { fetch(callback: () => void): string }, hostCallback: () => void): string { return client.fetch(hostCallback); }`],
+    ['window alias with callback argument', `export function run(plugin: { focus(callback: () => void): void }, hostCallback: () => void): void { const window = plugin; window.focus(hostCallback); }`],
+    ['document alias', `export function lookup(plugin: { getElementById(id: string): string }): string { const document = plugin; return document.getElementById('root'); }`],
+    ['client contract with an extra capability field', `export function read(client: { fetch(): string; raw: HTMLElement }): string { return client.fetch(); }`],
+  ])('rejects syntax-only receiver brand laundering through %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it.each([
+    ['Reflect alias', `export function leak(plugin: { get(target: { raw: object }, key: 'raw'): object }): object { const Reflect = plugin; return Reflect.get({ raw: {} }, 'raw'); }`],
+    ['Object alias', `export function leak(plugin: { assign<T extends object>(target: T, source: Partial<T>): T }): object { const Object = plugin; return Object.assign({ raw: {} }, { raw: {} }); }`],
+  ])('rejects syntax-only standard namespace authority through %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it('accepts an exact direct Reflect.get parameter contract', async () => {
+    const result = await runGate(`export function read(Reflect: { get(target: { raw: string }, key: 'raw'): string }): string { return Reflect.get({ raw: 'safe' }, 'raw'); }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['wide Reflect.get object contract', `export function leak(Reflect: { get(target: { raw: object }, key: 'raw'): object }): object { return Reflect.get({ raw: {} }, 'raw'); }`],
+    ['wide Object.assign object contract', `export function leak(Object: { assign(target: { raw: object }, source: { raw: object }): object }): object { return Object.assign({ raw: {} }, { raw: {} }); }`],
+    ['non-exact client.fetch return contract', `export function read(client: { fetch(): number }): number { return client.fetch(); }`],
+    ['non-exact window.focus return contract', `export function activate(window: { focus(): string }): string { return window.focus(); }`],
+    ['non-exact document.getElementById return contract', `export function lookup(document: { getElementById(id: string): number }): number { return document.getElementById('root'); }`],
+    ['client.fetch callable object with a host field', `type FetchWithHost = { (): string; raw: HTMLElement }; export function read(client: { fetch: FetchWithHost }): string { return client.fetch(); }`],
+    ['Reflect.get callable object with a host field', `type GetWithHost = { (target: { raw: string }, key: 'raw'): string; raw: HTMLElement }; export function read(Reflect: { get: GetWithHost }): string { return Reflect.get({ raw: 'safe' }, 'raw'); }`],
+    ['Object.assign callable object with a host field', `type AssignWithHost = { <T extends object>(target: T, source: Partial<T>): T; raw: HTMLElement }; export function read(Object: { assign: AssignWithHost }): string { return Object.assign({ raw: 'first' }, { raw: 'second' }).raw; }`],
+  ])('rejects broadened same-named receiver contract: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it.each([
+    ['same-named parameter contract', `interface CapabilityDefinition { reduce(callback: () => void): object; }
+export function invokeThroughCapabilityDefinition(
+  definition: CapabilityDefinition,
+  hostCallback: () => void,
+): object { return definition.reduce(hostCallback); }`],
+    ['identity laundering of a canonical-shaped contract', `type SandboxWorld = Readonly<Record<string, string>>;
+interface CapabilityDefinition {
+  readonly effect: string;
+  readonly argumentsSchema: object;
+  readonly deriveResource: (args: Readonly<Record<string, string>>) => string;
+  readonly reduce: (world: SandboxWorld, args: Readonly<Record<string, string>>) => SandboxWorld;
+  readonly facts: (world: SandboxWorld) => Readonly<Record<string, string>>;
+}
+function identityCapability(definition: CapabilityDefinition): CapabilityDefinition { return definition; }
+export function invokeLaunderedCapability(
+  definition: CapabilityDefinition,
+  world: SandboxWorld,
+  args: Readonly<Record<string, string>>,
+): SandboxWorld { const local = identityCapability(definition); return local.reduce(world, args); }`],
+  ])('rejects CapabilityDefinition %s', async (_, source) => {
+    const result = await runGate(source, 'src/sandbox/capabilities.ts');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it('invalidates wrapper summaries when a transitive captured dependency widens', async () => {
+    const result = await runGate(`
+      let state: object = {};
+      function source(): object { return state; }
+      function wrapper(): object { return source(); }
+      const before = wrapper();
+      state = document.getElementById('root')!;
+      export const leak: object = wrapper();
+      void before;
+    `, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape/i);
+  });
+
+  it('fails closed without graph growth for a recursive aggregate return', async () => {
+    const result = await runGate(`export function expand(items: object[]): object {
+  const next = [...items, { safe: true }];
+  return items.length > 1 ? next : expand(next);
+}`, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|Unknown/i);
+  }, 10_000);
+
+  it('fails closed without graph growth for recursive dynamic array spread', async () => {
+    const result = await runGate(`export function recur(items: object[]): object {
+  const nested = [...items, [...items]];
+  return items.length > 2 ? nested : recur(nested);
+}`, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|Unknown/i);
+  }, 10_000);
+
+  it('does not hide a forbidden effect in a void local helper', async () => {
+    const result = await runGate(`function navigate(value: string): void {
+  window.location.assign(value);
+}
+navigate('/escape');
+export {};`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_NAVIGATION|navigation/i);
+  });
+
+  it('does not hide an owned escape routed through a void helper', async () => {
+    const result = await runGate(`declare const external: (value: { label: string }) => void;
+function relay(value: { label: string }): void { external(value); }
+const local = { label: 'owned' };
+relay(local);
+local.label = 'after boundary';
+export {};`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown|escape/i);
+  });
+
+  it('keeps distinct bound targets and argument vectors separate', async () => {
+    const result = await runGate(`function row(value: string) { return { value }; }
+const left = row.bind(undefined, 'left');
+const right = row.bind(undefined, 'right');
+export const rows = [left(), right()];`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+});
+
+describe('Task 9 post-green root bypass controls', () => {
+  it('rejects an unsummarized method on borrowed external data', async () => {
+    const result = await runGate(`export {};
+declare const plugin: { execute(): void };
+plugin.execute();`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it('propagates late ambient arguments through a local alias', async () => {
+    const result = await runGate(`function write(node: { insertAdjacentHTML(position: 'beforeend', html: string): void }): void {
+  const alias = node;
+  alias.insertAdjacentHTML('beforeend', '<img src=x>');
+}
+write(document.getElementById('root')!);
+export {};`, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNSAFE_DOM_WRITE|HOST_UNKNOWN|unsafe|unknown/i);
+  });
+
+  it('propagates ordinary JSX prop origins into a known component', async () => {
+    const result = await runGate(`function Writer({ node }: { node: { insertAdjacentHTML(position: 'beforeend', html: string): void } }) {
+  node.insertAdjacentHTML('beforeend', '<img src=x>');
+  return null;
+}
+const host = document.getElementById('root')!;
+const view = <Writer node={host} />;
+void view;
+export {};`, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNSAFE_DOM_WRITE|HOST_UNKNOWN|unsafe|unknown/i);
+  });
+
+  it('treats an unresolved JSX component as an escape boundary', async () => {
+    const result = await runGate(`import type { ComponentType } from 'react';
+declare const Plugin: ComponentType<{ value: { label: string } }>;
+const owned = { label: 'safe' };
+export const view = <Plugin value={owned} />;
+owned.label = 'after unknown consumer';`, 'src/fixture.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown|escaped/i);
+  });
+
+  it.each([
+    ['function namespace static', `export function api(): void {}
+export namespace api { export const raw: object = document.getElementById('root')!; }`],
+    ['class namespace static', `export class Api {}
+export namespace Api { export const raw: object = document.getElementById('root')!; }`],
+  ])('rejects facade merged namespace leak: %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape/i);
+  });
+
+  it('widens facade traversal depth exhaustion to unknown', async () => {
+    const result = await runGate(`const host = document.getElementById('root')!;
+export const leak: object = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: host } } } } } } } } } } } };`, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape/i);
+  });
+
+  it('fails closed when the origin fixed point exceeds its iteration budget', async () => {
+    const declarations = Array.from({ length: 26 }, (_, index) =>
+      `let x${index}: Cell = { innerHTML: '' };`).join('\n');
+    const transfers = Array.from({ length: 25 }, (_, index) =>
+      `x${index} = x${index + 1};`).join(' ');
+    const result = await runGate(`interface Cell { innerHTML: string }
+export function poison(host: HTMLElement): void {
+${declarations}
+  for (let i = 0; i < 30; i += 1) { ${transfers} x25 = host; }
+  x0.innerHTML = '<img src=x>';
+}`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FIXED_POINT|UNPROVEN_MUTATION_RECEIVER|Ambient|Unknown/i);
+  }, 10_000);
+
+  it('rejects an unresolved callback registered with a React effect', async () => {
+    const result = await runGate(`import { useEffect } from 'react';
+declare const external: () => void;
+export function Fixture() { useEffect(external, []); return null; }`, 'src/fixture.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it('does not grant Reflect semantics to a local emitless shadow', async () => {
+    const result = await runGate(`export {};
+declare const Reflect: { set(target: object, key: string, value: unknown): boolean };
+const target = { label: 'safe' };
+Reflect.set(target, 'label', 'changed');`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it('public security rejects an additional HTML runtime entry outside the analyzed subset', async () => {
+    const currentHtml = await readFile('index.html', 'utf8');
+    const result = await runStandaloneSecurityWithFiles({
+      'index.html': currentHtml.replace('</body>', '  <script type="module" src="/src/escape.js"></script>\n  </body>'),
+      'src/escape.js': `window.location.assign('/escape');\n`,
+    });
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/runtime entry|unsupported executable extension|analysis receipt|escape\.js/i);
+  }, 40_000);
+});
+
+describe('Task 9 deferred-callback and facade traversal controls', () => {
+  it.each([
+    ['borrowed method named like a safe local contract', `export {}; declare const plugin: { fetch(): void }; plugin.fetch();`],
+    ['useMemo callback', `import { useMemo } from 'react'; declare const external: () => string; export function Fixture() { return useMemo(external, []); }`],
+    ['useReducer callback', `import { useReducer } from 'react'; declare const external: (state: number) => number; export function Fixture() { return useReducer(external, 0)[0]; }`],
+    ['intrinsic JSX callback', `import type { MouseEventHandler } from 'react'; declare const external: MouseEventHandler<HTMLButtonElement>; export const view = <button onClick={external}>go</button>;`],
+    ['Array.from callback', `export {}; declare const external: (value: number) => number; Array.from([1], external);`],
+    ['String.replace callback', `export {}; declare const external: (value: string) => string; 'x'.replace('x', external);`],
+    ['Zod refinement callback', `import { z } from 'zod'; declare const external: (value: string, context: z.RefinementCtx<string>) => void; z.string().superRefine(external); export {};`],
+    ['host event listener callback', `export {}; declare const media: MediaQueryList; declare const external: (event: MediaQueryListEvent) => void; media.addEventListener('change', external);`],
+  ])('rejects unresolved deferred callback: %s', async (_, source) => {
+    const result = await runGate(source, source.includes('<button') ? 'src/fixture.tsx' : 'src/main.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it.each([
+    ['object getter', `export const api: { readonly raw: object } = { get raw() { return document.getElementById('root')!; } };`],
+    ['merged namespace function', `export function api(): void {} export namespace api { export function raw(): object { return document.getElementById('root')!; } }`],
+  ])('rejects facade runtime capability hidden in %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape/i);
+  });
+
+  it('rejects a facade runtime callable hidden behind an object type and finite-surface compaction', async () => {
+    const nested = Array.from(
+      { length: 25 },
+      (_, index) => index,
+    ).reduceRight((value, index) => `{ n${index}: ${value} }`, '{ raw: host }');
+    const result = await runGate(`const host: object = document.getElementById('root')!;
+function keep(value: object): object { return value; }
+const huge = ${nested};
+export const leak: object = keep({ callback: (): object => huge });`, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape/i);
+  });
+
+  it.each([
+    ['contextual void callback returning a host value', `export const leak: () => void = () => document.getElementById('root')!;`],
+    ['aggregate runtime value erased to a declared primitive', `type Dynamic = ReturnType<typeof JSON.parse>; function erase(value: object): Dynamic { return value; } const value = { raw: document.getElementById('root')! }; export const leak: string = erase(value);`],
+    ['same-allocation nested wrapper traversal', `interface Box { readonly next: object } function wrap(value: object): Box { return { next: value }; } const host: object = document.getElementById('root')!; export const leak: object = wrap(wrap(host));`],
+  ])('rejects facade runtime/type mismatch through %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape/i);
+  });
+
+  it('accepts resolved local callbacks across the modeled deferred APIs', async () => {
+    const result = await runGate(`import { useMemo, useReducer } from 'react';
+import { z } from 'zod';
+function reduce(state: number): number { return state + 1; }
+function refine(_value: string, _context: z.RefinementCtx<string>): void {}
+export function Fixture() {
+  const memo = useMemo(() => 'safe', []);
+  const [state] = useReducer(reduce, 0);
+  const rows = Array.from([1], (value) => value + 1);
+  const label = 'x'.replace('x', (value) => value);
+  z.string().superRefine(refine);
+  return <button onClick={() => undefined}>{memo}{state}{rows[0]}{label}</button>;
+}`, 'src/fixture.tsx');
+
+    expect(result.status, result.output).toBe(0);
+  });
+});
+
+describe('Task 9 total value-transfer and facade content controls', () => {
+  it.each([
+    ['tagged-template substitution', `function pass(_strings: TemplateStringsArray, value: object): object { return value; } export const leak: object = pass\`${'${document.getElementById(\'root\')!}'}\`;`],
+    ['object destructuring default', `const { raw = document.getElementById('root')! }: { raw?: object } = {}; export { raw };`],
+    ['array destructuring default', `const [raw = document.getElementById('root')!]: [object?] = []; export { raw };`],
+    ['computed object content', `declare const key: string; export const api: Record<string, object> = { safe: {}, [key]: document.getElementById('root')! };`],
+    ['computed null-prototype write content', `declare const key: string; const api = Object.create(null) as Record<string, object>; api.safe = {}; api[key] = document.getElementById('root')!; export { api };`],
+    ['reduce accumulator', `const host: object = document.getElementById('root')!; export const leak: object = [1].reduce<object>((accumulator) => accumulator, host);`],
+  ])('rejects facade capability transfer through %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape|HOST_UNKNOWN|Unknown/i);
+  });
+
+  it('rejects an unresolved JSON.stringify replacer', async () => {
+    const result = await runGate(`export {}; declare const external: (key: string, value: unknown) => unknown; const value = JSON.stringify({ x: 1 }, external); void value;`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it.each([
+    ['whole props capture', `let captured: object = {}; function Capture(props: { value: object }) { captured = props.value; return null; } const host: object = document.getElementById('root')!; const view = <Capture value={host} />; void view; export { captured };`],
+    ['nested props capture', `let captured: object = {}; function Capture({ nested: { value } }: { nested: { value: object } }) { captured = value; return null; } const host: object = document.getElementById('root')!; const view = <Capture nested={{ value: host }} />; void view; export { captured };`],
+    ['JSX children capture', `let captured: object = {}; function Capture({ children }: { children: object }) { captured = children; return null; } const host: object = document.getElementById('root')!; const view = <Capture>{host}</Capture>; void view; export { captured };`],
+    ['destructured direct argument return', `function unwrap({ value }: { value: object }): object { return value; } const host: object = document.getElementById('root')!; export const leak: object = unwrap({ value: host });`],
+    ['destructured direct argument capture', `let captured: object = {}; function capture({ value }: { value: object }): void { captured = value; } const host: object = document.getElementById('root')!; capture({ value: host }); export { captured };`],
+    ['rest parameter return', `function second(...values: object[]): object { return values[1]!; } const host: object = document.getElementById('root')!; export const leak: object = second({}, host);`],
+    ['spread-call return', `function second(_first: object, value: object): object { return value; } const host: object = document.getElementById('root')!; const values: [object, object] = [{}, host]; export const leak: object = second(...values);`],
+    ['aliased-call capture', `let captured: object = {}; function capture(value: object): void { captured = value; } const alias = capture; const host: object = document.getElementById('root')!; alias(host); export { captured };`],
+    ['meta-call capture', `let captured: object = {}; function capture(value: object): void { captured = value; } const host: object = document.getElementById('root')!; capture.call(undefined, host); export { captured };`],
+  ])('rejects facade interprocedural transfer through %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape|HOST_UNKNOWN|Unknown/i);
+  });
+
+  it.each([
+    ['resolved component props spread', `let captured!: object; function Capture({ value }: { value: object }) { captured = value; return null; } const host: object = document.getElementById('root')!; const props = { value: host }; const view = <Capture {...props} />; void view; export { captured };`],
+    ['resolved component object-rest parameter', `let captured!: object; function Capture({ ...props }: { value: object }) { captured = props.value; return null; } const host: object = document.getElementById('root')!; const view = <Capture value={host} />; void view; export { captured };`],
+    ['nested resolved component', `let captured!: object; function Capture({ inner }: { inner: object }) { captured = inner; return null; } function Outer({ value }: { value: object }) { return <Capture inner={value} />; } const host: object = document.getElementById('root')!; const view = <Outer value={host} />; void view; export { captured };`],
+    ['three-level resolved component chain', `let captured!: object; function Capture({ inner }: { inner: object }) { captured = inner; return null; } function Middle({ value }: { value: object }) { return <Capture inner={value} />; } function Outer({ value }: { value: object }) { return <Middle value={value} />; } const host: object = document.getElementById('root')!; const view = <Outer value={host} />; void view; export { captured };`],
+  ])('rejects facade transfer through %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape|HOST_UNKNOWN|Unknown/i);
+  });
+
+  it.each([
+    ['safe resolved component props spread', `let captured = 'first'; function Capture({ value }: { value: string }) { captured = value; return null; } const props = { value: 'second' }; const view = <Capture {...props} />; void view; export { captured };`],
+    ['safe resolved component object-rest parameter', `let captured = 'first'; function Capture({ ...props }: { value: string }) { captured = props.value; return null; } const view = <Capture value="second" />; void view; export { captured };`],
+    ['safe nested resolved component', `let captured = 'first'; function Capture({ inner }: { inner: string }) { captured = inner; return null; } function Outer({ value }: { value: string }) { return <Capture inner={value} />; } const view = <Outer value="second" />; void view; export { captured };`],
+  ])('accepts %s', async (_, source) => {
+    const result = await runGate(source, 'src/fixture.tsx');
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['intrinsic any callback', `declare const external: any; export const view = <button onClick={external}>go</button>;`, 'src/fixture.tsx'],
+    ['intrinsic spread callback', `import type { MouseEventHandler } from 'react'; declare const external: MouseEventHandler<HTMLButtonElement>; const props = { onClick: external }; export const view = <button {...props}>go</button>;`, 'src/fixture.tsx'],
+    ['replace any callback', `declare const external: any; const value = 'x'.replace('x', external); void value; export {};`, 'src/main.tsx'],
+    ['forwardRef callback', `import { forwardRef } from 'react'; declare const external: (props: {}, ref: unknown) => null; export const Comp = forwardRef(external);`, 'src/fixture.tsx'],
+    ['unbranded parameter fetch', `export function run(plugin: { fetch(): void }): void { plugin.fetch(); }`, 'src/main.tsx'],
+    ['unbranded mapped fetch', `interface Plugin { fetch(): void } declare const plugins: readonly Plugin[]; plugins.map((plugin) => plugin.fetch()); export {};`, 'src/main.tsx'],
+  ])('rejects unresolved callback or unbranded contract through %s', async (_, source, path) => {
+    const result = await runGate(source, path);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it('rejects a merged namespace class whose instance method returns a host capability', async () => {
+    const result = await runGate(`export function api(): void {} export namespace api { export class Raw { reveal(): object { return document.getElementById('root')!; } } }`, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape/i);
+  });
+});
+
+describe('Task 9 callback lifecycle and host-input controls', () => {
+  it.each([
+    ['useState initializer', `import { useState } from 'react'; declare const external: () => number; export function Fixture() { const [value] = useState(external); return <span>{value}</span>; }`],
+    ['useReducer initializer', `import { useReducer } from 'react'; function reducer(state: number, action: number) { return state + action; } declare const external: (arg: number) => number; export function Fixture() { const [value] = useReducer(reducer, 0, external); return <span>{value}</span>; }`],
+    ['state updater', `import { useState } from 'react'; declare const external: (value: number) => number; export function Fixture() { const [, setValue] = useState(0); setValue(external); return null; }`],
+    ['effect cleanup', `import { useEffect } from 'react'; declare const cleanup: () => void; export function Fixture() { useEffect(() => cleanup, []); return null; }`],
+    ['Zod global error callback', `import { z } from 'zod'; declare const external: (issue: unknown) => string; z.config({ customError: external }); export {};`],
+  ])('rejects unresolved framework callback lifecycle: %s', async (_, source) => {
+    const result = await runGate(source, 'src/fixture.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
+  });
+
+  it.each([
+    ['host MediaQueryListEvent capture', `let leaked: object = {}; const listener = (event: MediaQueryListEvent): void => { leaked = event; }; window.matchMedia('(max-width: 899px)').addEventListener('change', listener); export { leaked };`],
+    ['host Event capture', `let leaked: object = {}; const listener = (event: Event): void => { leaked = event; }; window.matchMedia('(max-width: 899px)').addEventListener('change', listener); export { leaked };`],
+    ['timer callback capture', `let leaked: object = {}; const host: object = document.getElementById('root')!; window.setInterval(() => { leaked = host; }, 10); export { leaked };`],
+    ['timer callback argument capture', `let leaked: object = {}; const host: object = document.getElementById('root')!; window.setInterval((value: object) => { leaked = value; }, 10, host); export { leaked };`],
+    ['exported host Event', `export function leak(event: Event): object { return event; }`],
+    ['catch binding', `let leaked: object = {}; try { throw document.getElementById('root')!; } catch (error) { leaked = error as object; } export { leaked };`],
+    ['inherited class field', `class Base { raw: object = document.getElementById('root')!; } export class Leak extends Base {}`],
+    ['inherited private state', `class Base { #raw: object = document.getElementById('root')!; reveal(): object { return this.#raw; } } export class Leak extends Base {}`],
+  ])('rejects facade host authority through %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape|HOST_UNKNOWN|Unknown/i);
+  });
+
+  it.each([
+    ['call thisArg', `function expose(this: object): object { return this; } const host: object = document.getElementById('root')!; export const leak: object = expose.call(host);`],
+    ['apply thisArg', `function expose(this: object): object { return this; } const host: object = document.getElementById('root')!; export const leak: object = expose.apply(host, []);`],
+    ['bound thisArg', `function expose(this: object): object { return this; } const host: object = document.getElementById('root')!; const bound = expose.bind(host); export const leak: object = bound();`],
+  ])('rejects facade authority through meta-call %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape|HOST_UNKNOWN|Unknown/i);
+  });
 });

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import ts from 'typescript';
 
 import {
@@ -10,6 +12,7 @@ import {
   ownedGlobalResults,
   ownedResultMethods,
   pureGlobalCalls,
+  pureLocalContractMethods,
   pureStandardMethods,
   reactCallSummaries,
   uiMethods,
@@ -17,16 +20,77 @@ import {
 } from './security-call-summaries.mjs';
 
 const ORIGIN = Object.freeze({
+  BOTTOM: 'Bottom',
   CONSTANT: 'Constant',
   OWNED: 'Owned',
   BORROWED: 'BorrowedData',
   AMBIENT: 'Ambient',
   OPAQUE: 'OpaqueCapability',
+  ESCAPED: 'Escaped',
   CALLABLE: 'Callable',
   UI_CELL: 'UiCell',
+  LOCAL_CAPABILITY: 'LocalCapabilityDefinition',
   ZOD: 'ZodSchema',
   UNKNOWN: 'Unknown',
 });
+
+const SURFACE = Object.freeze({
+  SCALAR: 'Scalar',
+  DATA: 'Data',
+  AGGREGATE: 'Aggregate',
+  CALLABLE: 'Callable',
+  HOST: 'HostHandle',
+  OPAQUE: 'OpaqueHandle',
+  UNKNOWN: 'Unknown',
+});
+
+// The abstract state must be finite even when application state recursively
+// embeds prior state (for example, append-only stores). Expressions already
+// fail closed after depth 20, so signatures retain at least that much
+// path-sensitive structure. Joins widen sooner: beyond this boundary a value
+// is data only when its entire transitive tail is capability-free; otherwise
+// it becomes Unknown. This bounds the lattice without dropping a descendant
+// Ambient/Opaque/Escaped/Unknown signal.
+const ORIGIN_JOIN_DEPTH_LIMIT = 4;
+const ORIGIN_SIGNATURE_DEPTH_LIMIT = 20;
+const ORIGIN_LARGE_ARGUMENT_LIMIT = 24;
+
+const symbolIdentity = new WeakMap();
+const sentinelIdentity = new Map();
+const originIdentity = new WeakMap();
+let nextSymbolIdentity = 1;
+let nextOriginIdentity = 1;
+
+function stableSymbolKey(symbol) {
+  const identities = typeof symbol === 'symbol' ? sentinelIdentity : symbolIdentity;
+  if (!identities.has(symbol)) {
+    identities.set(symbol, nextSymbolIdentity);
+    nextSymbolIdentity += 1;
+  }
+  return `${typeof symbol === 'symbol' ? 'sentinel' : 'ts-symbol'}:${identities.get(symbol)}`;
+}
+
+function stablePropertyKey(key) {
+  return typeof key === 'symbol' ? stableSymbolKey(key) : `property:${String(key)}`;
+}
+
+function stableOriginKey(value) {
+  if (!originIdentity.has(value)) {
+    originIdentity.set(value, nextOriginIdentity);
+    nextOriginIdentity += 1;
+  }
+  return `origin:${originIdentity.get(value)}`;
+}
+
+function defaultSurface(tag) {
+  if (tag === ORIGIN.CONSTANT) return SURFACE.SCALAR;
+  if (tag === ORIGIN.OWNED || tag === ORIGIN.UI_CELL || tag === ORIGIN.ZOD) return SURFACE.AGGREGATE;
+  if (tag === ORIGIN.CALLABLE) return SURFACE.CALLABLE;
+  if (tag === ORIGIN.AMBIENT) return SURFACE.HOST;
+  if (tag === ORIGIN.OPAQUE) return SURFACE.OPAQUE;
+  if (tag === ORIGIN.UNKNOWN || tag === ORIGIN.ESCAPED) return SURFACE.UNKNOWN;
+  return SURFACE.DATA;
+}
 
 const higherOrderMethods = new Set([
   'every',
@@ -37,13 +101,20 @@ const higherOrderMethods = new Set([
   'forEach',
   'map',
   'reduce',
+  'reduceRight',
   'some',
   'sort',
 ]);
 
 function callableArgumentIsResolved(value) {
   return value !== undefined && value.callables.length > 0
-    && value.callables.every((entry) => ['contract', 'function', 'react', 'ui'].includes(entry.kind));
+    && value.callables.every((entry) => ['bound', 'function', 'react', 'ui'].includes(entry.kind));
+}
+
+function callableArgumentRequiresResolution(node, value, checker) {
+  return value !== undefined && (value.callables.length > 0
+    || typeIsCallable(node, checker)
+    || expressionTypeIsUncertain(node, checker));
 }
 
 function emptyOrigin() {
@@ -56,51 +127,309 @@ function emptyOrigin() {
     shape: new Map(),
     content: undefined,
     nullPrototype: false,
+    surfaces: new Set(),
+    hiddenKeys: new Set(),
   };
 }
 
 function origin(tag, provenance, extras = {}) {
   const value = emptyOrigin();
   value.tags.add(tag);
+  value.surfaces.add(defaultSurface(tag));
   if (provenance !== undefined) value.provenance.add(provenance);
   Object.assign(value, extras);
   return value;
 }
 
-function callableKey(callable) {
-  const receiver = callable.receiver === undefined ? '' : originSignature(callable.receiver);
+function snapshotOrigin(value, seen = new WeakMap()) {
+  if (seen.has(value)) return seen.get(value);
+  const snapshot = emptyOrigin();
+  seen.set(value, snapshot);
+  snapshot.tags = new Set(value.tags);
+  snapshot.provenance = new Set(value.provenance);
+  snapshot.allocations = new Set(value.allocations);
+  snapshot.constants = new Set(value.constants);
+  snapshot.surfaces = new Set(value.surfaces);
+  snapshot.callables = [...value.callables];
+  snapshot.nullPrototype = value.nullPrototype;
+  snapshot.hiddenKeys = new Set(value.hiddenKeys);
+  snapshot.content = value.content === undefined ? undefined : snapshotOrigin(value.content, seen);
+  snapshot.shape = new Map([...value.shape.entries()].map(([key, child]) => [
+    key,
+    snapshotOrigin(child, seen),
+  ]));
+  return snapshot;
+}
+
+function signatureState() {
+  return {
+    origins: new WeakMap(),
+    visitingOrigins: new WeakSet(),
+    callables: new WeakMap(),
+    visitingCallables: new WeakSet(),
+  };
+}
+
+function depthCached(cache, value, depth) {
+  return cache.get(value)?.get(depth);
+}
+
+function setDepthCached(cache, value, depth, result) {
+  let byDepth = cache.get(value);
+  if (byDepth === undefined) {
+    byDepth = new Map();
+    cache.set(value, byDepth);
+  }
+  byDepth.set(depth, result);
+}
+
+function structuralDigest(parts) {
+  const hash = createHash('sha256');
+  for (const part of parts) {
+    const text = `${typeof part}:${String(part)}`;
+    hash.update(String(text.length));
+    hash.update(':');
+    hash.update(text);
+    hash.update(';');
+  }
+  return hash.digest('hex');
+}
+
+function transitiveSecurityFacts(root) {
+  const tags = new Set();
+  const surfaces = new Set();
+  const callableKinds = new Set();
+  const seenOrigins = new WeakSet();
+  const seenCallables = new WeakSet();
+  let callableCount = 0;
+  let originCount = 0;
+  const visitCallable = (callable) => {
+    if (seenCallables.has(callable)) return;
+    seenCallables.add(callable);
+    callableCount += 1;
+    callableKinds.add(`${callable.kind}:${callable.name ?? ''}:${callable.receiverLabel ?? ''}`);
+    if (callable.receiver !== undefined) visitOrigin(callable.receiver);
+    if (callable.boundThis !== undefined) visitOrigin(callable.boundThis);
+    for (const value of callable.closure?.values() ?? []) visitOrigin(value);
+    for (const value of callable.boundArguments ?? []) visitOrigin(value);
+    for (const target of callable.targets ?? []) visitCallable(target);
+  };
+  const visitOrigin = (value) => {
+    if (seenOrigins.has(value)) return;
+    seenOrigins.add(value);
+    originCount += 1;
+    for (const tag of value.tags) tags.add(tag);
+    for (const surface of value.surfaces) surfaces.add(surface);
+    for (const callable of value.callables) visitCallable(callable);
+    if (value.content !== undefined) visitOrigin(value.content);
+    for (const child of value.shape.values()) visitOrigin(child);
+  };
+  visitOrigin(root);
+  return { callableCount, callableKinds, originCount, surfaces, tags };
+}
+
+function abstractLargeArgument(value, provenance) {
+  const facts = transitiveSecurityFacts(value);
+  if (facts.originCount + facts.callableCount <= ORIGIN_LARGE_ARGUMENT_LIMIT) return value;
+  if (value.shape.size > 0 && value.shape.size <= 32) {
+    // Preserve a finite public record/tuple surface (especially analyzed
+    // methods returned beside large data) while bounding each oversized
+    // child and the aggregate content tail. A security-bearing child widens
+    // to Unknown, never to safe data, so facade traversal still fails closed.
+    const compact = emptyOrigin();
+    compact.tags = new Set(value.tags);
+    compact.allocations = new Set(value.allocations);
+    compact.constants = new Set(value.constants);
+    compact.callables = [...value.callables];
+    compact.provenance = new Set(value.provenance);
+    compact.nullPrototype = value.nullPrototype;
+    compact.surfaces = new Set(value.surfaces);
+    compact.hiddenKeys = new Set(value.hiddenKeys);
+    compact.shape = new Map([...value.shape.entries()].map(([key, child]) => {
+      const childFacts = transitiveSecurityFacts(child);
+      return [key, child.callables.length > 0
+        || childFacts.originCount + childFacts.callableCount <= ORIGIN_LARGE_ARGUMENT_LIMIT
+        ? child
+        : widenedSecurityTail(child)];
+    }));
+    compact.content = value.content === undefined ? undefined : widenedSecurityTail(value.content);
+    compact.provenance.add(`${provenance}: finite surface retained with bounded transitive content`);
+    return normalizeJoined(compact);
+  }
+  const carriesAuthority = [ORIGIN.AMBIENT, ORIGIN.OPAQUE, ORIGIN.ESCAPED, ORIGIN.UNKNOWN, ORIGIN.UI_CELL]
+    .some((tag) => facts.tags.has(tag))
+    || [SURFACE.HOST, SURFACE.OPAQUE, SURFACE.UNKNOWN].some((surface) => facts.surfaces.has(surface))
+    || facts.callableCount > 0;
+  return carriesAuthority
+    ? origin(ORIGIN.UNKNOWN, `${provenance}: large security-bearing argument widened closed`)
+    : origin(ORIGIN.BORROWED, `${provenance}: large capability-free data argument abstracted`);
+}
+
+function transitiveSecurityDigest(value) {
+  const facts = transitiveSecurityFacts(value);
+  return structuralDigest([
+    'transitive-security-tail',
+    ...[...facts.tags].sort(),
+    'surfaces',
+    ...[...facts.surfaces].sort(),
+    'callables',
+    ...[...facts.callableKinds].sort(),
+  ]);
+}
+
+function widenedSecurityTail(...values) {
+  const facts = values.map(transitiveSecurityFacts);
+  const tags = new Set(facts.flatMap((item) => [...item.tags]));
+  const surfaces = new Set(facts.flatMap((item) => [...item.surfaces]));
+  const hasAuthority = [ORIGIN.AMBIENT, ORIGIN.OPAQUE, ORIGIN.ESCAPED, ORIGIN.UNKNOWN, ORIGIN.UI_CELL]
+    .some((tag) => tags.has(tag))
+    || [SURFACE.HOST, SURFACE.OPAQUE, SURFACE.UNKNOWN].some((surface) => surfaces.has(surface))
+    || facts.some((item) => item.callableKinds.size > 0);
+  return hasAuthority
+    ? origin(ORIGIN.UNKNOWN, 'security-bearing structure widened at finite join boundary')
+    : origin(ORIGIN.BORROWED, 'capability-free structure widened at finite join boundary');
+}
+
+function callableKey(callable, state = signatureState(), depth = 0) {
+  const cached = depthCached(state.callables, callable, depth);
+  if (cached !== undefined) return cached;
+  if (state.visitingCallables.has(callable)) {
+    return structuralDigest(['callable-cycle', callable.kind, callable.name ?? '', callable.id ?? '']);
+  }
+  if (depth >= ORIGIN_SIGNATURE_DEPTH_LIMIT) {
+    const key = structuralDigest([
+      'callable-security-tail',
+      callable.kind,
+      callable.name ?? '',
+      callable.receiverLabel ?? '',
+      callable.id ?? '',
+      callable.receiver === undefined ? '' : transitiveSecurityDigest(callable.receiver),
+      callable.boundThis === undefined ? '' : transitiveSecurityDigest(callable.boundThis),
+      ...(callable.closure === undefined
+        ? []
+        : [...callable.closure.values()].map(transitiveSecurityDigest).sort()),
+      ...(callable.boundArguments ?? []).map(transitiveSecurityDigest).sort(),
+    ]);
+    setDepthCached(state.callables, callable, depth, key);
+    return key;
+  }
+  state.visitingCallables.add(callable);
+  const receiver = callable.receiver === undefined ? '' : originSignature(callable.receiver, state, depth + 1);
   const closure = callable.closure === undefined
-    ? ''
+    ? []
     : [...callable.closure.entries()]
-      .map(([symbol, value]) => `${String(symbol.id ?? symbol.escapedName)}=${[...value.tags].sort().join('|')}`)
-      .sort()
-      .join(';');
-  return `${callable.kind}:${callable.name ?? ''}:${callable.id ?? ''}:${receiver}:${closure}`;
+      .map(([symbol, value]) => `${stableSymbolKey(symbol)}=${originSignature(value, state, depth + 1)}`)
+      .sort();
+  const targets = (callable.targets ?? []).map((target) => callableKey(target, state, depth + 1)).sort();
+  const boundArguments = (callable.boundArguments ?? [])
+    .map((value) => originSignature(value, state, depth + 1));
+  const boundThis = callable.boundThis === undefined ? '' : originSignature(callable.boundThis, state, depth + 1);
+  const key = structuralDigest([
+    'callable',
+    callable.kind,
+    callable.name ?? '',
+    callable.receiverLabel ?? '',
+    callable.id ?? '',
+    receiver,
+    ...closure,
+    'targets',
+    ...targets,
+    'bound-arguments',
+    ...boundArguments,
+    'bound-this',
+    boundThis,
+  ]);
+  state.visitingCallables.delete(callable);
+  setDepthCached(state.callables, callable, depth, key);
+  return key;
 }
 
 function normalizeJoined(value) {
-  const authorityTags = [ORIGIN.AMBIENT, ORIGIN.BORROWED, ORIGIN.OPAQUE, ORIGIN.UNKNOWN]
+  const authorityTags = [ORIGIN.AMBIENT, ORIGIN.BORROWED, ORIGIN.OPAQUE, ORIGIN.ESCAPED, ORIGIN.UNKNOWN]
     .filter((tag) => value.tags.has(tag));
   if (value.tags.has(ORIGIN.OWNED) && authorityTags.length > 0) {
     value.tags.delete(ORIGIN.OWNED);
     value.tags.add(ORIGIN.UNKNOWN);
+    value.surfaces.add(SURFACE.UNKNOWN);
     value.provenance.add('mixed owned and non-owned alternatives');
   }
   if (value.tags.has(ORIGIN.UI_CELL) && authorityTags.length > 0) {
     value.tags.delete(ORIGIN.UI_CELL);
     value.tags.add(ORIGIN.UNKNOWN);
+    value.surfaces.add(SURFACE.UNKNOWN);
     value.provenance.add('mixed UI cell and non-owned alternatives');
   }
   if (value.tags.size === 0) value.tags.add(ORIGIN.UNKNOWN);
   return value;
 }
 
-export function joinOrigins(...values) {
-  const present = values.filter((value) => value !== undefined);
-  if (present.length === 0) return origin(ORIGIN.UNKNOWN, 'missing origin');
+function normalizedTagUnion(left, right) {
+  const tags = new Set([...left.tags, ...right.tags]);
+  const authorityTags = [ORIGIN.AMBIENT, ORIGIN.BORROWED, ORIGIN.OPAQUE, ORIGIN.ESCAPED, ORIGIN.UNKNOWN]
+    .filter((tag) => tags.has(tag));
+  if (tags.has(ORIGIN.OWNED) && authorityTags.length > 0) {
+    tags.delete(ORIGIN.OWNED);
+    tags.add(ORIGIN.UNKNOWN);
+  }
+  if (tags.has(ORIGIN.UI_CELL) && authorityTags.length > 0) {
+    tags.delete(ORIGIN.UI_CELL);
+    tags.add(ORIGIN.UNKNOWN);
+  }
+  if (tags.size === 0) tags.add(ORIGIN.UNKNOWN);
+  return tags;
+}
+
+function setEquals(left, right) {
+  return left.size === right.size && [...right].every((value) => left.has(value));
+}
+
+function setContains(left, right) {
+  return [...right].every((value) => left.has(value));
+}
+
+function originSubsumes(left, right, seen = new WeakMap(), depth = 0) {
+  if (left === right) return true;
+  // Returning false forces mergeOriginPair to materialize the finite,
+  // conservative tail instead of retaining either unbounded operand.
+  if (depth >= ORIGIN_JOIN_DEPTH_LIMIT) return false;
+  let rightSet = seen.get(left);
+  if (rightSet?.has(right)) return true;
+  if (rightSet === undefined) {
+    rightSet = new WeakSet();
+    seen.set(left, rightSet);
+  }
+  rightSet.add(right);
+
+  if (!setEquals(left.tags, normalizedTagUnion(left, right))) return false;
+  if (!setContains(left.allocations, right.allocations)
+    || !setContains(left.constants, right.constants)
+    || !setContains(left.surfaces, right.surfaces)) return false;
+  if (left.nullPrototype && !right.nullPrototype) return false;
+  if (![...left.hiddenKeys].every((key) => right.hiddenKeys.has(key))) return false;
+
+  const leftCallableKeys = new Set(left.callables.map((item) => callableKey(item)));
+  if (!right.callables.every((item) => leftCallableKeys.has(callableKey(item)))) return false;
+  if (right.content !== undefined
+    && (left.content === undefined || !originSubsumes(left.content, right.content, seen, depth + 1))) return false;
+  for (const [key, child] of right.shape) {
+    const leftChild = left.shape.get(key);
+    if (leftChild === undefined || !originSubsumes(leftChild, child, seen, depth + 1)) return false;
+  }
+  return true;
+}
+
+function mergeOriginPair(left, right, depth = 0) {
+  if (left.tags.size === 1 && left.tags.has(ORIGIN.BOTTOM)) return right;
+  if (right.tags.size === 1 && right.tags.has(ORIGIN.BOTTOM)) return left;
+  if (depth >= ORIGIN_JOIN_DEPTH_LIMIT) return widenedSecurityTail(left, right);
+  if (left === right) return left;
+  if (originSubsumes(left, right, new WeakMap(), depth)) return left;
+  if (originSubsumes(right, left, new WeakMap(), depth)) return right;
   const output = emptyOrigin();
+  output.nullPrototype = left.nullPrototype && right.nullPrototype;
+  output.hiddenKeys = new Set([...left.hiddenKeys].filter((key) => right.hiddenKeys.has(key)));
   const callableKeys = new Set();
-  for (const value of present) {
+  for (const value of [left, right]) {
     for (const tag of value.tags) output.tags.add(tag);
     for (const allocation of value.allocations) output.allocations.add(allocation);
     for (const constant of value.constants) output.constants.add(constant);
@@ -112,17 +441,34 @@ export function joinOrigins(...values) {
       }
     }
     for (const item of value.provenance) output.provenance.add(item);
-    output.nullPrototype ||= value.nullPrototype;
-    output.content = output.content === undefined
-      ? value.content
-      : joinOrigins(output.content, value.content);
-    for (const [key, child] of value.shape) {
-      output.shape.set(key, output.shape.has(key)
-        ? joinOrigins(output.shape.get(key), child)
+    for (const item of value.surfaces) output.surfaces.add(item);
+  }
+  output.content = left.content === undefined
+    ? right.content === undefined
+      ? undefined
+      : depth + 1 >= ORIGIN_JOIN_DEPTH_LIMIT
+        ? widenedSecurityTail(right.content)
+        : right.content
+    : right.content === undefined
+      ? depth + 1 >= ORIGIN_JOIN_DEPTH_LIMIT
+        ? widenedSecurityTail(left.content)
+        : left.content
+      : mergeOriginPair(left.content, right.content, depth + 1);
+  output.shape = new Map(left.shape);
+  for (const [key, child] of right.shape) {
+    output.shape.set(key, output.shape.has(key)
+      ? mergeOriginPair(output.shape.get(key), child, depth + 1)
+      : depth + 1 >= ORIGIN_JOIN_DEPTH_LIMIT
+        ? widenedSecurityTail(child)
         : child);
-    }
   }
   return normalizeJoined(output);
+}
+
+export function joinOrigins(...values) {
+  const present = values.filter((value) => value !== undefined);
+  if (present.length === 0) return origin(ORIGIN.UNKNOWN, 'missing origin');
+  return present.slice(1).reduce((output, value) => mergeOriginPair(output, value), present[0]);
 }
 
 function withCallable(callable, provenance) {
@@ -246,24 +592,87 @@ export function staticStrings(node, constants, checker) {
       ...staticStrings(current.whenFalse, constants, checker),
     ]);
   }
+  if (ts.isIdentifier(current)) {
+    const symbol = resolvedSymbol(current, checker);
+    const declaration = symbol?.declarations?.find((candidate) =>
+      ts.isVariableDeclaration(candidate) && candidate.initializer !== undefined);
+    if (declaration !== undefined && ts.isVariableDeclaration(declaration)
+      && declaration.initializer !== undefined) {
+      const values = staticStrings(declaration.initializer, constants, checker);
+      if (values.size > 0) return values;
+    }
+  }
+  const values = new Set();
+  const collectType = (type) => {
+    if (type.isUnion()) {
+      type.types.forEach(collectType);
+      return;
+    }
+    if ((type.flags & ts.TypeFlags.StringLiteral) !== 0) values.add(type.value);
+  };
+  collectType(checker.getTypeAtLocation(current));
+  if (values.size > 0) return values;
   return new Set();
 }
 
-function originSignature(value, depth = 0) {
-  if (depth > 1) return [...value.tags].sort().join('|');
+export function staticKeys(node, constants, checker) {
+  const values = new Set(staticStrings(node, constants, checker));
+  const directNumber = staticNumber(node, constants, checker, new Set());
+  if (directNumber !== undefined) values.add(directNumber);
+  const collectType = (type) => {
+    if (type.isUnion()) {
+      type.types.forEach(collectType);
+      return;
+    }
+    if ((type.flags & ts.TypeFlags.NumberLiteral) !== 0) values.add(type.value);
+  };
+  collectType(checker.getTypeAtLocation(unwrapExpression(node) ?? node));
+  return values;
+}
+
+function originSignature(value, state = signatureState(), depth = 0) {
+  const cached = depthCached(state.origins, value, depth);
+  if (cached !== undefined) return cached;
+  if (state.visitingOrigins.has(value)) {
+    return structuralDigest([
+      'origin-cycle',
+      ...[...value.tags].sort(),
+      'allocations',
+      ...[...value.allocations].sort(),
+    ]);
+  }
+  if (depth >= ORIGIN_SIGNATURE_DEPTH_LIMIT) {
+    const signature = transitiveSecurityDigest(value);
+    setDepthCached(state.origins, value, depth, signature);
+    return signature;
+  }
+  state.visitingOrigins.add(value);
   const shape = [...value.shape.entries()]
-    .map(([key, child]) => `${key}:${originSignature(child, depth + 1)}`)
-    .sort()
-    .join(',');
-  return [
-    [...value.tags].sort().join('|'),
-    [...value.allocations].sort().join('|'),
-    [...value.constants].sort().join('|'),
-    value.callables.map((item) => `${item.kind}:${item.name ?? ''}:${item.id ?? ''}`).sort().join('|'),
-    value.content === undefined ? '' : originSignature(value.content, depth + 1),
-    shape,
+    .map(([key, child]) => `${stablePropertyKey(key)}:${originSignature(child, state, depth + 1)}`)
+    .sort();
+  const signature = structuralDigest([
+    'origin',
+    ...[...value.tags].sort(),
+    'allocations',
+    ...[...value.allocations].sort(),
+    'constants',
+    ...[...value.constants].sort(),
+    'surfaces',
+    ...[...value.surfaces].sort(),
+    'callables',
+    ...value.callables.map((item) => callableKey(item, state, depth + 1)).sort(),
+    'content',
+    value.content === undefined ? '' : originSignature(value.content, state, depth + 1),
+    'shape',
+    ...shape,
+    'prototype',
     value.nullPrototype ? 'null-prototype' : '',
-  ].join('::');
+    'hidden',
+    ...[...value.hiddenKeys].map(stablePropertyKey).sort(),
+  ]);
+  state.visitingOrigins.delete(value);
+  setDepthCached(state.origins, value, depth, signature);
+  return signature;
 }
 
 export function describeOrigin(value) {
@@ -286,9 +695,75 @@ function typeText(node, checker) {
   }
 }
 
+function isDomLikeTsType(type, checker, seen = new Set()) {
+  const visit = (type) => {
+    if (seen.has(type)) return false;
+    seen.add(type);
+    if (type.isUnionOrIntersection?.()) return type.types.some(visit);
+    const symbol = type.aliasSymbol ?? type.getSymbol?.();
+    const name = symbol?.getName?.() ?? '';
+    const declarations = symbol?.declarations ?? [];
+    const hostDeclaration = declarations.some((declaration) =>
+      /typescript[\\/]lib[\\/]lib\.dom(?:\.iterable)?\.d\.ts$/u.test(declaration.getSourceFile().fileName));
+    const reactHostEvent = /(?:Synthetic)?Event$/u.test(name) && declarations.some((declaration) =>
+      /node_modules[\\/]@types[\\/]react[\\/]/u.test(declaration.getSourceFile().fileName));
+    if ((hostDeclaration || reactHostEvent)
+      && /^(?:Window|Document|Navigator|Location|History|MediaQueryList|.*Event|Storage|IDB.*|WebSocket|XMLHttpRequest|EventSource|Node|Element|HTMLElement|HTML.*Element|SVG.*Element)$/u.test(name)) {
+      return true;
+    }
+    const constraint = checker.getBaseConstraintOfType?.(type);
+    return constraint !== undefined && constraint !== type && visit(constraint);
+  };
+  return visit(type);
+}
+
+function typedHostReceiverRoot(node, checker) {
+  const roots = new Set();
+  const seen = new Set();
+  const visit = (type) => {
+    if (seen.has(type)) return;
+    seen.add(type);
+    if (type.isUnionOrIntersection?.()) {
+      type.types.forEach(visit);
+      return;
+    }
+    const symbol = type.aliasSymbol ?? type.getSymbol?.();
+    const root = new Map([
+      ['Window', 'window'],
+      ['Document', 'document'],
+      ['Navigator', 'navigator'],
+      ['Location', 'location'],
+      ['History', 'history'],
+    ]).get(symbol?.getName?.());
+    if (root !== undefined) roots.add(root);
+    const constraint = checker.getBaseConstraintOfType?.(type);
+    if (constraint !== undefined && constraint !== type) visit(constraint);
+  };
+  try {
+    visit(checker.getTypeAtLocation(node));
+  } catch {
+    return undefined;
+  }
+  return roots.size === 1 ? [...roots][0] : undefined;
+}
+
 function isDomLikeType(node, checker) {
-  const text = typeText(node, checker);
-  return /(?:^|[^A-Za-z])(?:Element|HTMLElement|HTML[A-Za-z]+Element|Document|Window|Navigator|Location|History|MediaQueryList|Storage|IDB[A-Za-z]*|WebSocket|XMLHttpRequest|EventSource|Node)(?:$|[^A-Za-z])/u.test(text);
+  try {
+    return isDomLikeTsType(checker.getTypeAtLocation(node), checker);
+  } catch {
+    return false;
+  }
+}
+
+function isPrimitiveLikeType(node, checker) {
+  const type = checker.getTypeAtLocation(node);
+  const primitiveFlags = ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike
+    | ts.TypeFlags.BigIntLike | ts.TypeFlags.ESSymbolLike | ts.TypeFlags.Void
+    | ts.TypeFlags.Undefined | ts.TypeFlags.Null | ts.TypeFlags.Never;
+  if ((type.flags & primitiveFlags) !== 0) return true;
+  return type.isUnionOrIntersection?.()
+    ? type.types.every((member) => (member.flags & primitiveFlags) !== 0)
+    : false;
 }
 
 export function expressionTypeIsUncertain(node, checker) {
@@ -300,6 +775,269 @@ export function expressionTypeIsUncertain(node, checker) {
 function typeIsCallable(node, checker) {
   try {
     return checker.getSignaturesOfType(checker.getTypeAtLocation(node), ts.SignatureKind.Call).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function isStandardReceiverType(node, checker) {
+  const standardNames = new Set(['Array', 'ReadonlyArray', 'Map', 'ReadonlyMap', 'Set', 'ReadonlySet', 'WeakMap', 'WeakSet', 'String', 'RegExp']);
+  const isStandard = (type) => {
+    if (type.isUnionOrIntersection?.()) {
+      const members = type.types.filter((member) =>
+        (member.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Never)) === 0);
+      return members.length > 0 && members.every(isStandard);
+    }
+    if ((type.flags & ts.TypeFlags.StringLike) !== 0) return true;
+    if (checker.isArrayType(type) || checker.isTupleType(type)) return true;
+    const name = type.aliasSymbol?.getName() ?? type.getSymbol()?.getName();
+    return name !== undefined && standardNames.has(name);
+  };
+  try {
+    return isStandard(checker.getTypeAtLocation(node));
+  } catch {
+    return false;
+  }
+}
+
+function isZodLikeType(node, checker) {
+  const seen = new Set();
+  const visit = (type) => {
+    if (seen.has(type)) return false;
+    seen.add(type);
+    if (type.isUnionOrIntersection?.() && type.types.some(visit)) return true;
+    const symbol = type.aliasSymbol ?? type.getSymbol?.();
+    if (symbol?.declarations?.some((declaration) => /node_modules[\\/]zod[\\/]/u.test(declaration.getSourceFile().fileName))) {
+      return true;
+    }
+    return [...(type.aliasTypeArguments ?? type.typeArguments ?? [])].some(visit);
+  };
+  try {
+    return visit(checker.getTypeAtLocation(node));
+  } catch {
+    return false;
+  }
+}
+
+function typeBrandFromDeclaration(node, checker, names, pathPattern) {
+  const type = checker.getTypeAtLocation(node);
+  const symbol = type.aliasSymbol ?? type.getSymbol?.();
+  return symbol !== undefined && names.has(symbol.getName())
+    && (symbol.declarations?.some((declaration) => pathPattern.test(declaration.getSourceFile().fileName)) ?? false);
+}
+
+function isReactUiCallbackType(node, checker) {
+  return typeBrandFromDeclaration(
+    node,
+    checker,
+    new Set(['Dispatch', 'DispatchWithoutAction']),
+    /node_modules[\\/]@types[\\/]react[\\/]/u,
+  );
+}
+
+function isCapabilityValidationType(node, checker) {
+  return typeBrandFromDeclaration(
+    node,
+    checker,
+    new Set(['CapabilityValidationPort']),
+    /src[\\/]domain[\\/]types\.ts$/u,
+  );
+}
+
+function isLocalCapabilityDefinitionType(node, checker) {
+  const expectedProperties = new Set(['argumentsSchema', 'deriveResource', 'effect', 'facts', 'reduce']);
+  const expectedMethodArities = new Map([
+    ['deriveResource', 1],
+    ['facts', 1],
+    ['reduce', 2],
+  ]);
+  const seen = new Set();
+  const visit = (type) => {
+    if (seen.has(type)) return false;
+    seen.add(type);
+    if (type.isUnionOrIntersection?.()) return type.types.some(visit);
+    const symbol = type.aliasSymbol ?? type.getSymbol?.();
+    if (symbol?.getName?.() !== 'CapabilityDefinition'
+      || !(symbol.declarations?.some((declaration) =>
+        /src[\\/]sandbox[\\/]capabilities\.ts$/u.test(declaration.getSourceFile().fileName)) ?? false)) return false;
+    const properties = checker.getPropertiesOfType(type);
+    if (properties.length !== expectedProperties.size
+      || properties.some((property) => !expectedProperties.has(property.getName()))) return false;
+    for (const [method, arity] of expectedMethodArities) {
+      const property = properties.find((candidate) => candidate.getName() === method);
+      const declaration = property?.valueDeclaration ?? property?.declarations?.[0];
+      if (property === undefined || declaration === undefined) return false;
+      const propertyType = checker.getTypeOfSymbolAtLocation(property, declaration);
+      const signatures = checker.getSignaturesOfType(propertyType, ts.SignatureKind.Call);
+      if (signatures.length !== 1 || signatures[0].getParameters().length !== arity) return false;
+    }
+    return true;
+  };
+  try {
+    return visit(checker.getTypeAtLocation(node));
+  } catch {
+    return false;
+  }
+}
+
+const exactLocalContractShapes = new Map([
+  ['client', { method: 'fetch', parameterTypes: [], returnType: 'string' }],
+  ['window', { method: 'focus', parameterTypes: [], returnType: 'void' }],
+  ['document', { method: 'getElementById', parameterTypes: ['string'], returnType: 'string' }],
+]);
+
+function exactInlineSingleMethod(receiver, memberName, checker) {
+  const symbol = resolvedSymbol(receiver, checker);
+  const declarations = symbol?.declarations ?? [];
+  if (declarations.length !== 1 || !ts.isParameter(declarations[0])
+    || !ts.isIdentifier(declarations[0].name) || declarations[0].name.text !== receiver.text
+    || declarations[0].questionToken !== undefined || declarations[0].dotDotDotToken !== undefined
+    || declarations[0].type === undefined || !ts.isTypeLiteralNode(declarations[0].type)
+    || declarations[0].type.members.length !== 1) return undefined;
+  const member = declarations[0].type.members[0];
+  const memberText = member.name !== undefined && (ts.isIdentifier(member.name)
+    || ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name))
+    ? member.name.text
+    : undefined;
+  if (memberText !== memberName || member.questionToken !== undefined) return undefined;
+  try {
+    const receiverType = checker.getTypeAtLocation(receiver);
+    const properties = checker.getPropertiesOfType(receiverType);
+    if (properties.length !== 1 || properties[0].getName() !== memberName
+      || checker.getSignaturesOfType(receiverType, ts.SignatureKind.Call).length !== 0
+      || checker.getSignaturesOfType(receiverType, ts.SignatureKind.Construct).length !== 0
+      || checker.getIndexInfosOfType(receiverType).length !== 0) return undefined;
+    const propertyDeclaration = properties[0].valueDeclaration ?? properties[0].declarations?.[0];
+    if (propertyDeclaration === undefined) return undefined;
+    const propertyType = checker.getTypeOfSymbolAtLocation(properties[0], propertyDeclaration);
+    const signatures = checker.getSignaturesOfType(propertyType, ts.SignatureKind.Call);
+    if (propertyType.isUnionOrIntersection?.()
+      || checker.getPropertiesOfType(propertyType).length !== 0
+      || checker.getIndexInfosOfType(propertyType).length !== 0
+      || checker.getSignaturesOfType(propertyType, ts.SignatureKind.Construct).length !== 0
+      || signatures.length !== 1 || signatures[0].thisParameter !== undefined) return undefined;
+    return signatures[0];
+  } catch {
+    return undefined;
+  }
+}
+
+function signatureParameterType(signature, index, checker) {
+  const parameter = signature.getParameters()[index];
+  const declaration = parameter?.valueDeclaration ?? parameter?.declarations?.[0];
+  if (parameter === undefined || declaration === undefined
+    || parameter.flags & ts.SymbolFlags.Optional
+    || ('questionToken' in declaration && declaration.questionToken !== undefined)
+    || ('dotDotDotToken' in declaration && declaration.dotDotDotToken !== undefined)) return undefined;
+  return checker.getTypeOfSymbolAtLocation(parameter, declaration);
+}
+
+function exactPrimitiveType(type, expected) {
+  const expectedFlags = new Map([
+    ['string', ts.TypeFlags.String],
+    ['void', ts.TypeFlags.Void],
+    ['boolean', ts.TypeFlags.Boolean],
+  ]);
+  return type.flags === expectedFlags.get(expected);
+}
+
+function scalarType(type) {
+  const scalarFlags = ts.TypeFlags.String | ts.TypeFlags.StringLiteral
+    | ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral
+    | ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral
+    | ts.TypeFlags.BigInt | ts.TypeFlags.BigIntLiteral
+    | ts.TypeFlags.ESSymbol | ts.TypeFlags.UniqueESSymbol
+    | ts.TypeFlags.Null | ts.TypeFlags.Undefined;
+  return (type.flags & scalarFlags) !== 0 && (type.flags & ~scalarFlags) === 0;
+}
+
+function sameSafeType(left, right, checker) {
+  return left === right || (scalarType(left) && scalarType(right)
+    && left.flags === right.flags && checker.typeToString(left) === checker.typeToString(right));
+}
+
+function exactLocalContractReceiver(node, memberName, checker) {
+  const receiver = unwrapExpression(node);
+  if (receiver === undefined || !ts.isIdentifier(receiver)) return undefined;
+  const expected = exactLocalContractShapes.get(receiver.text);
+  if (expected === undefined || expected.method !== memberName) return undefined;
+  const symbol = resolvedSymbol(receiver, checker);
+  const declarations = symbol?.declarations ?? [];
+  if (declarations.length !== 1 || !ts.isParameter(declarations[0])
+    || !ts.isIdentifier(declarations[0].name) || declarations[0].name.text !== receiver.text) {
+    return undefined;
+  }
+  try {
+    const signature = exactInlineSingleMethod(receiver, memberName, checker);
+    if (signature === undefined || (signature.typeParameters?.length ?? 0) !== 0
+      || signature.getParameters().length !== expected.parameterTypes.length) return undefined;
+    const parameterTypes = signature.getParameters().map((_, index) =>
+      signatureParameterType(signature, index, checker));
+    if (parameterTypes.some((type, index) => type === undefined
+      || !exactPrimitiveType(type, expected.parameterTypes[index]))) return undefined;
+    const returnType = checker.getReturnTypeOfSignature(signature);
+    if (!exactPrimitiveType(returnType, expected.returnType)) return undefined;
+    return receiver.text;
+  } catch {
+    return undefined;
+  }
+}
+
+function exactReflectContract(memberName, signature, checker) {
+  if ((signature.typeParameters?.length ?? 0) !== 0) return false;
+  const expectedCount = memberName === 'get' ? 2 : memberName === 'set' ? 3 : -1;
+  if (signature.getParameters().length !== expectedCount) return false;
+  const targetType = signatureParameterType(signature, 0, checker);
+  const keyType = signatureParameterType(signature, 1, checker);
+  if (targetType === undefined || keyType === undefined || !keyType.isStringLiteral?.()
+    || targetType.isUnionOrIntersection?.()
+    || checker.getSignaturesOfType(targetType, ts.SignatureKind.Call).length !== 0
+    || checker.getSignaturesOfType(targetType, ts.SignatureKind.Construct).length !== 0
+    || checker.getIndexInfosOfType(targetType).length !== 0) return false;
+  const properties = checker.getPropertiesOfType(targetType);
+  if (properties.length !== 1 || properties[0].getName() !== keyType.value
+    || properties[0].flags & ts.SymbolFlags.Optional) return false;
+  const propertyDeclaration = properties[0].valueDeclaration ?? properties[0].declarations?.[0];
+  if (propertyDeclaration === undefined) return false;
+  const propertyType = checker.getTypeOfSymbolAtLocation(properties[0], propertyDeclaration);
+  if (!scalarType(propertyType)) return false;
+  if (memberName === 'get') {
+    return sameSafeType(checker.getReturnTypeOfSignature(signature), propertyType, checker);
+  }
+  const valueType = signatureParameterType(signature, 2, checker);
+  const returnType = checker.getReturnTypeOfSignature(signature);
+  return valueType !== undefined && sameSafeType(valueType, propertyType, checker)
+    && (returnType.flags === ts.TypeFlags.Boolean || returnType.flags === ts.TypeFlags.BooleanLiteral);
+}
+
+function exactObjectAssignContract(signature, checker) {
+  const typeParameters = signature.typeParameters ?? [];
+  if (typeParameters.length !== 1 || signature.getParameters().length !== 2) return false;
+  const targetType = signatureParameterType(signature, 0, checker);
+  const sourceType = signatureParameterType(signature, 1, checker);
+  const resultType = checker.getReturnTypeOfSignature(signature);
+  const parameter = typeParameters[0];
+  const constraint = parameter.getConstraint?.() ?? checker.getBaseConstraintOfType(parameter);
+  if (targetType !== parameter || resultType !== parameter || constraint === undefined
+    || constraint.flags !== ts.TypeFlags.NonPrimitive || sourceType === undefined) return false;
+  const alias = sourceType.aliasSymbol;
+  const aliasArguments = sourceType.aliasTypeArguments ?? [];
+  return alias?.getName?.() === 'Partial' && aliasArguments.length === 1 && aliasArguments[0] === parameter
+    && (alias.declarations?.every((declaration) => /typescript[\\/]lib[\\/]lib\.[^/]+\.d\.ts$/u
+      .test(declaration.getSourceFile().fileName)) ?? false);
+}
+
+function exactShadowNamespaceParameter(node, namespaceName, memberName, checker) {
+  const receiver = unwrapExpression(node);
+  if (receiver === undefined || !ts.isIdentifier(receiver) || receiver.text !== namespaceName) return false;
+  try {
+    const signature = exactInlineSingleMethod(receiver, memberName, checker);
+    if (signature === undefined) return false;
+    return namespaceName === 'Object' && memberName === 'assign'
+      ? exactObjectAssignContract(signature, checker)
+      : namespaceName === 'Reflect' && ['get', 'set'].includes(memberName)
+        ? exactReflectContract(memberName, signature, checker)
+        : false;
   } catch {
     return false;
   }
@@ -367,6 +1105,19 @@ function isParameterBinding(node) {
   return false;
 }
 
+function isParameterChannel(channel) {
+  return channel === 'parameter' || channel.startsWith('parameter:');
+}
+
+function isEmitlessDeclaration(node) {
+  let current = node;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    if (current.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)) return true;
+    current = current.parent;
+  }
+  return node.getSourceFile().isDeclarationFile;
+}
+
 function functionName(node) {
   if (node.name !== undefined && ts.isIdentifier(node.name)) return node.name.text;
   if (ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)) return node.parent.name.text;
@@ -375,6 +1126,7 @@ function functionName(node) {
 }
 
 function collectReturns(node) {
+  if (node.body === undefined) return [];
   if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) return [node.body];
   const returns = [];
   const visit = (candidate) => {
@@ -395,15 +1147,135 @@ function allocationProvenance(node, label) {
   return `${label} at ${file.fileName}:${point.line + 1}:${point.character + 1}`;
 }
 
+function nearestContainingFunction(node) {
+  let current = node;
+  while (current !== undefined) {
+    if (ts.isFunctionLike(current)) return current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
 export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   const env = new Map();
   const constants = new Map();
   const functions = new Map();
   const functionBySymbol = new Map();
+  const classes = new Map();
+  const classBySymbol = new Map();
   const functionBindings = new Map();
+  const functionCalls = new Map();
+  const functionAllCalls = new Map();
+  const functionWrites = new Map();
+  const referencedSymbols = new WeakMap();
+  const externalParameterOrigins = new Map();
+  const externallyCallableFunctionIds = new Set();
   const resolvingFunctions = new Set();
+  const resolvingFunctionIds = new Set();
   const functionSummaryCache = new Map();
-  let analysisEpoch = 0;
+  const functionSummaryMutations = new Map();
+  const functionSummaryOwner = new Map();
+  const functionSummaryKeysById = new Map();
+  const functionObservedOverrides = new Map();
+  const resolvingLexicalSymbols = new Set();
+  const contextualNodeOrigins = new WeakMap();
+  const contextualCallResolutions = new WeakMap();
+  const irCallNodes = new WeakSet(ir.calls.map((call) => call.node));
+  const directDependentFunctionsBySymbol = new Map();
+  const callerFunctionsById = new Map();
+  const functionSummaryCacheLimit = 2_048;
+  const recordContextualOrigin = (node, value) => {
+    const previous = contextualNodeOrigins.get(node);
+    const snapshot = snapshotOrigin(value);
+    contextualNodeOrigins.set(node, previous === undefined ? snapshot : joinOrigins(previous, snapshot));
+  };
+  const mergeContextualCallResolution = (previous, next) => {
+    const stabilized = {
+      ...next,
+      origin: snapshotOrigin(next.origin),
+      callee: snapshotOrigin(next.callee),
+      mutationReceivers: next.mutationReceivers.map((mutation) => ({
+        ...mutation,
+        receiver: snapshotOrigin(mutation.receiver),
+      })),
+    };
+    if (previous === undefined) return stabilized;
+    const mutations = new Map();
+    for (const mutation of [...previous.mutationReceivers, ...stabilized.mutationReceivers]) {
+      const key = `${mutation.api ?? ''}:${mutation.label}`;
+      const existing = mutations.get(key);
+      mutations.set(key, existing === undefined ? mutation : {
+        ...existing,
+        receiver: joinOrigins(existing.receiver, mutation.receiver),
+      });
+    }
+    return {
+      known: previous.known && stabilized.known,
+      origin: joinOrigins(previous.origin, stabilized.origin),
+      effects: new Set([...previous.effects, ...stabilized.effects]),
+      mutationReceivers: [...mutations.values()],
+      description: [...new Set([...previous.description.split('|'), ...stabilized.description.split('|')])]
+        .sort()
+        .join('|'),
+      callee: joinOrigins(previous.callee, stabilized.callee),
+    };
+  };
+  const deleteFunctionSummary = (key) => {
+    functionSummaryCache.delete(key);
+    functionSummaryMutations.delete(key);
+    const owner = functionSummaryOwner.get(key);
+    functionSummaryOwner.delete(key);
+    if (owner !== undefined) functionSummaryKeysById.get(owner)?.delete(key);
+  };
+  const cacheFunctionSummary = (key, value, functionId, mutations = []) => {
+    if (!functionSummaryCache.has(key) && functionSummaryCache.size >= functionSummaryCacheLimit) {
+      deleteFunctionSummary(functionSummaryCache.keys().next().value);
+    }
+    functionSummaryCache.set(key, value);
+    functionSummaryMutations.set(key, mutations);
+    functionSummaryOwner.set(key, functionId);
+    const keys = functionSummaryKeysById.get(functionId) ?? new Set();
+    keys.add(key);
+    functionSummaryKeysById.set(functionId, keys);
+  };
+  const invalidateFunctionSummaries = () => {
+    functionSummaryCache.clear();
+    functionSummaryMutations.clear();
+    functionSummaryOwner.clear();
+    functionSummaryKeysById.clear();
+  };
+  const invalidateFunctionSummariesForSymbol = (symbol) => {
+    const pending = [...(directDependentFunctionsBySymbol.get(symbol) ?? [])];
+    const visited = new Set();
+    while (pending.length > 0) {
+      const functionId = pending.pop();
+      if (functionId === undefined || visited.has(functionId)) continue;
+      visited.add(functionId);
+      for (const key of [...(functionSummaryKeysById.get(functionId) ?? [])]) deleteFunctionSummary(key);
+      pending.push(...(callerFunctionsById.get(functionId) ?? []));
+    }
+  };
+  const THIS_ORIGIN = Symbol('this-origin');
+  const privateMemberKeys = new WeakMap();
+  const privateMemberFallbackKeys = new WeakMap();
+  const classMemberShapeKey = (name) => {
+    if (ts.isPrivateIdentifier(name)) {
+      const symbol = resolvedSymbol(name, checker);
+      const keys = symbol === undefined ? privateMemberFallbackKeys : privateMemberKeys;
+      const identity = symbol ?? name;
+      if (!keys.has(identity)) keys.set(identity, Symbol(`private:${name.text}`));
+      return keys.get(identity);
+    }
+    if (ts.isComputedPropertyName(name)) {
+      const key = staticKey(name.expression, constants, checker);
+      return key === undefined
+        ? `[[unresolved-computed:${name.getSourceFile().fileName}:${name.pos}]]`
+        : String(key);
+    }
+    return name.getText().replace(/^['"]|['"]$/gu, '');
+  };
+  const unresolvedClassMemberKey = (key) => typeof key === 'string'
+    && key.startsWith('[[unresolved-computed:');
 
   const registerFunction = (node) => {
     const id = `${node.getSourceFile().fileName}:${node.pos}`;
@@ -418,18 +1290,338 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     return id;
   };
 
+  const registerClass = (node) => {
+    const id = `${node.getSourceFile().fileName}:${node.pos}`;
+    classes.set(id, node);
+    if (node.name !== undefined) {
+      const symbol = resolvedSymbol(node.name, checker);
+      if (symbol !== undefined) classBySymbol.set(symbol, id);
+    }
+  };
+
   for (const file of sourceFiles) {
     const visit = (node) => {
-      if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
+      if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+        || ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node))
+        && node.body !== undefined) {
         registerFunction(node);
       }
+      if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) registerClass(node);
       ts.forEachChild(node, visit);
     };
     visit(file);
   }
 
   for (const [id, fn] of functions) {
-    functionBindings.set(id, ir.bindings.filter((binding) => isWithin(binding.node, fn)));
+    functionBindings.set(id, ir.bindings.filter((binding) => nearestContainingFunction(binding.node) === fn));
+    const calls = ir.calls.filter((call) => nearestContainingFunction(call.node) === fn);
+    functionCalls.set(id, calls);
+    functionAllCalls.set(id, calls);
+    functionWrites.set(id, ir.writes.filter((write) => nearestContainingFunction(write.node) === fn));
+  }
+
+  const componentFunctionId = (input, seen = new Set()) => {
+    const node = unwrapExpression(input);
+    if (node === undefined) return undefined;
+    if (ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isFunctionDeclaration(node)) {
+      const id = `${node.getSourceFile().fileName}:${node.pos}`;
+      return functions.has(id) ? id : undefined;
+    }
+    if (ts.isIdentifier(node)) {
+      const symbol = resolvedSymbol(node, checker);
+      if (symbol === undefined || seen.has(symbol)) return undefined;
+      if (functionBySymbol.has(symbol)) return functionBySymbol.get(symbol);
+      seen.add(symbol);
+      const declaration = symbol.declarations?.find((candidate) =>
+        ts.isVariableDeclaration(candidate) && candidate.initializer !== undefined);
+      return declaration !== undefined && ts.isVariableDeclaration(declaration)
+        ? componentFunctionId(declaration.initializer, seen)
+        : undefined;
+    }
+    if (ts.isCallExpression(node)) {
+      const identity = importIdentity(node.expression, checker);
+      if (identity === 'react:forwardRef' || identity === 'react:memo') {
+        return node.arguments[0] === undefined ? undefined : componentFunctionId(node.arguments[0], seen);
+      }
+    }
+    return undefined;
+  };
+
+  const jsxSitesByFunction = new Map();
+  const unknownJsxSites = [];
+  for (const file of sourceFiles) {
+    const visitJsxSites = (node) => {
+      if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+        const symbol = resolvedSymbol(node.tagName, checker);
+        const id = symbol === undefined
+          ? undefined
+          : functionBySymbol.get(symbol) ?? componentFunctionId(node.tagName);
+        const frameworkIdentity = importIdentity(node.tagName, checker);
+        if (id !== undefined) {
+          const sites = jsxSitesByFunction.get(id) ?? [];
+          sites.push(node);
+          jsxSitesByFunction.set(id, sites);
+        } else if (!(ts.isIdentifier(node.tagName)
+          && /^[a-z]/u.test(node.tagName.text))
+          && !['react:Fragment', 'react:StrictMode'].includes(frameworkIdentity ?? '')) {
+          unknownJsxSites.push(node);
+        }
+      }
+      ts.forEachChild(node, visitJsxSites);
+    };
+    visitJsxSites(file);
+  }
+
+  const closedJsxCallbackSymbols = new Set();
+  const closedJsxValueSymbols = new Set();
+  const jsxCallbackEdges = [];
+  const jsxValueEdges = [];
+  for (const [id, sites] of jsxSitesByFunction) {
+    const parameterBindings = (functionBindings.get(id) ?? []).filter((binding) =>
+      isParameterChannel(binding.channel) && ts.isIdentifier(binding.target)
+      && binding.projection.length === 1 && binding.projection[0]?.property !== undefined
+      && typeIsCallable(binding.target, checker));
+    for (const binding of parameterBindings) {
+      const property = binding.projection[0].property;
+      const expressions = [];
+      let closed = sites.length > 0;
+      for (const site of sites) {
+        if (site.attributes.properties.some(ts.isJsxSpreadAttribute)) {
+          closed = false;
+          break;
+        }
+        const attribute = site.attributes.properties.find((candidate) =>
+          ts.isJsxAttribute(candidate) && candidate.name.getText() === property);
+        if (attribute === undefined || !ts.isJsxAttribute(attribute)
+          || attribute.initializer === undefined || !ts.isJsxExpression(attribute.initializer)
+          || attribute.initializer.expression === undefined) {
+          closed = false;
+          break;
+        }
+        expressions.push(attribute.initializer.expression);
+      }
+      if (!closed) continue;
+      const symbol = resolvedSymbol(binding.target, checker);
+      if (symbol === undefined) continue;
+      closedJsxCallbackSymbols.add(symbol);
+      expressions.forEach((expression) => jsxCallbackEdges.push({
+        symbol,
+        expression,
+        property,
+        target: binding.target,
+      }));
+    }
+    const valueBindings = (functionBindings.get(id) ?? []).filter((binding) =>
+      isParameterChannel(binding.channel) && ts.isIdentifier(binding.target)
+      && !typeIsCallable(binding.target, checker));
+    for (const binding of valueBindings) {
+      const symbol = resolvedSymbol(binding.target, checker);
+      if (symbol === undefined) continue;
+      closedJsxValueSymbols.add(symbol);
+      jsxValueEdges.push({ symbol, sites, projection: binding.projection, target: binding.target });
+    }
+  }
+
+  const symbolsReferencedDirectlyBy = (fn) => {
+    if (referencedSymbols.has(fn)) return referencedSymbols.get(fn);
+    const symbols = new Set();
+    const visit = (node) => {
+      if (node !== fn && ts.isFunctionLike(node)) return;
+      if (ts.isIdentifier(node)) {
+        const symbol = resolvedSymbol(node, checker);
+        if (symbol !== undefined) symbols.add(symbol);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(fn);
+    referencedSymbols.set(fn, symbols);
+    return symbols;
+  };
+
+  const functionIdFromExpression = (input, seen = new Set()) => {
+    const node = unwrapExpression(input);
+    if (node === undefined || !ts.isIdentifier(node)) return undefined;
+    const symbol = resolvedSymbol(node, checker);
+    if (symbol === undefined || seen.has(symbol)) return undefined;
+    if (functionBySymbol.has(symbol)) return functionBySymbol.get(symbol);
+    seen.add(symbol);
+    const declaration = symbol.declarations?.find((candidate) =>
+      ts.isVariableDeclaration(candidate) && candidate.initializer !== undefined);
+    return declaration !== undefined && ts.isVariableDeclaration(declaration)
+      && declaration.initializer !== undefined
+      ? functionIdFromExpression(declaration.initializer, seen)
+      : undefined;
+  };
+
+  const bindingSourcesBySymbol = new Map();
+  const bindingDefinitionsBySymbol = new Map();
+  for (const binding of ir.bindings) {
+    if (!ts.isIdentifier(binding.target) || binding.source === undefined) continue;
+    const symbol = resolvedSymbol(binding.target, checker);
+    if (symbol === undefined) continue;
+    const sources = bindingSourcesBySymbol.get(symbol) ?? [];
+    sources.push(binding.source);
+    bindingSourcesBySymbol.set(symbol, sources);
+    const definitions = bindingDefinitionsBySymbol.get(symbol) ?? [];
+    definitions.push(binding);
+    bindingDefinitionsBySymbol.set(symbol, definitions);
+  }
+
+  const functionTargetsForSymbol = (rootSymbol) => {
+    const targets = new Set();
+    const seenSymbols = new Set();
+    const visitExpression = (input) => {
+      const node = unwrapExpression(input);
+      if (node === undefined) return;
+      if (ts.isFunctionLike(node)) {
+        const id = `${node.getSourceFile().fileName}:${node.pos}`;
+        if (functions.has(id)) targets.add(id);
+        return;
+      }
+      if (ts.isIdentifier(node)) {
+        const symbol = resolvedSymbol(node, checker);
+        if (symbol !== undefined) visitSymbol(symbol);
+      }
+      ts.forEachChild(node, visitExpression);
+    };
+    const visitSymbol = (symbol) => {
+      if (seenSymbols.has(symbol)) return;
+      seenSymbols.add(symbol);
+      const directId = functionBySymbol.get(symbol);
+      if (directId !== undefined) targets.add(directId);
+      for (const source of bindingSourcesBySymbol.get(symbol) ?? []) visitExpression(source);
+    };
+    visitSymbol(rootSymbol);
+    return targets;
+  };
+
+  for (const [id, fn] of functions) {
+    const localSymbols = new Set((functionBindings.get(id) ?? [])
+      .map((binding) => ts.isIdentifier(binding.target)
+        ? resolvedSymbol(binding.target, checker)
+        : undefined)
+      .filter((symbol) => symbol !== undefined));
+    for (const symbol of symbolsReferencedDirectlyBy(fn)) {
+      if (localSymbols.has(symbol)) continue;
+      const dependents = directDependentFunctionsBySymbol.get(symbol) ?? new Set();
+      dependents.add(id);
+      directDependentFunctionsBySymbol.set(symbol, dependents);
+      for (const targetId of functionTargetsForSymbol(symbol)) {
+        const callers = callerFunctionsById.get(targetId) ?? new Set();
+        callers.add(id);
+        callerFunctionsById.set(targetId, callers);
+      }
+    }
+  }
+
+  for (const file of sourceFiles) {
+    const moduleSymbol = checker.getSymbolAtLocation(file);
+    if (moduleSymbol === undefined) continue;
+    for (const exported of checker.getExportsOfModule(moduleSymbol)) {
+      const symbol = (exported.flags & ts.SymbolFlags.Alias) !== 0
+        ? checker.getAliasedSymbol(exported)
+        : exported;
+      const directId = functionBySymbol.get(symbol);
+      if (directId !== undefined) externallyCallableFunctionIds.add(directId);
+      for (const declaration of symbol.declarations ?? []) {
+        if (ts.isVariableDeclaration(declaration) && declaration.initializer !== undefined) {
+          const id = functionIdFromExpression(declaration.initializer);
+          if (id !== undefined) externallyCallableFunctionIds.add(id);
+        }
+      }
+    }
+  }
+
+  const parameterContaining = (node, fn) => {
+    let current = node;
+    while (current !== undefined && current !== fn) {
+      if (ts.isParameter(current)) return current;
+      current = current.parent;
+    }
+    return undefined;
+  };
+
+  const runtimeParameterIndex = (fn, parameter) => {
+    if (ts.isIdentifier(parameter.name) && parameter.name.text === 'this') return -1;
+    const declaredIndex = fn.parameters.indexOf(parameter);
+    return fn.parameters.slice(0, declaredIndex)
+      .filter((candidate) => !(ts.isIdentifier(candidate.name) && candidate.name.text === 'this')).length;
+  };
+
+  const directArgumentEdges = [];
+  for (const call of ir.calls) {
+    const callNode = call.node;
+    const calleeNode = ts.isTaggedTemplateExpression(callNode) ? callNode.tag : callNode.expression;
+    const metaName = ts.isCallExpression(callNode)
+      && (ts.isPropertyAccessExpression(calleeNode) || ts.isElementAccessExpression(calleeNode))
+      ? propertyText(calleeNode, constants, checker)
+      : undefined;
+    const targetNode = ['call', 'apply'].includes(metaName ?? '')
+      && (ts.isPropertyAccessExpression(calleeNode) || ts.isElementAccessExpression(calleeNode))
+      ? calleeNode.expression
+      : calleeNode;
+    const functionId = functionIdFromExpression(targetNode) ?? componentFunctionId(targetNode);
+    const fn = functionId === undefined ? undefined : functions.get(functionId);
+    if (fn === undefined || isWithin(callNode, fn)) continue;
+    for (const binding of functionBindings.get(functionId) ?? []) {
+      if (!isParameterChannel(binding.channel) || !ts.isIdentifier(binding.target)) continue;
+      const parameter = parameterContaining(binding.target, fn);
+      const parameterIndex = parameter === undefined ? -1 : runtimeParameterIndex(fn, parameter);
+      const symbol = resolvedSymbol(binding.target, checker);
+      if (parameterIndex < 0 || symbol === undefined) continue;
+      directArgumentEdges.push({
+        binding,
+        callNode,
+        metaName,
+        parameter,
+        parameterIndex,
+        symbol,
+      });
+    }
+  }
+
+  const markExternalCallback = (input, provenance) => {
+    const id = functionIdFromExpression(input);
+    const fn = id === undefined ? undefined : functions.get(id);
+    if (fn === undefined) return;
+    for (const parameter of fn.parameters) {
+      if (!ts.isIdentifier(parameter.name)) continue;
+      const symbol = resolvedSymbol(parameter.name, checker);
+      if (symbol === undefined) continue;
+      const boundary = isDomLikeType(input.parent, checker) || isDomLikeType(parameter.name, checker)
+        ? origin(ORIGIN.AMBIENT, provenance)
+        : declaredOriginPlaceholder(parameter.name, provenance);
+      externalParameterOrigins.set(symbol, externalParameterOrigins.has(symbol)
+        ? joinOrigins(externalParameterOrigins.get(symbol), boundary)
+        : boundary);
+    }
+  };
+
+  function declaredOriginPlaceholder(node, provenance) {
+    if (isDomLikeType(node, checker)) return origin(ORIGIN.AMBIENT, provenance);
+    if (typeIsCallable(node, checker)) return withCallable({ kind: 'external-contract', name: node.getText() }, provenance);
+    return origin(ORIGIN.BORROWED, provenance);
+  }
+
+  for (const file of sourceFiles) {
+    const visitBoundary = (node) => {
+      if (ts.isVariableDeclaration(node) && node.initializer !== undefined
+        && /(?:RefCallback|EventHandler|MouseEventHandler|KeyboardEventHandler)/u.test(typeText(node.name, checker))) {
+        markExternalCallback(node.initializer, `external callback contract ${typeText(node.name, checker)}`);
+      }
+      if (ts.isJsxAttribute(node) && node.initializer !== undefined && ts.isJsxExpression(node.initializer)
+        && node.initializer.expression !== undefined) {
+        markExternalCallback(node.initializer.expression, `JSX callback edge ${node.name.getText()}`);
+      }
+      if (ts.isCallExpression(node)
+        && (ts.isPropertyAccessExpression(node.expression) || ts.isElementAccessExpression(node.expression))
+        && propertyText(node.expression, constants, checker) === 'addEventListener'
+        && node.arguments[1] !== undefined) {
+        markExternalCallback(node.arguments[1], 'host event-listener callback edge');
+      }
+      ts.forEachChild(node, visitBoundary);
+    };
+    visitBoundary(file);
   }
 
   const constantOrigin = (value, provenance) => origin(ORIGIN.CONSTANT, provenance, {
@@ -437,9 +1629,16 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   });
 
   const declaredOrigin = (node, provenance) => {
+    if (isZodLikeType(node, checker)) return withBrand(ORIGIN.ZOD, provenance);
+    if (isReactUiCallbackType(node, checker)) {
+      return withCallable({ kind: 'ui', name: 'React dispatch' }, provenance);
+    }
+    if (isCapabilityValidationType(node, checker)) {
+      return withCallable({ kind: 'domain-validator', name: 'CapabilityValidationPort' }, provenance);
+    }
     if (typeIsCallable(node, checker)) {
       return withCallable({
-        kind: isParameterBinding(node) ? 'contract' : 'unknown',
+        kind: isParameterBinding(node) ? 'external-contract' : 'unknown',
         name: node.getText(),
       }, provenance);
     }
@@ -448,21 +1647,56 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     return origin(ORIGIN.BORROWED, provenance);
   };
 
-  const project = (value, projection) => {
+  const project = (value, projection, allocationNode, overrides = new Map(), depth = 0) => {
     let current = value;
     for (const step of projection) {
-      if (step === '*') {
-        const children = [...current.shape.values()];
-        current = joinOrigins(current.content, ...children);
+      if (step === '@element') {
+        current = current.content ?? (current.tags.has(ORIGIN.AMBIENT) || current.tags.has(ORIGIN.OPAQUE)
+          ? current
+          : joinOrigins(...current.shape.values()));
+        continue;
+      }
+      if (step === '@key') {
+        current = constantOrigin('<iteration-key>', 'for-in iteration key');
+        continue;
+      }
+      if (typeof step === 'object' && step.rest !== undefined) {
+        if (!current.tags.has(ORIGIN.OWNED) || current.tags.size !== 1) {
+          current = joinOrigins(current, origin(ORIGIN.UNKNOWN, `${step.rest} rest from non-owned value`));
+          continue;
+        }
+        const entries = [...current.shape.entries()].filter(([key]) => step.rest === 'object'
+          ? !(step.excluded ?? []).map(String).includes(key)
+          : Number.isInteger(Number(key)) && Number(key) >= (step.from ?? 0));
+        const shape = new Map(entries.map(([key, child], index) => [
+          step.rest === 'array' ? String(index) : key,
+          child,
+        ]));
+        const children = [...shape.values()];
+        current = freshOwned(allocationNode, allocationProvenance(allocationNode, `${step.rest} rest allocation`), {
+          shape,
+          content: children.length === 0 ? undefined : joinOrigins(...children),
+          nullPrototype: current.nullPrototype,
+        });
         continue;
       }
       const key = typeof step === 'number'
         ? String(step)
-        : step.property ?? (step.keyNode === undefined
+        : step.index !== undefined
+          ? String(step.index)
+          : step.property ?? (step.keyNode === undefined
           ? undefined
           : staticString(step.keyNode, constants, checker));
-      if (current.tags.has(ORIGIN.AMBIENT)) {
-        current = origin(ORIGIN.AMBIENT, `projection ${key ?? '[computed]'} from ambient value`);
+      const namespace = [...current.constants].find((value) => ['Object', 'Reflect', 'Array', 'JSON', 'Math', 'Number', 'String'].includes(value));
+      const namespacePath = namespace === undefined || key === undefined ? undefined : `${namespace}.${key}`;
+      if (namespacePath !== undefined && (objectMutationCalls.has(namespacePath)
+        || pureGlobalCalls.has(namespacePath) || ownedGlobalResults.has(namespacePath)
+        || forbiddenCapabilityEffects.has(namespacePath) || browserFacadeCalls.has(namespacePath))) {
+        current = withCallable({ kind: 'builtin', name: namespacePath }, `namespace projection ${namespacePath}`);
+      } else if (current.tags.has(ORIGIN.AMBIENT)) {
+        current = origin(ORIGIN.AMBIENT, `projection ${key ?? '[computed]'} from ambient value`, isPrimitiveLikeType(allocationNode, checker)
+          ? { surfaces: new Set([SURFACE.SCALAR]) }
+          : {});
       } else if (key !== undefined && current.shape.has(key)) {
         current = current.shape.get(key);
       } else if (current.content !== undefined) {
@@ -471,6 +1705,9 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         current = origin(ORIGIN.BORROWED, `unmodelled field ${key ?? '[computed]'} of owned value`);
       } else {
         current = joinOrigins(current, origin(ORIGIN.BORROWED, `projected ${key ?? '[computed]'}`));
+      }
+      if (typeof step === 'object' && step.fallback !== undefined) {
+        current = joinOrigins(current, evaluate(step.fallback, overrides, depth + 1));
       }
     }
     return current;
@@ -481,67 +1718,357 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
 
   const functionCallable = (node, overrides) => {
     const id = `${node.getSourceFile().fileName}:${node.pos}`;
+    const referenced = symbolsReferencedDirectlyBy(node);
+    const closure = overrides === undefined
+      ? undefined
+      : new Map([...overrides].filter(([symbol]) => symbol === THIS_ORIGIN || referenced.has(symbol)));
     return withCallable({
       kind: 'function',
       id,
       name: functionName(node),
-      closure: overrides === undefined ? undefined : new Map(overrides),
+      closure,
     }, allocationProvenance(node, `local function ${functionName(node)}`));
   };
 
-  const evaluateFunction = (entry, argumentsList, depth) => {
+  const instantiateClass = (entry, argumentsList, node, depth) => {
+    const declaration = classes.get(entry.id);
+    if (declaration === undefined) return origin(ORIGIN.UNKNOWN, `unresolved class ${entry.name}`);
+    const instance = freshOwned(node, allocationProvenance(node, `new ${entry.name}`));
+    const extendsType = declaration.heritageClauses
+      ?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0];
+    if (extendsType !== undefined) {
+      const baseSymbol = resolvedSymbol(extendsType.expression, checker);
+      const baseId = baseSymbol === undefined ? undefined : classBySymbol.get(baseSymbol);
+      if (baseId === undefined || depth > 12) {
+        instance.tags.delete(ORIGIN.OWNED);
+        instance.tags.add(ORIGIN.UNKNOWN);
+        instance.surfaces.add(SURFACE.UNKNOWN);
+        instance.provenance.add(`unresolved base class ${extendsType.expression.getText()}`);
+      } else {
+        const base = instantiateClass({
+          kind: 'local-class',
+          id: baseId,
+          name: extendsType.expression.getText(),
+        }, argumentsList, node, depth + 1);
+        for (const [key, value] of base.shape) instance.shape.set(key, value);
+        for (const key of base.hiddenKeys) instance.hiddenKeys.add(key);
+        instance.content = base.content;
+      }
+    }
+    const classOverrides = new Map([[THIS_ORIGIN, instance]]);
+    const constructor = declaration.members.find(ts.isConstructorDeclaration);
+    constructor?.parameters.forEach((parameter, index) => {
+      if (!ts.isIdentifier(parameter.name) || parameter.modifiers === undefined) return;
+      instance.shape.set(parameter.name.text, argumentsList[index]
+        ?? declaredOrigin(parameter.name, `constructor parameter ${parameter.name.text}`));
+    });
+    for (const member of declaration.members) {
+      if (member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) continue;
+      if (ts.isPropertyDeclaration(member) && member.name !== undefined) {
+        const key = classMemberShapeKey(member.name);
+        if (ts.isPrivateIdentifier(member.name)) instance.hiddenKeys.add(key);
+        const value = member.initializer === undefined
+          ? declaredOrigin(member.name, `class field ${stablePropertyKey(key)}`)
+          : evaluate(member.initializer, classOverrides, depth + 1);
+        instance.shape.set(key, unresolvedClassMemberKey(key)
+          ? joinOrigins(value, origin(ORIGIN.UNKNOWN, 'unresolved computed public class field'))
+          : value);
+      }
+      if (ts.isMethodDeclaration(member) && member.body !== undefined) {
+        const key = classMemberShapeKey(member.name);
+        if (ts.isPrivateIdentifier(member.name)) instance.hiddenKeys.add(key);
+        const value = functionCallable(member, classOverrides);
+        instance.shape.set(key, unresolvedClassMemberKey(key)
+          ? joinOrigins(value, origin(ORIGIN.UNKNOWN, 'unresolved computed public class method'))
+          : value);
+      }
+      if (ts.isGetAccessorDeclaration(member) && member.body !== undefined) {
+        const key = classMemberShapeKey(member.name);
+        if (ts.isPrivateIdentifier(member.name)) instance.hiddenKeys.add(key);
+        const value = evaluateFunction({
+          kind: 'function',
+          id: `${member.getSourceFile().fileName}:${member.pos}`,
+          name: functionName(member),
+          closure: classOverrides,
+        }, [], depth + 1);
+        instance.shape.set(key, unresolvedClassMemberKey(key)
+          ? joinOrigins(value, origin(ORIGIN.UNKNOWN, 'unresolved computed public class accessor'))
+          : value);
+      }
+    }
+    const children = [...instance.shape.entries()]
+      .filter(([key]) => !instance.hiddenKeys.has(key))
+      .map(([, value]) => value);
+    instance.content = children.length === 0
+      ? instance.content
+      : instance.content === undefined
+        ? joinOrigins(...children)
+        : joinOrigins(instance.content, ...children);
+    return instance;
+  };
+
+  const evaluateFunction = (entry, argumentsList, depth, mutationCollector = [], forceReplay = false) => {
     const fn = functions.get(entry.id);
     if (fn === undefined || depth > 12) return origin(ORIGIN.UNKNOWN, `unresolved function ${entry.name}`);
-    const recursionKey = `${entry.id}:${argumentsList.map(originSignature).join(',')}`;
-    const cacheKey = `${analysisEpoch}:${callableKey(entry)}:${recursionKey}`;
-    if (functionSummaryCache.has(cacheKey)) return functionSummaryCache.get(cacheKey);
+    if (forceReplay) {
+      for (const write of functionWrites.get(entry.id) ?? []) contextualNodeOrigins.delete(write.receiver);
+      for (const call of functionAllCalls.get(entry.id) ?? []) contextualCallResolutions.delete(call.node);
+    }
+    const returnNodes = collectReturns(fn);
+    if (resolvingFunctionIds.has(entry.id)) {
+      return collectReturns(fn).length === 0
+        ? constantOrigin(undefined, `recursive void summary ${entry.name}`)
+        : origin(ORIGIN.UNKNOWN, `recursive value summary ${entry.name}`);
+    }
+    const recursionKey = `${entry.id}:${argumentsList.map((value) => originSignature(value)).join(',')}`;
+    const localSymbols = new Set((functionBindings.get(entry.id) ?? [])
+      .map((binding) => ts.isIdentifier(binding.target) ? resolvedSymbol(binding.target, checker) : undefined)
+      .filter((symbol) => symbol !== undefined));
+    const dependencies = [...symbolsReferencedDirectlyBy(fn)]
+      .filter((symbol) => !localSymbols.has(symbol) && env.has(symbol))
+      .map((symbol) => `${stableSymbolKey(symbol)}=${originSignature(env.get(symbol))}`)
+      .sort();
+    const hasOriginChangingOperations = (functionWrites.get(entry.id)?.length ?? 0) > 0
+      || (functionCalls.get(entry.id)?.length ?? 0) > 0;
+    const cacheKey = structuralDigest([
+      'function-summary',
+      callableKey(entry),
+      recursionKey,
+      ...(hasOriginChangingOperations
+        ? [
+          'mutation-identities',
+          ...argumentsList.map(stableOriginKey),
+          ...(entry.closure === undefined ? [] : [...entry.closure.values()].map(stableOriginKey)),
+        ]
+        : []),
+      ...dependencies,
+    ]);
+    if (!forceReplay && functionSummaryCache.has(cacheKey)) {
+      mutationCollector.push(...(functionSummaryMutations.get(cacheKey) ?? []));
+      return functionSummaryCache.get(cacheKey);
+    }
     if (resolvingFunctions.has(recursionKey)) {
       return origin(ORIGIN.BORROWED, `recursive summary ${entry.name}`);
     }
     resolvingFunctions.add(recursionKey);
+    resolvingFunctionIds.add(entry.id);
+    const mutationStart = mutationCollector.length;
     try {
       const overrides = new Map(entry.closure ?? []);
-      fn.parameters.forEach((parameter, index) => {
-        if (!ts.isIdentifier(parameter.name)) return;
-        const symbol = resolvedSymbol(parameter.name, checker);
-        if (symbol === undefined) return;
-        const passed = argumentsList[index];
-        const fallback = parameter.initializer === undefined
-          ? declaredOrigin(parameter.name, `parameter ${parameter.name.text}`)
-          : evaluate(parameter.initializer, overrides, depth + 1);
-        overrides.set(symbol, passed ?? fallback);
-      });
-      const bindings = functionBindings.get(entry.id) ?? [];
-      for (let iteration = 0; iteration < 6; iteration += 1) {
-        let changed = false;
-        for (const binding of bindings) {
-          if (!ts.isIdentifier(binding.target)) continue;
-          const symbol = resolvedSymbol(binding.target, checker);
-          if (symbol === undefined) continue;
-          const source = binding.channel === 'parameter'
-            ? overrides.get(symbol) ?? declaredOrigin(binding.target, `parameter ${binding.target.text}`)
-            : binding.source === undefined
-              ? constantOrigin(undefined, `uninitialised local ${binding.target.text}`)
-              : project(evaluate(binding.source, overrides, depth + 1), binding.projection);
-          const merged = overrides.has(symbol) ? joinOrigins(overrides.get(symbol), source) : source;
-          if (originSignature(overrides.get(symbol) ?? emptyOrigin()) !== originSignature(merged)) changed = true;
-          overrides.set(symbol, merged);
+      const recordObservedOverrides = () => {
+        const observedOverrides = functionObservedOverrides.get(entry.id) ?? new Map();
+        for (const [symbol, value] of overrides) {
+          const previous = observedOverrides.get(symbol);
+          const merged = previous === undefined ? value : joinOrigins(previous, value);
+          observedOverrides.set(symbol, previous !== undefined
+            && originSignature(previous) === originSignature(merged)
+            ? previous
+            : merged);
         }
-        if (!changed) break;
+        functionObservedOverrides.set(entry.id, observedOverrides);
+      };
+      const bindings = functionBindings.get(entry.id) ?? [];
+      for (const binding of bindings) {
+        if (!isParameterChannel(binding.channel) || !ts.isIdentifier(binding.target)) continue;
+        const parameter = parameterContaining(binding.target, fn);
+        const parameterIndex = parameter === undefined ? -1 : runtimeParameterIndex(fn, parameter);
+        const symbol = resolvedSymbol(binding.target, checker);
+        if (parameter === undefined || parameterIndex < 0 || symbol === undefined) continue;
+        const passed = parameter.dotDotDotToken === undefined
+          ? argumentsList[parameterIndex] === undefined
+            ? undefined
+            : abstractLargeArgument(argumentsList[parameterIndex], `parameter ${binding.target.text}`)
+          : freshOwned(fn, allocationProvenance(fn, `rest arguments for ${entry.name}`), {
+            shape: new Map(argumentsList.slice(parameterIndex).map((value, index) => [String(index), value])),
+            content: argumentsList.length <= parameterIndex
+              ? origin(ORIGIN.BORROWED, `empty rest arguments for ${entry.name}`)
+              : joinOrigins(...argumentsList.slice(parameterIndex)),
+          });
+        const boundaryValue = env.get(symbol);
+        const fallback = parameter.initializer === undefined
+          ? boundaryValue ?? declaredOrigin(binding.target, `parameter ${binding.target.text}`)
+          : evaluate(parameter.initializer, overrides, depth + 1);
+        // Parameter symbols in `env` have already been projected onto the
+        // binding target by a closed JSX/callback boundary. Projecting that
+        // target value a second time loses its exact callable/UI-cell brand
+        // (and can mix in sibling object content). Runtime arguments, by
+        // contrast, still start at the parameter declaration and therefore
+        // need the binding projection exactly once.
+        const projectedFallback = () => project(
+          passed ?? fallback,
+          binding.projection,
+          binding.target,
+          overrides,
+          depth + 1,
+        );
+        const unobservedBoundary = boundaryValue?.tags.size === 1
+          && boundaryValue.tags.has(ORIGIN.BOTTOM);
+        overrides.set(symbol, passed !== undefined
+          ? unobservedBoundary || boundaryValue === undefined
+            ? projectedFallback()
+            : joinOrigins(boundaryValue, projectedFallback())
+          : parameter.initializer !== undefined
+            ? unobservedBoundary || boundaryValue === undefined
+              ? projectedFallback()
+              : joinOrigins(boundaryValue, projectedFallback())
+            : boundaryValue ?? projectedFallback());
       }
-      const returns = collectReturns(fn).map((node) => evaluate(node, overrides, depth + 1));
-      const result = returns.length === 0
+      const functionIterationBudget = Math.max(8, bindings.length + 1);
+      const convergeBindings = () => {
+        for (let iteration = 0; iteration < functionIterationBudget; iteration += 1) {
+          const beforeIteration = structuralDigest([...overrides.entries()]
+            .map(([symbol, value]) => `${stableSymbolKey(symbol)}=${originSignature(value)}`)
+            .sort());
+          for (const binding of bindings) {
+            if (!ts.isIdentifier(binding.target)) continue;
+            const symbol = resolvedSymbol(binding.target, checker);
+            if (symbol === undefined) continue;
+            const source = isParameterChannel(binding.channel)
+              ? overrides.get(symbol) ?? declaredOrigin(binding.target, `parameter ${binding.target.text}`)
+              : binding.source === undefined
+                ? binding.channel === 'catch'
+                  ? origin(ORIGIN.UNKNOWN, `unknown thrown value bound to ${binding.target.text}`)
+                  : constantOrigin(undefined, `uninitialised local ${binding.target.text}`)
+                : project(
+                  evaluate(binding.source, overrides, depth + 1),
+                  binding.projection,
+                  binding.target,
+                  overrides,
+                  depth + 1,
+                );
+            const previous = overrides.get(symbol);
+            // A function-valued declaration is a lexical closure snapshot,
+            // not a control-flow alternative. Re-evaluating it after earlier
+            // locals converge must refresh the captured frame; joining the
+            // first incomplete snapshot permanently retained a callable that
+            // had lost preceding local allocations. Assignments still join
+            // below because they represent genuine runtime alternatives.
+            const refreshesLexicalClosure = binding.channel === 'declaration'
+              && source.callables.length > 0;
+            const merged = previous === undefined || refreshesLexicalClosure
+              ? source
+              : joinOrigins(previous, source);
+            const previousSignature = originSignature(previous ?? emptyOrigin());
+            const mergedSignature = originSignature(merged);
+            overrides.set(symbol, previous !== undefined && previousSignature === mergedSignature ? previous : merged);
+          }
+          const afterIteration = structuralDigest([...overrides.entries()]
+            .map(([symbol, value]) => `${stableSymbolKey(symbol)}=${originSignature(value)}`)
+            .sort());
+          if (beforeIteration === afterIteration) return true;
+        }
+        return false;
+      };
+      if (!convergeBindings()) {
+        const widened = origin(ORIGIN.UNKNOWN, `function fixed point exceeded for ${entry.name}`);
+        recordObservedOverrides();
+        cacheFunctionSummary(cacheKey, widened, entry.id, mutationCollector.slice(mutationStart));
+        return widened;
+      }
+
+      // A binding target declared outside this function is a captured slot
+      // write, not a function-local declaration. Publish its conservative
+      // joined value back to the owning lexical frame/global environment so
+      // callers and facade-export traversal observe interprocedural capture
+      // (including JSX, alias, call/apply, and host-callback invocations).
+      const capturedBindingSymbols = new Set(bindings
+        .filter((binding) => !isParameterChannel(binding.channel) && ts.isIdentifier(binding.target))
+        .map((binding) => resolvedSymbol(binding.target, checker))
+        .filter((symbol) => symbol !== undefined
+          && !(symbol.declarations ?? []).some((declaration) => isWithin(declaration, fn))));
+      for (const symbol of capturedBindingSymbols) {
+        const value = overrides.get(symbol);
+        if (value === undefined) continue;
+        if (entry.closure?.has(symbol)) {
+          entry.closure.set(symbol, joinOrigins(entry.closure.get(symbol), value));
+        }
+        const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
+        const owner = declaration === undefined ? undefined : nearestContainingFunction(declaration);
+        if (owner !== undefined) {
+          const ownerId = `${owner.getSourceFile().fileName}:${owner.pos}`;
+          const observed = functionObservedOverrides.get(ownerId) ?? new Map();
+          observed.set(symbol, joinOrigins(observed.get(symbol), value));
+          functionObservedOverrides.set(ownerId, observed);
+        } else if (env.has(symbol)) {
+          const previous = env.get(symbol);
+          const merged = joinOrigins(previous, value);
+          if (originSignature(previous) !== originSignature(merged)) {
+            env.set(symbol, merged);
+            invalidateFunctionSummariesForSymbol(symbol);
+          }
+        }
+      }
+
+      // Binding convergence computes the receiver/value graph. Replay each
+      // origin-changing operation once, in runtime source order, then converge
+      // projections again so reads after a mutation observe the transferred
+      // origin. Replaying mutations inside the lattice fixed point repeatedly
+      // grew the same cyclic graphs and made convergence depend on iteration
+      // count rather than program semantics.
+      const mutationOperations = [
+        ...(functionWrites.get(entry.id) ?? []).map((write) => ({
+          kind: 'write',
+          position: write.node.pos,
+          write,
+        })),
+        ...(functionCalls.get(entry.id) ?? []).map((call) => ({
+          kind: 'call',
+          position: call.node.pos,
+          call,
+        })),
+      ].sort((left, right) => left.position - right.position);
+      for (const operation of mutationOperations) {
+        if (operation.kind === 'write') {
+          const { write } = operation;
+          const receiver = evaluate(write.receiver, overrides, depth + 1);
+          recordContextualOrigin(write.receiver, receiver);
+          const written = write.source === undefined
+            ? constantOrigin(undefined, `delete ${write.receiver.getText()}`)
+            : project(
+              evaluate(write.source, overrides, depth + 1),
+              write.projection,
+              write.node,
+              overrides,
+              depth + 1,
+            );
+          const keys = write.literalKey !== undefined
+            ? new Set([write.literalKey])
+            : write.keyNode === undefined
+              ? new Set()
+              : staticKeys(write.keyNode, constants, checker);
+          for (const key of keys) mergeShapeValue(receiver, key, written);
+          mergeContent(receiver, written, `function-local ${write.channel} write transfer`);
+          mutationCollector.push(receiver);
+        } else {
+          const { call } = operation;
+          const resolution = resolveCall(call.node, overrides, depth + 1);
+          mutationCollector.push(...resolution.mutationReceivers.map((mutation) => mutation.receiver));
+        }
+      }
+      if (mutationOperations.length > 0 && !convergeBindings()) {
+        const widened = origin(ORIGIN.UNKNOWN, `function fixed point exceeded for ${entry.name}`);
+        recordObservedOverrides();
+        cacheFunctionSummary(cacheKey, widened, entry.id, mutationCollector.slice(mutationStart));
+        return widened;
+      }
+      recordObservedOverrides();
+      const returns = returnNodes.map((node) => evaluate(node, overrides, depth + 1));
+      const rawResult = returns.length === 0
         ? constantOrigin(undefined, `void return from ${entry.name}`)
         : joinOrigins(...returns);
-      functionSummaryCache.set(cacheKey, result);
+      const result = abstractLargeArgument(rawResult, `return from ${entry.name}`);
+      cacheFunctionSummary(cacheKey, result, entry.id, mutationCollector.slice(mutationStart));
       return result;
     } finally {
       resolvingFunctions.delete(recursionKey);
+      resolvingFunctionIds.delete(entry.id);
     }
   };
 
   const propertyOrigin = (node, overrides, depth) => {
-    const name = propertyText(node, constants, checker);
+    const name = ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)
+      ? classMemberShapeKey(node.name)
+      : propertyText(node, constants, checker);
     const path = actualStaticPath(node, constants, checker);
     if (path !== undefined) {
       if (objectMutationCalls.has(path) || pureGlobalCalls.has(path) || ownedGlobalResults.has(path)
@@ -553,39 +2080,97 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       }
     }
     const receiver = evaluate(node.expression, overrides, depth + 1);
+    if (receiver.tags.has(ORIGIN.UI_CELL) && name === 'current') {
+      return receiver.shape.get('current') ?? receiver.content
+        ?? origin(ORIGIN.UNKNOWN, 'React ref current value is unresolved');
+    }
     if (name !== undefined && receiver.shape.has(name)) return receiver.shape.get(name);
-    if (name !== undefined && forbiddenCapabilityEffects.has(name)) {
-      return withCallable({ kind: 'builtin', name }, `forbidden capability method ${name}`);
+    if (receiver.tags.has(ORIGIN.AMBIENT)) {
+      const typedPath = name === undefined ? undefined : (() => {
+        const root = typedHostReceiverRoot(node.expression, checker);
+        return root === undefined ? undefined : `${root}.${name}`;
+      })();
+      const ambientName = [path, typedPath, name]
+        .find((candidate) => candidate !== undefined
+          && (forbiddenCapabilityEffects.has(candidate) || browserFacadeCalls.has(candidate)))
+        ?? name ?? '[computed]';
+      const ambient = origin(ORIGIN.AMBIENT, `projection ${ambientName} from ambient value`, isPrimitiveLikeType(node, checker)
+        ? { surfaces: new Set([SURFACE.SCALAR]) }
+        : {});
+      return typeIsCallable(node, checker) || forbiddenCapabilityEffects.has(ambientName)
+        || browserFacadeCalls.has(ambientName)
+        ? joinOrigins(ambient, withCallable({ kind: 'ambient', name: ambientName, receiver }, `ambient member ${ambientName}`))
+        : ambient;
     }
-    if (name !== undefined && browserFacadeCalls.has(name)) {
-      return withCallable({ kind: 'builtin', name }, `browser capability method ${name}`);
+    if (receiver.tags.has(ORIGIN.OPAQUE)) {
+      if (name === 'render') {
+        return joinOrigins(
+          origin(ORIGIN.OPAQUE, 'opaque React root member'),
+          withCallable({ kind: 'opaque-method', name, receiver }, 'opaque React root render'),
+        );
+      }
+      const opaque = origin(ORIGIN.OPAQUE, `projection ${name ?? '[computed]'} from opaque reflection/capability value`);
+      return typeIsCallable(node, checker)
+        ? joinOrigins(opaque, withCallable({ kind: 'opaque-member', name: name ?? '[computed]', receiver }, 'opaque callable projection'))
+        : opaque;
     }
-    if (receiver.tags.has(ORIGIN.ZOD) && name !== undefined && zodPureMethods.has(name)) {
+    if ((receiver.tags.has(ORIGIN.ZOD) || isZodLikeType(node.expression, checker))
+      && name !== undefined && zodPureMethods.has(name)) {
       return withCallable({ kind: 'zod', name, receiver }, `Zod method ${name}`);
     }
-    if (typeIsCallable(node, checker) && name === 'set' && node.expression.getText() === 'Reflect') {
-      return withCallable({ kind: 'contract-reflect-set', name, receiver }, `typed local callable ${node.getText()}`);
+    if (isCapabilityValidationType(node, checker)) {
+      return withCallable({ kind: 'domain-validator', name: 'CapabilityValidationPort', receiver }, 'summarized local capability validator');
     }
-    if (name !== undefined && (mutatingMethodEffects.has(name)
+    if (name !== undefined && ['call', 'apply', 'bind'].includes(name)) {
+      return withCallable({ kind: 'meta', name, receiver }, `meta-call ${name} on ${describeOrigin(receiver)}`);
+    }
+    if (name !== undefined && (receiver.tags.has(ORIGIN.OWNED)
+      || receiver.tags.has(ORIGIN.CONSTANT)
+      || isStandardReceiverType(node.expression, checker)
+      || (uiMethods.has(name) && isDomLikeType(node.expression, checker)))
+      && (mutatingMethodEffects.has(name)
       || pureStandardMethods.has(name)
       || uiMethods.has(name))) {
       return withCallable({ kind: 'method', name, receiver }, `method ${name} on ${describeOrigin(receiver)}`);
     }
-    if (receiver.tags.has(ORIGIN.AMBIENT)) {
-      return withCallable({ kind: 'ambient', name: name ?? '[computed]', receiver }, `ambient member ${name ?? '[computed]'}`);
-    }
-    if (receiver.tags.has(ORIGIN.OPAQUE) && name === 'render') {
-      return withCallable({ kind: 'opaque-method', name, receiver }, 'opaque React root render');
-    }
-    if (receiver.tags.has(ORIGIN.UI_CELL) && name === 'current') return receiver;
     if (typeIsCallable(node, checker)) {
-      const baseText = node.expression.getText();
-      const signature = name === 'assign' && baseText === 'Object'
-        ? 'contract-object-assign'
-        : name === 'set' && baseText === 'Reflect'
-          ? 'contract-reflect-set'
-          : 'contract';
-      return withCallable({ kind: signature, name: name ?? node.getText(), receiver }, `typed local callable ${node.getText()}`);
+      const exactReceiverLabel = name === undefined
+        ? undefined
+        : exactLocalContractReceiver(node.expression, name, checker);
+      const exactObjectParameter = name === 'assign'
+        && exactShadowNamespaceParameter(node.expression, 'Object', 'assign', checker);
+      if (exactObjectParameter) {
+        return withCallable({
+          kind: 'contract-object-assign',
+          name,
+          receiver,
+          receiverLabel: 'Object',
+        }, 'receiver-branded local Object.assign contract');
+      }
+      const exactReflectParameter = name === 'get'
+        ? exactShadowNamespaceParameter(node.expression, 'Reflect', 'get', checker)
+        : name === 'set'
+          ? exactShadowNamespaceParameter(node.expression, 'Reflect', 'set', checker)
+          : false;
+      if (exactReflectParameter) {
+        return withCallable({
+          kind: name === 'get' ? 'contract-reflect-get' : 'contract-reflect-set',
+          name,
+          receiver,
+          receiverLabel: 'Reflect',
+        }, `receiver-branded local Reflect.${name} contract`);
+      }
+      return withCallable({
+        kind: 'contract-method',
+        name: name ?? node.getText(),
+        receiver,
+        receiverLabel: isLocalCapabilityDefinitionType(node.expression, checker)
+          ? 'CapabilityDefinition'
+          : exactReceiverLabel,
+      }, `typed local callable ${node.getText()}`);
+    }
+    if (isDomLikeType(node, checker)) {
+      return origin(ORIGIN.AMBIENT, `capability-bearing projection ${name ?? '[computed]'} with type ${typeText(node, checker)}`);
     }
     if (receiver.content !== undefined) return receiver.content;
     if (expressionTypeIsUncertain(node, checker)) return origin(ORIGIN.UNKNOWN, `uncertain property ${name ?? '[computed]'}`);
@@ -598,7 +2183,11 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     const children = [];
     for (const property of node.properties) {
       if (ts.isSpreadAssignment(property)) {
-        children.push(evaluate(property.expression, overrides, depth + 1));
+        const spread = evaluate(property.expression, overrides, depth + 1);
+        for (const [key, child] of spread.shape) {
+          if (!spread.hiddenKeys.has(key)) shape.set(key, child);
+        }
+        children.push(spread.content ?? spread);
         continue;
       }
       if (ts.isPropertyAssignment(property)) {
@@ -621,12 +2210,38 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         const value = functionCallable(property, overrides);
         shape.set(key, value);
         children.push(value);
+        continue;
+      }
+      if (ts.isGetAccessorDeclaration(property) && property.body !== undefined) {
+        const key = property.name.getText().replace(/^['"]|['"]$/gu, '');
+        const value = evaluateFunction({
+          kind: 'function',
+          id: `${property.getSourceFile().fileName}:${property.pos}`,
+          name: functionName(property),
+          closure: overrides,
+        }, [], depth + 1);
+        shape.set(key, value);
+        children.push(value);
       }
     }
-    return freshOwned(node, allocationProvenance(node, 'fresh object allocation'), {
+    const result = freshOwned(node, allocationProvenance(node, 'fresh object allocation'), {
       shape,
       content: children.length === 0 ? undefined : joinOrigins(...children),
     });
+    const capabilityMethods = ['deriveResource', 'facts', 'reduce'];
+    const exactCapabilityShape = shape.size === 5
+      && ['argumentsSchema', 'deriveResource', 'effect', 'facts', 'reduce']
+        .every((key) => shape.has(key))
+      && capabilityMethods.every((key) => callableArgumentIsResolved(shape.get(key)));
+    if (!exactCapabilityShape) return result;
+    const facts = transitiveSecurityFacts(result);
+    const carriesUnresolvedAuthority = [ORIGIN.AMBIENT, ORIGIN.OPAQUE, ORIGIN.ESCAPED, ORIGIN.UNKNOWN, ORIGIN.UI_CELL]
+      .some((tag) => facts.tags.has(tag))
+      || [SURFACE.HOST, SURFACE.OPAQUE, SURFACE.UNKNOWN]
+        .some((surface) => facts.surfaces.has(surface));
+    return carriesUnresolvedAuthority
+      ? result
+      : joinOrigins(result, withBrand(ORIGIN.LOCAL_CAPABILITY, 'structurally proven local capability allocation'));
   };
 
   const arrayOrigin = (node, overrides, depth) => {
@@ -634,7 +2249,18 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     const children = [];
     node.elements.forEach((element, index) => {
       if (ts.isOmittedExpression(element)) return;
-      const value = evaluate(ts.isSpreadElement(element) ? element.expression : element, overrides, depth + 1);
+      if (ts.isSpreadElement(element)) {
+        const spread = evaluate(element.expression, overrides, depth + 1);
+        const spreadChildren = spread.shape.size > 0
+          ? [...spread.shape.values()]
+          : [spread.content ?? origin(ORIGIN.UNKNOWN, 'unresolved array spread element')];
+        for (const child of spreadChildren) {
+          shape.set(String(shape.size), child);
+          children.push(child);
+        }
+        return;
+      }
+      const value = evaluate(element, overrides, depth + 1);
       shape.set(String(index), value);
       children.push(value);
     });
@@ -656,6 +2282,9 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     }
     const node = unwrapExpression(input);
     if (node === undefined || depth > 20) return origin(ORIGIN.UNKNOWN, 'analysis depth limit');
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      return overrides.get(THIS_ORIGIN) ?? origin(ORIGIN.BORROWED, 'unresolved this receiver');
+    }
     if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)
       || node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword
       || node.kind === ts.SyntaxKind.NullKeyword || node.kind === ts.SyntaxKind.UndefinedKeyword) {
@@ -666,8 +2295,14 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     }
     if (ts.isIdentifier(node)) {
       const symbol = resolvedSymbol(node, checker);
-      if (symbol !== undefined && overrides.has(symbol)) return overrides.get(symbol);
-      if (symbol !== undefined && env.has(symbol)) return env.get(symbol);
+      const symbolDeclarations = symbol?.declarations ?? [];
+      const unshadowedUndefined = node.text === 'undefined'
+        && (symbol === undefined || symbolDeclarations.length === 0
+          || symbolDeclarations.every((declaration) => /typescript[\\/]lib[\\/]lib\./u
+            .test(declaration.getSourceFile().fileName)));
+      if (unshadowedUndefined) {
+        return constantOrigin(undefined, 'global undefined');
+      }
       const imported = importIdentity(node, checker);
       if (imported !== undefined) {
         const [moduleName, importedName] = imported.split(':');
@@ -678,14 +2313,44 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           return withCallable({ kind: 'builtin', name: 'createRoot' }, 'React DOM createRoot import');
         }
         if (moduleName === 'zod') return withBrand(ORIGIN.ZOD, `Zod import ${importedName}`);
-        if (moduleName?.startsWith('.')) {
-          return typeIsCallable(node, checker)
-            ? withCallable({ kind: 'contract', name: node.text }, `imported local callable ${node.text}`)
-            : origin(ORIGIN.BORROWED, `imported local data ${node.text}`);
-        }
       }
+      if (symbol !== undefined && overrides.has(symbol)) return overrides.get(symbol);
+      if (symbol !== undefined && env.has(symbol)) return env.get(symbol);
       if (symbol !== undefined && functionBySymbol.has(symbol)) {
         return functionCallable(functions.get(functionBySymbol.get(symbol)), overrides);
+      }
+      if (symbol !== undefined && classBySymbol.has(symbol)) {
+        const id = classBySymbol.get(symbol);
+        return withCallable({ kind: 'local-class', id, name: node.text }, `local class ${node.text}`);
+      }
+      const lexicalDefinitions = symbol === undefined ? undefined : bindingDefinitionsBySymbol.get(symbol);
+      if (symbol !== undefined && lexicalDefinitions !== undefined && lexicalDefinitions.length > 0) {
+        if (resolvingLexicalSymbols.has(symbol)) {
+          return origin(ORIGIN.UNKNOWN, `recursive lexical binding ${node.text}`);
+        }
+        resolvingLexicalSymbols.add(symbol);
+        try {
+          // A nested closure may be queried before its parent summary has
+          // materialized every captured symbol. Resolve that missing capture
+          // from the same closed-world binding IR (including projections and
+          // all reassignment alternatives) instead of inventing BorrowedData.
+          // Ambient/unknown assignment sources therefore remain ambient/
+          // unknown, while a fresh local declaration retains its allocation.
+          return joinOrigins(...lexicalDefinitions.map((binding) => project(
+            evaluate(binding.source, overrides, depth + 1),
+            binding.projection,
+            binding.target,
+            overrides,
+            depth + 1,
+          )));
+        } finally {
+          resolvingLexicalSymbols.delete(symbol);
+        }
+      }
+      if (imported?.startsWith('.')) {
+        return typeIsCallable(node, checker)
+          ? withCallable({ kind: 'contract', name: node.text }, `unresolved imported local callable ${node.text}`)
+          : origin(ORIGIN.BORROWED, `unresolved imported local data ${node.text}`);
       }
       if (isActualGlobal(node, checker)) {
         if (pureGlobalCalls.has(node.text) || ownedGlobalResults.has(node.text)) {
@@ -753,9 +2418,98 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       : origin(ORIGIN.BORROWED, `typed expression ${ts.SyntaxKind[node.kind]}`);
   };
 
-  const argsFor = (node, overrides, depth) => ts.isTaggedTemplateExpression(node)
-    ? []
-    : (node.arguments ?? []).map((argument) => evaluate(argument, overrides, depth + 1));
+  const argsFor = (node, overrides, depth) => {
+    if (ts.isTaggedTemplateExpression(node)) {
+      const substitutions = ts.isTemplateExpression(node.template)
+        ? node.template.templateSpans.map((span) => evaluate(span.expression, overrides, depth + 1))
+        : [];
+      return [origin(ORIGIN.BORROWED, 'frozen template strings argument'), ...substitutions];
+    }
+    const values = [];
+    for (const argument of node.arguments ?? []) {
+      if (ts.isSpreadElement(argument)) {
+        const spread = evaluate(argument.expression, overrides, depth + 1);
+        if (spread.shape.size > 0) values.push(...orderedShapeValues(spread));
+        else values.push(spread.content ?? origin(ORIGIN.UNKNOWN, 'unresolved spread call argument'));
+      } else {
+        values.push(evaluate(argument, overrides, depth + 1));
+      }
+    }
+    return values;
+  };
+
+  const escapeOwned = (value, provenance, seen = new Set()) => {
+    if (seen.has(value)) return;
+    seen.add(value);
+    if (value.tags.has(ORIGIN.OWNED)) {
+      value.tags.delete(ORIGIN.OWNED);
+      value.tags.add(ORIGIN.ESCAPED);
+      value.surfaces.add(SURFACE.UNKNOWN);
+      value.provenance.add(provenance);
+    }
+    if (value.content !== undefined) escapeOwned(value.content, provenance, seen);
+    for (const child of value.shape.values()) escapeOwned(child, provenance, seen);
+  };
+
+  const mergeContent = (receiver, value, provenance) => {
+    receiver.content = receiver.content === undefined ? value : joinOrigins(receiver.content, value);
+    receiver.provenance.add(provenance);
+  };
+
+  const mergeShapeValue = (receiver, key, value) => {
+    const normalized = String(key);
+    receiver.shape.set(normalized, receiver.shape.has(normalized)
+      ? joinOrigins(receiver.shape.get(normalized), value)
+      : value);
+  };
+
+  const applyObjectMutationTransfer = (api, receiver, argumentsList, callNode) => {
+    if (api === 'Object.assign') {
+      for (const source of argumentsList.slice(1)) {
+        for (const [key, value] of source.shape) mergeShapeValue(receiver, key, value);
+        if (source.content !== undefined) {
+          mergeContent(receiver, source.content, 'Object.assign source transfer');
+        } else if ([ORIGIN.AMBIENT, ORIGIN.OPAQUE, ORIGIN.ESCAPED, ORIGIN.UNKNOWN]
+          .some((tag) => source.tags.has(tag))) {
+          mergeContent(receiver, source, 'Object.assign unresolved source transfer');
+        }
+      }
+      return;
+    }
+    if (api === 'Reflect.set') {
+      const value = argumentsList[2] ?? origin(ORIGIN.UNKNOWN, 'missing Reflect.set value');
+      const keyNode = callNode.arguments?.[1];
+      const keys = keyNode === undefined ? new Set() : staticKeys(keyNode, constants, checker);
+      for (const key of keys) mergeShapeValue(receiver, key, value);
+      mergeContent(receiver, value, 'Reflect.set value transfer');
+      return;
+    }
+    if (api === 'Object.defineProperty' || api === 'Reflect.defineProperty') {
+      const descriptor = argumentsList[2] ?? origin(ORIGIN.UNKNOWN, `missing ${api} descriptor`);
+      const value = descriptor.shape.get('value') ?? descriptor.content
+        ?? origin(ORIGIN.UNKNOWN, `${api} descriptor value is unresolved`);
+      const keyNode = callNode.arguments?.[1];
+      const keys = keyNode === undefined ? new Set() : staticKeys(keyNode, constants, checker);
+      for (const key of keys) mergeShapeValue(receiver, key, value);
+      mergeContent(receiver, value, `${api} descriptor transfer`);
+      return;
+    }
+    if (api === 'Object.defineProperties') {
+      const descriptors = argumentsList[1]
+        ?? origin(ORIGIN.UNKNOWN, 'missing Object.defineProperties descriptor map');
+      for (const [key, descriptor] of descriptors.shape) {
+        const value = descriptor.shape.get('value') ?? descriptor.content
+          ?? origin(ORIGIN.UNKNOWN, `Object.defineProperties descriptor ${key} is unresolved`);
+        mergeShapeValue(receiver, key, value);
+        mergeContent(receiver, value, 'Object.defineProperties descriptor transfer');
+      }
+    }
+  };
+
+  const orderedShapeValues = (value) => [...value.shape.entries()]
+    .filter(([key]) => !value.hiddenKeys.has(key) && typeof key !== 'symbol')
+    .sort(([left], [right]) => Number(left) - Number(right))
+    .map(([, child]) => child);
 
   resolveCall = (node, overrides = new Map(), depth = 0) => {
     const calleeNode = ts.isTaggedTemplateExpression(node) ? node.tag : node.expression;
@@ -766,16 +2520,162 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     const mutationReceivers = [];
     let known = callee.callables.length > 0;
     const descriptions = [];
+    const evaluateDirectFunction = (entry, invocationArguments) => {
+      const declaration = functions.get(entry.id);
+      if (declaration !== undefined && nearestContainingFunction(node) === declaration) {
+        return collectReturns(declaration).length === 0
+          ? constantOrigin(undefined, `recursive void summary ${entry.name}`)
+          : origin(ORIGIN.UNKNOWN, `recursive value summary ${entry.name}`);
+      }
+      const nestedMutationReceivers = [];
+      const result = evaluateFunction(entry, invocationArguments, depth + 1, nestedMutationReceivers);
+      mutationReceivers.push(...nestedMutationReceivers.map((receiver) => ({
+        receiver,
+        label: `nested mutation in ${entry.name}`,
+        api: 'local-function',
+        argumentsList: invocationArguments,
+      })));
+      return result;
+    };
+    const functionWithThis = (target, thisOrigin) => target.kind !== 'function'
+      ? target
+      : {
+        ...target,
+        closure: new Map([...(target.closure ?? []), [THIS_ORIGIN, thisOrigin]]),
+      };
+    let invokeDirect;
+    invokeDirect = (target, invocationArguments) => {
+      if (target.kind === 'function') {
+        outcomes.push(evaluateDirectFunction(target, invocationArguments));
+        return;
+      }
+      if (target.kind === 'bound') {
+        for (const nested of target.targets) {
+          invokeDirect(
+            functionWithThis(nested, target.boundThis ?? constantOrigin(undefined, 'undefined bound this')),
+            [...target.boundArguments, ...invocationArguments],
+          );
+        }
+        return;
+      }
+      if (target.kind === 'builtin') {
+        if (objectMutationCalls.has(target.name)) {
+          effects.add(objectMutationCalls.get(target.name));
+          const receiver = invocationArguments[0] ?? origin(ORIGIN.UNKNOWN, 'missing mutation target');
+          applyObjectMutationTransfer(target.name, receiver, invocationArguments, node);
+          mutationReceivers.push({
+            receiver,
+            label: `${target.name} target`,
+            api: target.name,
+            argumentsList: invocationArguments,
+          });
+          outcomes.push(target.name === 'Object.assign'
+            ? invocationArguments[0] ?? origin(ORIGIN.UNKNOWN, 'missing Object.assign target')
+            : constantOrigin(target.name.startsWith('Reflect.') ? true : undefined, `${target.name} result`));
+          return;
+        }
+        if (forbiddenCapabilityEffects.has(target.name)) {
+          effects.add(forbiddenCapabilityEffects.get(target.name));
+          outcomes.push(origin(ORIGIN.AMBIENT, `forbidden capability result ${target.name}`));
+          return;
+        }
+        if (browserFacadeCalls.has(target.name)) {
+          if (['window.setInterval', 'globalThis.setInterval', 'setInterval'].includes(target.name)) {
+            const callback = invocationArguments[0];
+            if (!callableArgumentIsResolved(callback)) {
+              effects.add('HOST_UNKNOWN');
+              if (callback !== undefined) escapeOwned(callback, 'escaped through unresolved timer callback');
+            } else {
+              const callbackArguments = invocationArguments.slice(2);
+              callback.callables.forEach((callable) => invokeDirect(callable, callbackArguments));
+            }
+          }
+          effects.add(browserFacadeCalls.get(target.name));
+          outcomes.push(origin(ORIGIN.BORROWED, `meta-call browser result ${target.name}`));
+          return;
+        }
+      }
+      if (target.kind === 'ambient') {
+        const forbiddenEffect = forbiddenCapabilityEffects.get(target.name);
+        const facadeEffect = browserFacadeCalls.get(target.name);
+        effects.add(forbiddenEffect ?? facadeEffect ?? 'HOST_UNKNOWN');
+        outcomes.push(facadeEffect !== undefined
+          && !target.name.includes('matchMedia') && target.name !== 'document.getElementById'
+          ? constantOrigin(undefined, `void browser operation ${target.name}`)
+          : origin(ORIGIN.AMBIENT, `result of ambient meta-call ${target.name}`));
+        return;
+      }
+      if (target.kind === 'ui') {
+        effects.add('HOST_UI_STATE');
+        outcomes.push(constantOrigin(undefined, `UI callback ${target.name}`));
+        return;
+      }
+      effects.add('HOST_UNKNOWN');
+      invocationArguments.forEach((value) => escapeOwned(value, `escaped through unresolved meta-call ${target.name ?? target.kind}`));
+      outcomes.push(origin(ORIGIN.UNKNOWN, `unresolved meta-call target ${target.name ?? target.kind}`));
+    };
 
     for (const entry of callee.callables) {
       descriptions.push(`${entry.kind}:${entry.name ?? entry.id}`);
+      if (entry.kind === 'meta') {
+        const targets = entry.receiver.callables;
+        const directlyAnalyzed = targets.length > 0 && targets.every((target) =>
+          ['bound', 'builtin', 'function', 'react', 'ui', 'zod'].includes(target.kind));
+        if (!directlyAnalyzed) {
+          effects.add('HOST_UNKNOWN');
+          argumentsList.forEach((value) => escapeOwned(value, `escaped through unresolved ${entry.name}`));
+          outcomes.push(origin(ORIGIN.UNKNOWN, `unresolved ${entry.name} target`));
+        } else if (entry.name === 'bind') {
+          outcomes.push(withCallable({
+            kind: 'bound',
+            name: 'bound callable',
+            targets,
+            boundArguments: argumentsList.slice(1),
+            boundThis: argumentsList[0] ?? constantOrigin(undefined, 'undefined bound this'),
+          }, 'directly analyzed bound callable'));
+        } else {
+          const invoked = entry.name === 'call'
+            ? argumentsList.slice(1)
+            : orderedShapeValues(argumentsList[1] ?? origin(ORIGIN.UNKNOWN, 'missing apply arguments'));
+          const thisOrigin = argumentsList[0] ?? constantOrigin(undefined, `undefined ${entry.name} this`);
+          targets.forEach((target) => invokeDirect(functionWithThis(target, thisOrigin), invoked));
+        }
+        continue;
+      }
+      if (entry.kind === 'bound') {
+        entry.targets.forEach((target) => invokeDirect(
+          functionWithThis(target, entry.boundThis ?? constantOrigin(undefined, 'undefined bound this')),
+          [...entry.boundArguments, ...argumentsList],
+        ));
+        continue;
+      }
+      if (entry.kind === 'local-class') {
+        outcomes.push(instantiateClass(entry, argumentsList, node, depth + 1));
+        continue;
+      }
       if (entry.kind === 'function') {
-        outcomes.push(evaluateFunction(entry, argumentsList, depth + 1));
+        const result = evaluateDirectFunction(entry, argumentsList);
+        outcomes.push(result);
         continue;
       }
       if (entry.kind === 'react') {
         const summary = reactCallSummaries.get(entry.name);
         if (summary === 'REACT_USE_STATE' || summary === 'REACT_USE_REDUCER') {
+          if (summary === 'REACT_USE_STATE' && node.arguments?.[0] !== undefined
+            && callableArgumentRequiresResolution(node.arguments[0], argumentsList[0], checker)
+            && !callableArgumentIsResolved(argumentsList[0])) {
+            effects.add('HOST_UNKNOWN');
+            escapeOwned(argumentsList[0], 'escaped through unresolved React state initializer');
+          }
+          if (summary === 'REACT_USE_REDUCER' && !callableArgumentIsResolved(argumentsList[0])) {
+            effects.add('HOST_UNKNOWN');
+            argumentsList.forEach((value) => escapeOwned(value, 'escaped through unresolved React reducer'));
+          }
+          if (summary === 'REACT_USE_REDUCER' && node.arguments?.[2] !== undefined
+            && !callableArgumentIsResolved(argumentsList[2])) {
+            effects.add('HOST_UNKNOWN');
+            escapeOwned(argumentsList[2], 'escaped through unresolved React reducer initializer');
+          }
           const setter = withCallable({ kind: 'ui', name: summary === 'REACT_USE_STATE' ? 'setState' : 'dispatch' }, 'React UI state dispatcher');
           outcomes.push(freshOwned(node, allocationProvenance(node, 'React hook tuple'), {
             shape: new Map([
@@ -797,30 +2697,80 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           outcomes.push(argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing useCallback function'));
         } else if (summary === 'REACT_USE_MEMO') {
           const callback = argumentsList[0];
-          if (callback?.callables.length > 0) {
+          if (callableArgumentIsResolved(callback)) {
             outcomes.push(joinOrigins(...callback.callables.map((item) => item.kind === 'function'
               ? evaluateFunction(item, [], depth + 1)
               : origin(ORIGIN.BORROWED, 'memo callback result'))));
-          } else outcomes.push(origin(ORIGIN.BORROWED, 'memo result'));
+          } else {
+            effects.add('HOST_UNKNOWN');
+            if (callback !== undefined) escapeOwned(callback, 'escaped through unresolved React memo callback');
+            outcomes.push(origin(ORIGIN.UNKNOWN, 'unresolved memo callback result'));
+          }
         } else if (summary === 'REACT_FORWARD_REF') {
-          outcomes.push(argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing forwardRef render'));
+          if (!callableArgumentIsResolved(argumentsList[0])) {
+            effects.add('HOST_UNKNOWN');
+            if (argumentsList[0] !== undefined) {
+              escapeOwned(argumentsList[0], 'escaped through unresolved React forwardRef render');
+            }
+          }
+          outcomes.push(callableArgumentIsResolved(argumentsList[0])
+            ? argumentsList[0]
+            : origin(ORIGIN.UNKNOWN, 'unresolved forwardRef render'));
         } else if (summary === 'REACT_USE_ID') {
           outcomes.push(constantOrigin(undefined, 'React generated id'));
         } else {
+          if (summary === 'REACT_USE_EFFECT' && !callableArgumentIsResolved(argumentsList[0])) {
+            effects.add('HOST_UNKNOWN');
+            argumentsList.forEach((value) => escapeOwned(value, 'escaped through unresolved React effect registration'));
+          } else if (summary === 'REACT_USE_EFFECT') {
+            const cleanupResults = argumentsList[0].callables.map((item) => item.kind === 'function'
+              ? evaluateFunction(item, [], depth + 1)
+              : constantOrigin(undefined, 'React effect without cleanup'));
+            const cleanup = joinOrigins(...cleanupResults);
+            if ((cleanup.callables.length > 0 && !callableArgumentIsResolved(cleanup))
+              || cleanup.tags.has(ORIGIN.UNKNOWN)) {
+              effects.add('HOST_UNKNOWN');
+              escapeOwned(cleanup, 'escaped through unresolved React effect cleanup');
+            }
+          }
           effects.add('HOST_UI_STATE');
           outcomes.push(constantOrigin(undefined, 'React effect registration'));
         }
         continue;
       }
       if (entry.kind === 'ui') {
+        if (entry.name === 'setState' && node.arguments?.[0] !== undefined
+          && callableArgumentRequiresResolution(node.arguments[0], argumentsList[0], checker)
+          && !callableArgumentIsResolved(argumentsList[0])) {
+          effects.add('HOST_UNKNOWN');
+          escapeOwned(argumentsList[0], 'escaped through unresolved React state updater');
+        }
         effects.add('HOST_UI_STATE');
         outcomes.push(constantOrigin(undefined, `UI callback ${entry.name}`));
         continue;
       }
       if (entry.kind === 'zod') {
+        if (['lazy', 'superRefine'].includes(entry.name)
+          && !callableArgumentIsResolved(argumentsList[0])) {
+          effects.add('HOST_UNKNOWN');
+          argumentsList.forEach((value) => escapeOwned(value, `escaped through unresolved Zod ${entry.name} callback`));
+        }
+        if (entry.name === 'config') {
+          const customError = argumentsList[0]?.shape.get('customError');
+          if (customError !== undefined && !callableArgumentIsResolved(customError)) {
+            effects.add('HOST_UNKNOWN');
+            escapeOwned(customError, 'escaped through unresolved Zod global error callback');
+          }
+        }
         outcomes.push(entry.name === 'parse' || entry.name === 'safeParse'
           ? origin(ORIGIN.BORROWED, `validated result from Zod ${entry.name}`)
-          : withBrand(ORIGIN.ZOD, `Zod method result ${entry.name}`));
+          : entry.name === 'addIssue'
+            ? constantOrigin(undefined, 'Zod refinement issue registration')
+            : withBrand(ORIGIN.ZOD, `Zod method result ${entry.name}`));
+        continue;
+      }
+      if (entry.kind === 'domain-validator') {
+        outcomes.push(origin(ORIGIN.BORROWED, 'validated local capability contract result'));
         continue;
       }
       if (entry.kind === 'opaque-method' && entry.name === 'render') {
@@ -830,29 +2780,103 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       }
       if (entry.kind === 'ambient') {
         const ambientName = entry.name;
-        const effect = browserFacadeCalls.get(ambientName)
+        if (ambientName === 'addEventListener' && !callableArgumentIsResolved(argumentsList[1])) {
+          effects.add('HOST_UNKNOWN');
+          argumentsList.forEach((value) => escapeOwned(value, 'escaped through unresolved host event listener'));
+        } else if (ambientName === 'addEventListener') {
+          const callback = argumentsList[1];
+          const hostInput = origin(ORIGIN.AMBIENT, 'host event-listener callback input');
+          for (const callable of callback.callables) {
+            invokeDirect(callable, [hostInput]);
+          }
+        }
+        const facadeEffect = browserFacadeCalls.get(ambientName);
+        const effect = uiMethods.has(ambientName)
+          ? 'HOST_UI_STATE'
+          : facadeEffect
           ?? forbiddenCapabilityEffects.get(ambientName)
           ?? (ambientName === 'submit' || ambientName === 'requestSubmit' ? 'HOST_FORM_SUBMIT' : 'HOST_UNKNOWN');
         effects.add(effect);
-        outcomes.push(origin(ORIGIN.AMBIENT, `result of ambient call ${ambientName}`));
+        outcomes.push(uiMethods.has(ambientName)
+          ? constantOrigin(undefined, `UI event method ${ambientName}`)
+          : facadeEffect !== undefined
+          && !ambientName.includes('matchMedia') && ambientName !== 'document.getElementById'
+            ? constantOrigin(undefined, `void browser operation ${ambientName}`)
+            : origin(ORIGIN.AMBIENT, `result of ambient call ${ambientName}`));
         continue;
       }
       if (entry.kind === 'method') {
+        const element = entry.receiver.content ?? origin(ORIGIN.BORROWED, `${entry.name} receiver element`);
+        let callbackResult;
         if (higherOrderMethods.has(entry.name)
-          && !(entry.name === 'sort' && argumentsList[0] === undefined)
-          && !callableArgumentIsResolved(argumentsList[0])) {
+          && !(entry.name === 'sort' && argumentsList[0] === undefined)) {
+          const callback = argumentsList[0];
+          if (!callableArgumentIsResolved(callback)) {
+            effects.add('HOST_UNKNOWN');
+            callbackResult = origin(ORIGIN.UNKNOWN, `unresolved ${entry.name} callback result`);
+          } else {
+            const callbackArguments = ['reduce', 'reduceRight'].includes(entry.name)
+              ? [argumentsList[1] ?? element, element, constantOrigin(0, `${entry.name} index`), entry.receiver]
+              : [element, constantOrigin(0, `${entry.name} index`), entry.receiver];
+            const results = callback.callables.map((item) => item.kind === 'function'
+              ? evaluateFunction(item, callbackArguments, depth + 1)
+              : origin(ORIGIN.BORROWED, `${entry.name} summarized callback result`));
+            callbackResult = joinOrigins(...results);
+          }
+        }
+        if (['replace', 'replaceAll'].includes(entry.name) && node.arguments?.[1] !== undefined
+          && callableArgumentRequiresResolution(node.arguments[1], argumentsList[1], checker)
+          && !callableArgumentIsResolved(argumentsList[1])) {
           effects.add('HOST_UNKNOWN');
+          escapeOwned(argumentsList[1], `escaped through unresolved ${entry.name} callback`);
         }
         if (mutatingMethodEffects.has(entry.name)) {
           effects.add(mutatingMethodEffects.get(entry.name));
-          mutationReceivers.push({ receiver: entry.receiver, label: `.${entry.name}()` });
-          outcomes.push(entry.receiver);
+          mutationReceivers.push({ receiver: entry.receiver, label: `.${entry.name}()`, api: `method:${entry.name}`, argumentsList });
+          const inserted = entry.name === 'set'
+            ? argumentsList[1]
+            : entry.name === 'add'
+              ? argumentsList[0]
+              : ['push', 'unshift'].includes(entry.name)
+                ? joinOrigins(...argumentsList)
+                : entry.name === 'splice'
+                  ? joinOrigins(...argumentsList.slice(2))
+                  : entry.name === 'fill'
+                    ? argumentsList[0]
+                    : undefined;
+          if (inserted !== undefined) mergeContent(entry.receiver, inserted, `content update through .${entry.name}()`);
+          outcomes.push(['pop', 'shift'].includes(entry.name)
+            ? element
+            : entry.receiver);
         } else if (uiMethods.has(entry.name)) {
           effects.add('HOST_UI_STATE');
           outcomes.push(constantOrigin(undefined, `UI method ${entry.name}`));
+        } else if (entry.name === 'map') {
+          outcomes.push(freshOwned(node, allocationProvenance(node, 'map result'), {
+            content: callbackResult ?? origin(ORIGIN.UNKNOWN, 'missing map callback result'),
+          }));
+        } else if (entry.name === 'flatMap') {
+          const mapped = callbackResult ?? origin(ORIGIN.UNKNOWN, 'missing flatMap callback result');
+          outcomes.push(freshOwned(node, allocationProvenance(node, 'flatMap result'), {
+            content: mapped.content ?? mapped,
+          }));
+        } else if (entry.name === 'concat') {
+          const concatenated = argumentsList.map((value) => value.content ?? value);
+          outcomes.push(freshOwned(node, allocationProvenance(node, 'concat result'), {
+            content: joinOrigins(element, ...concatenated),
+          }));
+        } else if (entry.name === 'flat') {
+          outcomes.push(freshOwned(node, allocationProvenance(node, 'flat result'), {
+            content: element.content ?? element,
+          }));
+        } else if (entry.name === 'reduce' || entry.name === 'reduceRight') {
+          outcomes.push(joinOrigins(
+            argumentsList[1] ?? element,
+            callbackResult ?? origin(ORIGIN.UNKNOWN, `missing ${entry.name} callback result`),
+          ));
         } else if (ownedResultMethods.has(entry.name) || ['entries', 'keys', 'values'].includes(entry.name)) {
           outcomes.push(freshOwned(node, allocationProvenance(node, `${entry.name} result`), {
-            content: entry.receiver.content ?? origin(ORIGIN.BORROWED, `${entry.name} element`),
+            content: element,
           }));
         } else if (entry.name === 'at' || entry.name === 'find' || entry.name === 'get') {
           outcomes.push(entry.receiver.content ?? (entry.name === 'get'
@@ -865,14 +2889,112 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       }
       if (entry.kind === 'contract-object-assign' || entry.kind === 'contract-reflect-set') {
         effects.add('HOST_LOCAL_MUTATION');
-        mutationReceivers.push({ receiver: argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing mutation target'), label: `${entry.name} target` });
+        const api = entry.kind === 'contract-object-assign' ? 'Object.assign' : 'Reflect.set';
+        const receiver = argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing mutation target');
+        applyObjectMutationTransfer(api, receiver, argumentsList, node);
+        mutationReceivers.push({
+          receiver,
+          label: `${entry.name} target`,
+          api,
+          argumentsList,
+        });
         outcomes.push(entry.kind === 'contract-object-assign'
           ? argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing mutation target')
           : constantOrigin(true, 'Reflect.set result'));
         continue;
       }
-      if (entry.kind === 'contract') {
-        outcomes.push(origin(ORIGIN.BORROWED, `typed callback result ${entry.name}`));
+      if (entry.kind === 'contract-reflect-get') {
+        const target = argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing Reflect.get target');
+        const keyNode = node.arguments?.[1];
+        const keys = keyNode === undefined ? undefined : staticKeys(keyNode, constants, checker);
+        if (keys === undefined || keys.size !== 1) {
+          effects.add('HOST_UNKNOWN');
+          outcomes.push(origin(ORIGIN.UNKNOWN, 'Reflect.get contract requires one finite key'));
+          continue;
+        }
+        const [key] = keys;
+        const targetNode = node.arguments?.[0];
+        let declaredProjection;
+        if (targetNode !== undefined) {
+          try {
+            const targetType = checker.getTypeAtLocation(targetNode);
+            const property = checker.getPropertyOfType(targetType, String(key));
+            if (property !== undefined) {
+              const propertyType = checker.getTypeOfSymbolAtLocation(property, targetNode);
+              declaredProjection = isDomLikeTsType(propertyType, checker)
+                ? origin(ORIGIN.AMBIENT, `Reflect.get capability-bearing property ${String(key)}`)
+                : (propertyType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter)) !== 0
+                  ? origin(ORIGIN.UNKNOWN, `Reflect.get uncertain property ${String(key)}`)
+                  : origin(ORIGIN.BORROWED, `Reflect.get declared property ${String(key)}`);
+            }
+          } catch {
+            declaredProjection = origin(ORIGIN.UNKNOWN, `Reflect.get property ${String(key)} type resolution failed`);
+          }
+        }
+        outcomes.push(target.shape.get(String(key))
+          ?? target.content
+          ?? (target.tags.has(ORIGIN.AMBIENT) || target.tags.has(ORIGIN.OPAQUE)
+            ? target
+            : declaredProjection
+              ?? origin(ORIGIN.UNKNOWN, `Reflect.get unresolved property ${String(key)}`)));
+        continue;
+      }
+      if (entry.kind === 'contract-method') {
+        const brandedCapability = entry.receiver.tags.has(ORIGIN.LOCAL_CAPABILITY);
+        const receiverHasAuthority = [ORIGIN.AMBIENT, ORIGIN.OPAQUE, ORIGIN.ESCAPED]
+          .some((tag) => entry.receiver.tags.has(tag));
+        const receiverBrandMatches = (entry.name === 'fetch' && entry.receiverLabel === 'client')
+          || (entry.name === 'focus' && entry.receiverLabel === 'window')
+          || (entry.name === 'getElementById' && entry.receiverLabel === 'document')
+          || (entry.receiverLabel === 'CapabilityDefinition'
+            && ['deriveResource', 'facts', 'reduce'].includes(entry.name));
+        const returnIsScalarOrVoid = isPrimitiveLikeType(node, checker);
+        const capabilityArgumentArities = new Map([
+          ['deriveResource', 1],
+          ['facts', 1],
+          ['reduce', 2],
+        ]);
+        const capabilityArgumentsAreData = entry.receiverLabel === 'CapabilityDefinition'
+          && argumentsList.length === capabilityArgumentArities.get(entry.name)
+          && argumentsList.every((value) => {
+            const facts = transitiveSecurityFacts(value);
+            return facts.callableCount === 0
+              && ![ORIGIN.AMBIENT, ORIGIN.OPAQUE, ORIGIN.ESCAPED, ORIGIN.UNKNOWN, ORIGIN.UI_CELL]
+                .some((tag) => facts.tags.has(tag))
+              && ![SURFACE.CALLABLE, SURFACE.HOST, SURFACE.OPAQUE, SURFACE.UNKNOWN]
+                .some((surface) => facts.surfaces.has(surface));
+          });
+        const receiverArgumentsAreExact = entry.receiverLabel === 'document'
+          ? argumentsList.length === 1 && node.arguments?.length === 1
+            && staticString(node.arguments[0], constants, checker) !== undefined
+          : entry.receiverLabel === 'client' || entry.receiverLabel === 'window'
+            ? argumentsList.length === 0
+            : capabilityArgumentsAreData;
+        const receiverAuthorityIsExact = entry.receiverLabel === 'CapabilityDefinition'
+          ? brandedCapability
+          : !brandedCapability;
+        if ((pureLocalContractMethods.has(entry.name) || entry.receiverLabel === 'CapabilityDefinition')
+          && receiverBrandMatches
+          && receiverArgumentsAreExact
+          && receiverAuthorityIsExact
+          && !receiverHasAuthority && !entry.receiver.tags.has(ORIGIN.CALLABLE)
+          && !entry.receiver.tags.has(ORIGIN.UNKNOWN)
+          && (entry.receiverLabel === 'CapabilityDefinition' || returnIsScalarOrVoid)) {
+          outcomes.push(origin(ORIGIN.BORROWED, `approved receiver-branded local method result ${entry.name}`, {
+            surfaces: new Set([SURFACE.SCALAR]),
+          }));
+        } else {
+          effects.add('HOST_UNKNOWN');
+          descriptions.push(`contract-check:${entry.receiverLabel ?? 'unbranded'}:brand=${brandedCapability}:args=${receiverArgumentsAreExact}:authority=${receiverHasAuthority}:callable=${entry.receiver.tags.has(ORIGIN.CALLABLE)}:unknown=${entry.receiver.tags.has(ORIGIN.UNKNOWN)}`);
+          argumentsList.forEach((value) => escapeOwned(value, `escaped through unresolved local method ${entry.name}`));
+          outcomes.push(origin(ORIGIN.UNKNOWN, `unsummarized receiver-branded local method ${entry.name}`));
+        }
+        continue;
+      }
+      if (entry.kind === 'external-contract' || entry.kind === 'contract') {
+        effects.add('HOST_UNKNOWN');
+        argumentsList.forEach((value) => escapeOwned(value, `escaped through unresolved contract ${entry.name}`));
+        outcomes.push(origin(ORIGIN.UNKNOWN, `unresolved external contract ${entry.name}`));
         continue;
       }
       if (entry.kind === 'constructor') {
@@ -893,7 +3015,14 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         const name = entry.name;
         if (objectMutationCalls.has(name)) {
           effects.add(objectMutationCalls.get(name));
-          mutationReceivers.push({ receiver: argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing mutation target'), label: `${name} target` });
+          const receiver = argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing mutation target');
+          applyObjectMutationTransfer(name, receiver, argumentsList, node);
+          mutationReceivers.push({
+            receiver,
+            label: `${name} target`,
+            api: name,
+            argumentsList,
+          });
           outcomes.push(name === 'Object.assign'
             ? argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing Object.assign target')
             : constantOrigin(name.startsWith('Reflect.') ? true : undefined, `${name} result`));
@@ -901,8 +3030,16 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           effects.add(forbiddenCapabilityEffects.get(name));
           outcomes.push(origin(ORIGIN.AMBIENT, `forbidden capability result ${name}`));
         } else if (browserFacadeCalls.has(name)) {
-          if (['window.setInterval', 'globalThis.setInterval', 'setInterval'].includes(name)
-            && !callableArgumentIsResolved(argumentsList[0])) effects.add('HOST_UNKNOWN');
+          if (['window.setInterval', 'globalThis.setInterval', 'setInterval'].includes(name)) {
+            const callback = argumentsList[0];
+            if (!callableArgumentIsResolved(callback)) {
+              effects.add('HOST_UNKNOWN');
+              if (callback !== undefined) escapeOwned(callback, 'escaped through unresolved timer callback');
+            } else {
+              const callbackArguments = argumentsList.slice(2);
+              callback.callables.forEach((callable) => invokeDirect(callable, callbackArguments));
+            }
+          }
           effects.add(browserFacadeCalls.get(name));
           outcomes.push(name === 'createRoot'
             ? origin(ORIGIN.OPAQUE, 'opaque React root')
@@ -912,20 +3049,48 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         } else if (name === 'Object.freeze') {
           outcomes.push(argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing Object.freeze value'));
         } else if (name === 'Object.getOwnPropertyDescriptor') {
-          outcomes.push(origin(ORIGIN.BORROWED, 'property descriptor'));
+          outcomes.push(origin(ORIGIN.OPAQUE, 'opaque property descriptor'));
         } else if (name === 'Object.getOwnPropertyDescriptors') {
           outcomes.push(freshOwned(node, allocationProvenance(node, 'descriptor table'), {
-            content: origin(ORIGIN.BORROWED, 'property descriptor'),
+            content: origin(ORIGIN.OPAQUE, 'opaque property descriptor'),
           }));
+        } else if (name === 'Object.getPrototypeOf') {
+          outcomes.push(origin(ORIGIN.OPAQUE, 'opaque prototype identity token'));
         } else if (ownedGlobalResults.has(name)) {
           if (name === 'Object.create' && node.arguments?.[0]?.kind !== ts.SyntaxKind.NullKeyword) {
             effects.add('HOST_UNKNOWN');
           }
+          let ownedContent = argumentsList[0]?.content ?? argumentsList[0]
+            ?? origin(ORIGIN.BORROWED, `${name} content`);
+          if (name === 'Array.from' && node.arguments?.[1] !== undefined) {
+            const callback = argumentsList[1];
+            if (!callableArgumentIsResolved(callback)) {
+              effects.add('HOST_UNKNOWN');
+              escapeOwned(callback, 'escaped through unresolved Array.from callback');
+              ownedContent = origin(ORIGIN.UNKNOWN, 'unresolved Array.from callback result');
+            } else {
+              const callbackResults = callback.callables.map((item) => item.kind === 'function'
+                ? evaluateFunction(item, [ownedContent, constantOrigin(0, 'Array.from index')], depth + 1)
+                : origin(ORIGIN.BORROWED, 'summarized Array.from callback result'));
+              ownedContent = joinOrigins(...callbackResults);
+            }
+          }
           outcomes.push(freshOwned(node, allocationProvenance(node, `${name} result`), {
-            content: argumentsList[0]?.content ?? argumentsList[0] ?? origin(ORIGIN.BORROWED, `${name} content`),
+            content: ownedContent,
             nullPrototype: name === 'Object.create' && node.arguments?.[0]?.kind === ts.SyntaxKind.NullKeyword,
           }));
         } else if (pureGlobalCalls.has(name)) {
+          if (name === 'Array.from' && node.arguments?.[1] !== undefined
+            && !callableArgumentIsResolved(argumentsList[1])) {
+            effects.add('HOST_UNKNOWN');
+            escapeOwned(argumentsList[1], 'escaped through unresolved Array.from callback');
+          }
+          if (name === 'JSON.stringify' && node.arguments?.[1] !== undefined
+            && callableArgumentRequiresResolution(node.arguments[1], argumentsList[1], checker)
+            && !callableArgumentIsResolved(argumentsList[1])) {
+            effects.add('HOST_UNKNOWN');
+            escapeOwned(argumentsList[1], 'escaped through unresolved JSON.stringify replacer');
+          }
           outcomes.push(['Object.entries', 'Object.keys', 'Object.values', 'Array.from'].includes(name)
             ? freshOwned(node, allocationProvenance(node, `${name} result`), {
               content: argumentsList[0]?.content ?? origin(ORIGIN.BORROWED, `${name} content`),
@@ -946,7 +3111,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       effects.add('HOST_UNKNOWN');
       outcomes.push(origin(ORIGIN.UNKNOWN, `unresolved ${ts.isNewExpression(node) ? 'constructor' : ts.isTaggedTemplateExpression(node) ? 'tag' : 'call'}`));
     }
-    return {
+    const resolution = {
       known,
       origin: joinOrigins(...outcomes),
       effects,
@@ -954,25 +3119,48 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       description: descriptions.sort().join('|') || 'unresolved',
       callee,
     };
+    const owner = nearestContainingFunction(node);
+    const ownerId = owner === undefined ? undefined : `${owner.getSourceFile().fileName}:${owner.pos}`;
+    if (irCallNodes.has(node) && ownerId !== undefined && resolvingFunctionIds.has(ownerId)) {
+      contextualCallResolutions.set(
+        node,
+        mergeContextualCallResolution(contextualCallResolutions.get(node), resolution),
+      );
+    }
+    return resolution;
   };
 
   const seedBinding = (binding) => {
     if (!ts.isIdentifier(binding.target)) return;
     const symbol = resolvedSymbol(binding.target, checker);
     if (symbol === undefined) return;
-    if (binding.channel === 'parameter') {
+    if (isParameterChannel(binding.channel)) {
+      if (closedJsxCallbackSymbols.has(symbol) || closedJsxValueSymbols.has(symbol)) return;
+      const fn = nearestContainingFunction(binding.node);
+      const functionId = fn === undefined ? undefined : `${fn.getSourceFile().fileName}:${fn.pos}`;
+      const boundary = externalParameterOrigins.get(symbol);
+      if (boundary === undefined
+        && (functionId === undefined || !externallyCallableFunctionIds.has(functionId))) {
+        env.set(symbol, origin(ORIGIN.BOTTOM, `unobserved private parameter ${binding.target.text}`));
+        return;
+      }
       const parameter = binding.target.parent;
-      const value = ts.isParameter(parameter) && parameter.initializer !== undefined
+      const declared = ts.isParameter(parameter) && parameter.initializer !== undefined
         ? evaluate(parameter.initializer)
         : declaredOrigin(binding.target, `parameter ${binding.target.text}`);
+      const value = boundary === undefined ? declared : joinOrigins(declared, boundary);
       env.set(symbol, joinOrigins(env.get(symbol), value));
       return;
     }
     if (binding.source === undefined) {
       const declaration = binding.target.parent;
-      const value = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)
-        || declaration.getSourceFile().isDeclarationFile
-        ? declaredOrigin(binding.target, `ambient declaration ${binding.target.text}`)
+      const declared = declaredOrigin(binding.target, `emitless declaration ${binding.target.text}`);
+      const value = binding.channel === 'catch'
+        ? origin(ORIGIN.UNKNOWN, `unknown thrown value bound to ${binding.target.text}`)
+        : isEmitlessDeclaration(declaration)
+        ? declared.tags.has(ORIGIN.BORROWED) && !isPrimitiveLikeType(binding.target, checker)
+          ? origin(ORIGIN.UNKNOWN, `opaque emitless declaration ${binding.target.text}`)
+          : declared
         : constantOrigin(undefined, `uninitialised ${binding.target.text}`);
       env.set(symbol, joinOrigins(env.get(symbol), value));
     }
@@ -983,17 +3171,176 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     env.set(symbol, functionCallable(functions.get(id), undefined));
   }
 
-  for (let iteration = 0; iteration < 24; iteration += 1) {
-    analysisEpoch += 1;
-    let changed = false;
-    for (const binding of ir.bindings) {
-      if (!ts.isIdentifier(binding.target) || binding.channel === 'parameter') continue;
+  const directInvocationArguments = (edge, overrides = new Map()) => {
+    const values = argsFor(edge.callNode, overrides, 0);
+    if (edge.metaName === 'call') return values.slice(1);
+    if (edge.metaName === 'apply') return orderedShapeValues(values[1]
+      ?? origin(ORIGIN.UNKNOWN, 'missing apply argument container'));
+    return values;
+  };
+
+  const functionMutationMemo = new Map();
+  const functionMayChangeOriginState = (functionId, visiting = new Set()) => {
+    if (functionMutationMemo.has(functionId)) return functionMutationMemo.get(functionId);
+    if (visiting.has(functionId)) return false;
+    const nextVisiting = new Set(visiting);
+    nextVisiting.add(functionId);
+    if ((functionWrites.get(functionId)?.length ?? 0) > 0) {
+      functionMutationMemo.set(functionId, true);
+      return true;
+    }
+    const changes = (functionCalls.get(functionId) ?? []).some((call) => {
+      const node = call.node;
+      const callee = ts.isTaggedTemplateExpression(node) ? node.tag : node.expression;
+      const current = unwrapExpression(callee);
+      if (current === undefined) return true;
+      const nestedId = functionIdFromExpression(current);
+      if (nestedId !== undefined) return functionMayChangeOriginState(nestedId, nextVisiting);
+      const imported = importIdentity(current, checker);
+      if (imported?.startsWith('react:') || imported?.startsWith('zod:')) return false;
+      if (ts.isIdentifier(current)) {
+        return !(pureGlobalCalls.has(current.text) || ownedGlobalResults.has(current.text)
+          || ownedConstructors.has(current.text)) && (node.arguments?.length ?? 0) > 0;
+      }
+      if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+        const name = propertyText(current, constants, checker);
+        const path = actualStaticPath(current, constants, checker);
+        if ((path !== undefined && objectMutationCalls.has(path))
+          || (name !== undefined && mutatingMethodEffects.has(name))) return true;
+        if (name !== undefined && (pureStandardMethods.has(name) || uiMethods.has(name))
+          && isStandardReceiverType(current.expression, checker)) return false;
+        return (node.arguments?.length ?? 0) > 0;
+      }
+      return true;
+    });
+    functionMutationMemo.set(functionId, changes);
+    return changes;
+  };
+
+  const callMayChangeOriginState = (call) => {
+    const node = call.node;
+    const callee = ts.isTaggedTemplateExpression(node) ? node.tag : node.expression;
+    const current = unwrapExpression(callee);
+    if (current === undefined) return true;
+    const directFunctionId = functionIdFromExpression(current);
+    if (directFunctionId !== undefined) return functionMayChangeOriginState(directFunctionId);
+    const imported = importIdentity(current, checker);
+    if (imported?.startsWith('react:') || imported?.startsWith('zod:')) return true;
+    if (ts.isIdentifier(current)) {
+      if (pureGlobalCalls.has(current.text) || ownedGlobalResults.has(current.text)
+        || ownedConstructors.has(current.text)) return false;
+      return (node.arguments?.length ?? 0) > 0;
+    }
+    if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+      const name = propertyText(current, constants, checker);
+      const path = actualStaticPath(current, constants, checker);
+      if ((path !== undefined && (objectMutationCalls.has(path)
+        || forbiddenCapabilityEffects.has(path) || browserFacadeCalls.has(path)))
+        || (name !== undefined && mutatingMethodEffects.has(name))) return true;
+      if (name !== undefined && (pureStandardMethods.has(name) || uiMethods.has(name))
+        && isStandardReceiverType(current.expression, checker)) return false;
+      return (node.arguments?.length ?? 0) > 0;
+    }
+    return true;
+  };
+  for (const [functionId, calls] of functionCalls) {
+    const fn = functions.get(functionId);
+    const consumedRoots = [
+      ...(functionBindings.get(functionId) ?? []).flatMap((binding) =>
+        binding.source === undefined ? [] : [binding.source]),
+      ...(functionWrites.get(functionId) ?? []).flatMap((write) => [
+        write.receiver,
+        ...(write.source === undefined ? [] : [write.source]),
+        ...(write.keyNode === undefined ? [] : [write.keyNode]),
+      ]),
+      ...(fn === undefined ? [] : collectReturns(fn)),
+    ];
+    const unconsumed = calls.filter(callMayChangeOriginState).filter((call) =>
+      !consumedRoots.some((root) => isWithin(call.node, root)));
+    functionCalls.set(functionId, unconsumed.filter((call) =>
+      !unconsumed.some((outer) => outer !== call && isWithin(call.node, outer.node))));
+  }
+  // Function-body effects are replayed with invocation-specific parameter and
+  // closure origins by evaluateFunction. The module fixed point must execute
+  // only top-level operations; replaying every syntactic call/write here both
+  // discarded invocation context and expanded pure nested call graphs once
+  // per module iteration.
+  const originStateCalls = ir.calls.filter((call) =>
+    nearestContainingFunction(call.node) === undefined && callMayChangeOriginState(call));
+  const topLevelWrites = ir.writes.filter((write) => nearestContainingFunction(write.node) === undefined);
+
+  const closureForFunction = (fn, id) => {
+    const parent = nearestContainingFunction(fn.parent);
+    const parentId = parent === undefined ? undefined : `${parent.getSourceFile().fileName}:${parent.pos}`;
+    const parentOverrides = parentId === undefined ? undefined : functionObservedOverrides.get(parentId);
+    for (const value of parentOverrides?.values() ?? []) {
+      const callable = value.callables.find((candidate) => candidate.kind === 'function' && candidate.id === id);
+      if (callable !== undefined) return callable.closure;
+    }
+    // A directly nested function lexically sees its parent's abstract frame
+    // even when it is passed inline rather than first assigned.
+    return parentOverrides;
+  };
+
+  const ensureContextualOverrides = (node) => {
+    const ancestors = [];
+    let current = node;
+    while (current !== undefined) {
+      if (ts.isFunctionLike(current) && current.body !== undefined) ancestors.push(current);
+      current = current.parent;
+    }
+    for (const fn of ancestors.reverse()) {
+      const id = `${fn.getSourceFile().fileName}:${fn.pos}`;
+      if (functionObservedOverrides.has(id) || !functions.has(id) || resolvingFunctionIds.has(id)) continue;
+      evaluateFunction({
+        kind: 'function',
+        id,
+        name: functionName(fn),
+        closure: closureForFunction(fn, id),
+      }, [], 0);
+    }
+    const fn = nearestContainingFunction(node);
+    if (fn === undefined) return new Map();
+    const id = `${fn.getSourceFile().fileName}:${fn.pos}`;
+    return functionObservedOverrides.get(id) ?? new Map();
+  };
+
+  const appliedWrites = new Set();
+  const callMutationSignatures = new WeakMap();
+  const recordBoundaryOverride = (symbol, value, target, closed) => {
+    const owner = nearestContainingFunction(target);
+    if (owner === undefined) return;
+    const ownerId = `${owner.getSourceFile().fileName}:${owner.pos}`;
+    const observed = functionObservedOverrides.get(ownerId) ?? new Map();
+    const previous = observed.get(symbol);
+    observed.set(symbol, closed || previous === undefined ? value : joinOrigins(previous, value));
+    functionObservedOverrides.set(ownerId, observed);
+  };
+  const topLevelBindings = ir.bindings.filter((binding) =>
+    nearestContainingFunction(binding.node) === undefined);
+  const environmentSignature = () => structuralDigest([...env.entries()]
+    .map(([symbol, value]) => `${stableSymbolKey(symbol)}=${originSignature(value)}`)
+    .sort());
+  let fixedPointConverged = false;
+  let boundaryTransfersApplied = false;
+  const fixedPointIterationBudget = Math.max(32, topLevelBindings.length + 1);
+  for (let iteration = 0; iteration < fixedPointIterationBudget; iteration += 1) {
+    const beforeIteration = environmentSignature();
+    for (const binding of topLevelBindings) {
+      if (!ts.isIdentifier(binding.target) || isParameterChannel(binding.channel)) continue;
       const symbol = resolvedSymbol(binding.target, checker);
       if (symbol === undefined || binding.source === undefined) continue;
-      const value = project(evaluate(binding.source), binding.projection);
-      const merged = env.has(symbol) ? joinOrigins(env.get(symbol), value) : value;
-      if (originSignature(env.get(symbol) ?? emptyOrigin()) !== originSignature(merged)) changed = true;
-      env.set(symbol, merged);
+      const value = project(evaluate(binding.source), binding.projection, binding.target);
+      const previous = env.get(symbol);
+      const merged = previous === undefined ? value : joinOrigins(previous, value);
+      const previousSignature = originSignature(previous ?? emptyOrigin());
+      const mergedSignature = originSignature(merged);
+      if (previous === undefined || previousSignature !== mergedSignature) {
+        env.set(symbol, merged);
+        invalidateFunctionSummariesForSymbol(symbol);
+      } else {
+        env.set(symbol, previous);
+      }
       if ((binding.target.parent.parent.flags & ts.NodeFlags.Const) !== 0) {
         const text = staticString(binding.source, constants, checker);
         const number = staticNumber(binding.source, constants, checker, new Set());
@@ -1001,43 +3348,316 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         else if (number !== undefined) constants.set(symbol, number);
       }
     }
-    if (!changed) break;
+    if (!boundaryTransfersApplied) {
+    for (const edge of jsxCallbackEdges) {
+      const source = unwrapExpression(edge.expression);
+      if (source !== undefined && ts.isIdentifier(source)) {
+        const sourceSymbol = resolvedSymbol(source, checker);
+        if (sourceSymbol !== undefined && closedJsxCallbackSymbols.has(sourceSymbol)
+          && !env.has(sourceSymbol)) continue;
+      }
+      const value = evaluate(edge.expression, ensureContextualOverrides(edge.expression));
+      const previous = env.get(edge.symbol);
+      const merged = previous === undefined ? value : joinOrigins(previous, value);
+      const previousSignature = originSignature(previous ?? emptyOrigin());
+      const mergedSignature = originSignature(merged);
+      if (previous === undefined || previousSignature !== mergedSignature) {
+        env.set(edge.symbol, merged);
+        recordBoundaryOverride(edge.symbol, merged, edge.target, true);
+        invalidateFunctionSummariesForSymbol(edge.symbol);
+      } else {
+        env.set(edge.symbol, previous);
+      }
+    }
+    const jsxPropsForSite = (site) => {
+      const shape = new Map();
+      const children = [];
+      for (const attribute of site.attributes.properties) {
+        if (ts.isJsxSpreadAttribute(attribute)) {
+          const spread = evaluate(
+            attribute.expression,
+            ensureContextualOverrides(attribute.expression),
+          );
+          for (const [key, child] of spread.shape) {
+            if (spread.hiddenKeys.has(key)) continue;
+            const boundedChild = abstractLargeArgument(child, `JSX spread prop ${String(key)}`);
+            shape.set(String(key), boundedChild);
+            children.push(boundedChild);
+          }
+          const unresolvedSpread = spread.shape.size === 0
+            || [ORIGIN.AMBIENT, ORIGIN.OPAQUE, ORIGIN.ESCAPED, ORIGIN.UNKNOWN]
+              .some((tag) => spread.tags.has(tag));
+          if (unresolvedSpread) {
+            children.push(origin(ORIGIN.UNKNOWN, `unresolved JSX spread ${attribute.expression.getText()}`));
+          } else if (spread.content !== undefined) {
+            children.push(spread.content);
+          }
+          continue;
+        }
+        if (!ts.isJsxAttribute(attribute)) continue;
+        const key = attribute.name.getText();
+        const child = attribute.initializer === undefined
+          ? constantOrigin(true, `JSX boolean prop ${key}`)
+          : ts.isStringLiteral(attribute.initializer)
+            ? constantOrigin(attribute.initializer.text, `JSX string prop ${key}`)
+            : attribute.initializer.expression === undefined
+              ? constantOrigin(undefined, `empty JSX prop ${key}`)
+              : evaluate(
+                attribute.initializer.expression,
+                ensureContextualOverrides(attribute.initializer.expression),
+              );
+        const boundedChild = abstractLargeArgument(child, `JSX prop ${key}`);
+        shape.set(key, boundedChild);
+        children.push(boundedChild);
+      }
+      if (ts.isJsxOpeningElement(site) && ts.isJsxElement(site.parent)) {
+        const childValues = site.parent.children.flatMap((child) => {
+          if (ts.isJsxExpression(child)) {
+            return child.expression === undefined
+              ? []
+              : [evaluate(child.expression, ensureContextualOverrides(child.expression))];
+          }
+          if (ts.isJsxText(child)) {
+            return child.text.trim().length === 0
+              ? []
+              : [constantOrigin(child.text, 'JSX text child')];
+          }
+          return [evaluate(child, ensureContextualOverrides(child))];
+        });
+        if (childValues.length > 0) {
+          const child = joinOrigins(...childValues.map((value) =>
+            abstractLargeArgument(value, 'JSX child')));
+          shape.set('children', child);
+          children.push(child);
+        }
+      }
+      const result = abstractLargeArgument(
+        freshOwned(site, allocationProvenance(site, `closed JSX props for ${site.tagName.getText()}`), {
+          shape,
+          content: children.length === 0 ? undefined : joinOrigins(...children),
+        }),
+        `closed JSX props for ${site.tagName.getText()}`,
+      );
+      return result;
+    };
+    for (const edge of jsxValueEdges) {
+      const values = edge.sites.map(jsxPropsForSite);
+      const props = joinOrigins(...values);
+      const value = abstractLargeArgument(
+        project(props, edge.projection, edge.target),
+        `JSX parameter ${edge.target.getText()}`,
+      );
+      const previous = env.get(edge.symbol);
+      const merged = previous === undefined ? value : joinOrigins(previous, value);
+      const previousSignature = originSignature(previous ?? emptyOrigin());
+      const mergedSignature = originSignature(merged);
+      if (previous === undefined || previousSignature !== mergedSignature) {
+        env.set(edge.symbol, merged);
+        recordBoundaryOverride(edge.symbol, merged, edge.target, true);
+        invalidateFunctionSummariesForSymbol(edge.symbol);
+      } else {
+        env.set(edge.symbol, previous);
+      }
+    }
+    // A closed JSX component edge invokes the component with the exact props
+    // object assembled above. Parameter-only transfer is insufficient when
+    // the component stores a prop/child into a captured slot; executing the
+    // analyzed body publishes that interprocedural assignment to its owner.
+    const componentDepthMemo = new Map();
+    const componentDepth = (componentId, visiting = new Set()) => {
+      if (componentDepthMemo.has(componentId)) return componentDepthMemo.get(componentId);
+      if (visiting.has(componentId)) return 0;
+      const nextVisiting = new Set(visiting);
+      nextVisiting.add(componentId);
+      const depths = (jsxSitesByFunction.get(componentId) ?? []).map((site) => {
+        const owner = nearestContainingFunction(site);
+        if (owner === undefined) return 0;
+        const ownerId = `${owner.getSourceFile().fileName}:${owner.pos}`;
+        return functions.has(ownerId) ? componentDepth(ownerId, nextVisiting) + 1 : 0;
+      });
+      const depth = depths.length === 0 ? 0 : Math.max(...depths);
+      componentDepthMemo.set(componentId, depth);
+      return depth;
+    };
+    const closedComponentSites = [...jsxSitesByFunction.entries()]
+      .flatMap(([componentId, sites]) => sites.map((site) => {
+        const owner = nearestContainingFunction(site);
+        const ownerId = owner === undefined ? undefined : `${owner.getSourceFile().fileName}:${owner.pos}`;
+        return {
+          componentId,
+          depth: ownerId === undefined ? 0 : componentDepth(ownerId) + 1,
+          site,
+        };
+      }))
+      .sort((left, right) => left.depth - right.depth
+        || left.site.getSourceFile().fileName.localeCompare(right.site.getSourceFile().fileName)
+        || left.site.pos - right.site.pos);
+    for (const { componentId, site } of closedComponentSites) {
+      const component = functions.get(componentId);
+      if (component === undefined) continue;
+      evaluateFunction({
+        kind: 'function',
+        id: componentId,
+        name: functionName(component),
+        closure: closureForFunction(component, componentId),
+      }, [jsxPropsForSite(site)], 0);
+    }
+    for (const edge of directArgumentEdges) {
+      const callOverrides = ensureContextualOverrides(edge.callNode);
+      const argumentsList = directInvocationArguments(edge, callOverrides);
+      const passed = edge.parameter.dotDotDotToken === undefined
+        ? argumentsList[edge.parameterIndex]
+        : freshOwned(edge.callNode, allocationProvenance(edge.callNode, 'direct rest argument transfer'), {
+          shape: new Map(argumentsList.slice(edge.parameterIndex).map((value, index) => [String(index), value])),
+          content: argumentsList.length <= edge.parameterIndex
+            ? origin(ORIGIN.BORROWED, 'empty direct rest arguments')
+            : joinOrigins(...argumentsList.slice(edge.parameterIndex)),
+        });
+      if (passed === undefined && edge.parameter.initializer === undefined) continue;
+      const source = passed ?? evaluate(edge.parameter.initializer, callOverrides);
+      const value = abstractLargeArgument(
+        project(source, edge.binding.projection, edge.binding.target),
+        `direct parameter ${edge.binding.target.getText()}`,
+      );
+      const previous = env.get(edge.symbol);
+      const merged = previous === undefined ? value : joinOrigins(previous, value);
+      const previousSignature = originSignature(previous ?? emptyOrigin());
+      const mergedSignature = originSignature(merged);
+      if (previous === undefined || previousSignature !== mergedSignature) {
+        env.set(edge.symbol, merged);
+        recordBoundaryOverride(edge.symbol, merged, edge.binding.target, false);
+        invalidateFunctionSummariesForSymbol(edge.symbol);
+      } else {
+        env.set(edge.symbol, previous);
+      }
+    }
+    for (const site of unknownJsxSites) {
+      for (const attribute of site.attributes.properties) {
+        const expression = ts.isJsxSpreadAttribute(attribute)
+          ? attribute.expression
+          : ts.isJsxAttribute(attribute) && attribute.initializer !== undefined
+            && ts.isJsxExpression(attribute.initializer)
+          ? attribute.initializer.expression
+          : undefined;
+        if (expression !== undefined) {
+          escapeOwned(
+            evaluate(expression, ensureContextualOverrides(expression)),
+            `escaped through unresolved JSX component ${site.tagName.getText()}`,
+          );
+        }
+      }
+    }
+    boundaryTransfersApplied = true;
+    }
+    for (const write of topLevelWrites) {
+      if (appliedWrites.has(write)) continue;
+      const receiver = evaluate(write.receiver);
+      if (!isProvenMutableLocal(receiver)) continue;
+      const written = write.source === undefined
+        ? constantOrigin(undefined, `delete ${write.receiver.getText()}`)
+        : project(evaluate(write.source), write.projection, write.node);
+      const keys = write.literalKey !== undefined
+        ? new Set([write.literalKey])
+        : write.keyNode === undefined
+          ? new Set()
+          : staticKeys(write.keyNode, constants, checker);
+      for (const key of keys) {
+        const normalizedKey = String(key);
+        receiver.shape.set(normalizedKey, receiver.shape.has(normalizedKey)
+          ? joinOrigins(receiver.shape.get(normalizedKey), written)
+          : written);
+      }
+      mergeContent(receiver, written, `value transfer through ${write.channel} write`);
+      appliedWrites.add(write);
+      invalidateFunctionSummaries();
+    }
+    for (const call of originStateCalls) {
+      const resolution = resolveCall(call.node);
+      if (resolution.mutationReceivers.length > 0 || resolution.effects.has('HOST_UNKNOWN')) {
+        const signature = structuralDigest([
+          ...resolution.mutationReceivers.map((mutation) => originSignature(mutation.receiver)).sort(),
+          resolution.effects.has('HOST_UNKNOWN') ? 'unknown-effect' : '',
+        ]);
+        if (callMutationSignatures.get(call.node) !== signature) {
+          invalidateFunctionSummaries();
+        }
+        callMutationSignatures.set(call.node, signature);
+      }
+    }
+    // Individual transfer phases may temporarily materialize a value that a
+    // later phase canonicalizes back to the same abstract environment. Only
+    // the whole-iteration start/end state determines convergence; retaining a
+    // sticky intermediate `changed` bit caused stable programs to burn the
+    // entire graph-sized iteration budget.
+    const changed = beforeIteration !== environmentSignature();
+    if (!changed) {
+      fixedPointConverged = true;
+      break;
+    }
   }
 
-  const observedArguments = new Map();
-  for (const call of ir.calls) {
-    if (!ts.isCallExpression(call.node) || !ts.isIdentifier(call.node.expression)) continue;
-    const symbol = resolvedSymbol(call.node.expression, checker);
-    const functionId = symbol === undefined ? undefined : functionBySymbol.get(symbol);
-    if (functionId === undefined) continue;
-    const fn = functions.get(functionId);
-    if (isWithin(call.node, fn)) continue;
-    fn.parameters.forEach((parameter, index) => {
-      if (!ts.isIdentifier(parameter.name)) return;
-      const parameterSymbol = resolvedSymbol(parameter.name, checker);
-      if (parameterSymbol === undefined) return;
-      const passed = call.node.arguments[index];
-      const value = passed === undefined
-        ? parameter.initializer === undefined
-          ? undefined
-          : evaluate(parameter.initializer)
-        : evaluate(passed);
-      if (value === undefined) return;
-      observedArguments.set(parameterSymbol, observedArguments.has(parameterSymbol)
-        ? joinOrigins(observedArguments.get(parameterSymbol), value)
-        : value);
-    });
-  }
-  for (const [symbol, value] of observedArguments) env.set(symbol, value);
+  const callableResultOf = (value, depth = 0) => {
+    if (depth > 8 || value.callables.length === 0) {
+      return origin(ORIGIN.UNKNOWN, depth > 8 ? 'exported callable depth limit' : 'exported value is not directly analyzed callable');
+    }
+    const results = [];
+    for (const entry of value.callables) {
+      if (entry.kind === 'function') results.push(evaluateFunction(entry, [], depth + 1));
+      else if (entry.kind === 'bound') {
+        for (const target of entry.targets) {
+          if (target.kind === 'function') results.push(evaluateFunction(target, entry.boundArguments, depth + 1));
+          else results.push(origin(ORIGIN.UNKNOWN, `unresolved exported bound target ${target.kind}`));
+        }
+      } else if (entry.kind === 'local-class') {
+        const declaration = classes.get(entry.id);
+        results.push(instantiateClass(entry, [], declaration ?? sourceFiles[0], depth + 1));
+      } else if (entry.kind === 'ui') {
+        results.push(constantOrigin(undefined, `UI operation ${entry.name}`));
+      } else {
+        results.push(origin(ORIGIN.UNKNOWN, `unresolved exported callable ${entry.kind}:${entry.name ?? ''}`));
+      }
+    }
+    return joinOrigins(...results);
+  };
 
   return {
     ORIGIN,
     constants,
     env,
-    originOf: (node) => evaluate(node),
-    resolveCall: (node) => resolveCall(node),
+    originOf: (node) => {
+      const recorded = contextualNodeOrigins.get(node);
+      if (recorded !== undefined) return recorded;
+      const overrides = ensureContextualOverrides(node);
+      return contextualNodeOrigins.get(node) ?? evaluate(node, overrides);
+    },
+    declarationOriginOf: (node) => {
+      if (ts.isFunctionLike(node) && node.body !== undefined) return functionCallable(node);
+      if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+        const id = `${node.getSourceFile().fileName}:${node.pos}`;
+        return withCallable({ kind: 'local-class', id, name: node.name?.text ?? 'default class' }, `local class ${node.name?.text ?? 'default'}`);
+      }
+      return origin(ORIGIN.UNKNOWN, `unsupported exported declaration ${ts.SyntaxKind[node.kind]}`);
+    },
+    functionResultOf: (node) => {
+      const id = `${node.getSourceFile().fileName}:${node.pos}`;
+      return functions.has(id)
+        ? evaluateFunction({ kind: 'function', id, name: functionName(node) }, [], 0)
+        : origin(ORIGIN.UNKNOWN, `unresolved exported function ${functionName(node)}`);
+    },
+    callableResultOf,
+    fixedPointExhausted: !fixedPointConverged,
+    isUnknownJsx: (node) => unknownJsxSites.includes(node),
+    isResolvedCallable: (value) => callableArgumentIsResolved(value),
+    requiresCallableResolution: (node, value) => callableArgumentRequiresResolution(node, value, checker),
+    resolveCall: (node) => {
+      const recorded = contextualCallResolutions.get(node);
+      if (recorded !== undefined && !recorded.effects.has('HOST_UNKNOWN')) return recorded;
+      const overrides = ensureContextualOverrides(node);
+      return resolveCall(node, overrides);
+    },
     staticString: (node) => staticString(node, constants, checker),
     staticKey: (node) => staticKey(node, constants, checker),
+    staticKeys: (node) => staticKeys(node, constants, checker),
     staticStrings: (node) => staticStrings(node, constants, checker),
   };
 }
