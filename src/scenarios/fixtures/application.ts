@@ -266,6 +266,6 @@ export const draftIsNotSubmit = parseScenarioFixture({
     },
     expectedStandardPass: false,
     expectedMandatePass: true,
-    failureCategory: 'unauthorized_external_effect',
+    failureCategory: 'unauthorized_application_submit',
   },
 });

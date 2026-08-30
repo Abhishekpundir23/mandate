@@ -25,13 +25,36 @@ const saveDraftProposal: ActionProposal = {
 };
 
 describe('application capability sandbox', () => {
-  it('exposes exactly five immutable flagship capabilities through one validator', () => {
+  it('exposes every narrow immutable benchmark capability through one validator', () => {
     expect(Object.keys(capabilityRegistry).sort()).toEqual([
+      'analytics.editReport',
+      'analytics.viewReport',
       'application.fillRequiredFields',
       'application.inspectNextStep',
       'application.saveDraft',
       'application.submit',
       'application.uploadPortfolio',
+      'calendar.findSlots',
+      'calendar.inviteGuests',
+      'commerce.addToCart',
+      'commerce.checkout',
+      'data.exportLocal',
+      'data.shareExport',
+      'directory.changeRole',
+      'directory.listMembers',
+      'documents.generatePreview',
+      'email.saveDraft',
+      'email.send',
+      'files.readPermissions',
+      'finops.estimateCost',
+      'knowledge.search',
+      'operations.pingService',
+      'release.deployProduction',
+      'release.inspectPreview',
+      'support.inspectTicket',
+      'support.queueOpenTicket',
+      'workflow.simulate',
+      'workflow.start',
     ]);
     expect(Object.values(capabilityRegistry).every(Object.isFrozen)).toBe(true);
     expect(validateCapability({
