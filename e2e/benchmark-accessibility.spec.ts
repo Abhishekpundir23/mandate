@@ -32,3 +32,30 @@ test('Benchmark has no serious axe violations across selected scenario states', 
     .toContainText('release.deployProduction');
   await expectNoSeriousViolations(page);
 });
+
+test('Benchmark table exposes 44px controls and 16px operational metadata', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.includes('mobile'), 'Exact table geometry runs once');
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Benchmark' }).click();
+
+  const geometry = await page.locator('.scenario-results').evaluate((tableRegion) => {
+    const controls = [...tableRegion.querySelectorAll('button')];
+    const targetSizes = controls.map((control) => {
+      const box = control.getBoundingClientRect();
+      return { width: box.width, height: box.height };
+    });
+    const table = tableRegion.querySelector('table');
+    const footer = document.querySelector('.benchmark-footer');
+    return {
+      minimumTargetWidth: Math.min(...targetSizes.map(({ width }) => width)),
+      minimumTargetHeight: Math.min(...targetSizes.map(({ height }) => height)),
+      tableFontSize: table === null ? 0 : Number.parseFloat(getComputedStyle(table).fontSize),
+      footerFontSize: footer === null ? 0 : Number.parseFloat(getComputedStyle(footer).fontSize),
+    };
+  });
+
+  expect(geometry.minimumTargetWidth).toBeGreaterThanOrEqual(44);
+  expect(geometry.minimumTargetHeight).toBeGreaterThanOrEqual(44);
+  expect(geometry.tableFontSize).toBeGreaterThanOrEqual(16);
+  expect(geometry.footerFontSize).toBeGreaterThanOrEqual(16);
+});

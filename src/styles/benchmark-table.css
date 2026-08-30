@@ -22,12 +22,19 @@
   min-width: 0;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 14px;
+  font-size: 16px;
+}
+
+.scenario-results thead {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: var(--canvas);
 }
 
 .scenario-results th,
 .scenario-results td {
-  height: 35px;
+  height: 44px;
   padding: 0 10px;
   border-bottom: 1px solid var(--rule);
   text-align: left;
@@ -59,7 +66,7 @@
 
 .scenario-results th button,
 .scenario-name button {
-  min-height: 35px;
+  min-height: 44px;
   padding: 0;
   border: 0;
   background: transparent;

@@ -41,9 +41,9 @@ test('captures the three exact non-stitched judge viewports', async ({ page }, t
     scrollWidth: scrollport.scrollWidth,
     clientWidth: scrollport.clientWidth,
   }));
-  expect(tableGeometry.scrollHeight).toBeLessThanOrEqual(tableGeometry.clientHeight + 1);
+  expect(tableGeometry.scrollHeight).toBeGreaterThan(tableGeometry.clientHeight);
   expect(tableGeometry.scrollWidth).toBeLessThanOrEqual(tableGeometry.clientWidth + 1);
-  await expect(lastRow).toBeInViewport({ ratio: 1 });
+  await expect(lastRow).not.toBeInViewport({ ratio: 1 });
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({ path: `${outputRoot}/mandate-benchmark-desktop-1586x992.png`, fullPage: false });
 });

@@ -57,7 +57,7 @@ test('mobile Run supports arrow-key trace navigation and one visible stacked tra
   await expect(page.getByRole('button', { name: 'Run benchmark' })).toBeVisible();
 });
 
-test('all fifteen benchmark rows and truthful failure labels fit the exact desktop scrollport', async ({ page }, testInfo) => {
+test('all fifteen benchmark rows and truthful failure labels remain reachable in the exact desktop scrollport', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name.includes('mobile'), 'Exact desktop geometry proof');
   await page.goto('/');
   await page.getByRole('button', { name: 'Benchmark' }).click();
@@ -72,13 +72,33 @@ test('all fifteen benchmark rows and truthful failure labels fit the exact deskt
     return {
       scrollTop: scrollport.scrollTop,
       horizontalOverflow: scrollport.scrollWidth - scrollport.clientWidth,
-      rowsFullyVisible: rows.every(({ top, bottom }) =>
-        top >= viewport.top - 0.5 && bottom <= viewport.bottom + 0.5),
-      lastRowBottom: rows.at(-1)?.bottom,
-      viewportBottom: viewport.bottom,
+      verticalOverflow: scrollport.scrollHeight - scrollport.clientHeight,
+      firstRowFullyVisible: (rows[0]?.top ?? 0) >= viewport.top - 0.5
+        && (rows[0]?.bottom ?? 0) <= viewport.bottom + 0.5,
     };
   });
-  expect(geometry).toMatchObject({ scrollTop: 0, horizontalOverflow: 0, rowsFullyVisible: true });
+  expect(geometry).toMatchObject({
+    scrollTop: 0,
+    horizontalOverflow: 0,
+    firstRowFullyVisible: true,
+  });
+  expect(geometry.verticalOverflow).toBeGreaterThan(0);
+
+  const lastRow = page.locator('tbody tr').last();
+  await lastRow.scrollIntoViewIfNeeded();
+  await expect(lastRow).toBeInViewport({ ratio: 1 });
+  const scrolledGeometry = await page.locator('.scenario-table-scroll').evaluate((scrollport) => {
+    const viewport = scrollport.getBoundingClientRect();
+    const heading = scrollport.querySelector('thead')?.getBoundingClientRect();
+    return {
+      scrollTop: scrollport.scrollTop,
+      headingFullyVisible: heading !== undefined
+        && heading.top >= viewport.top - 0.5
+        && heading.bottom <= viewport.bottom + 0.5,
+    };
+  });
+  expect(scrolledGeometry.scrollTop).toBeGreaterThan(0);
+  expect(scrolledGeometry.headingFullyVisible).toBe(true);
 
   const failureLabels = page.locator('.failure-label');
   await expect(failureLabels).toHaveCount(15);
