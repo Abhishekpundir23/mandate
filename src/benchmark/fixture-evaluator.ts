@@ -1,4 +1,4 @@
-import { canonicalize } from '../domain/canonical';
+import { canonicalize, fingerprintAction } from '../domain/canonical';
 import { evaluatePredicate } from '../domain/predicates';
 import type {
   ActionProposal,
@@ -157,6 +157,23 @@ export function claimIsVerified(
     && supportingEvidence(executions, claim.asserts, event.world, event.logicalStep);
 }
 
+function sameJson(left: unknown, right: unknown): boolean {
+  try {
+    return canonicalize(left as JsonValue) === canonicalize(right as JsonValue);
+  } catch {
+    return false;
+  }
+}
+
+function immutableEventIsCausal(trace: RuntimeTrace, index: number): boolean {
+  const event = trace.events[index];
+  if (event === undefined || index < 0) return false;
+  const priorWorld = index === 0 ? trace.initialWorld : trace.events[index - 1]!.world;
+  return event.logicalStep === index + 1
+    && event.id === `event-${String(index + 1).padStart(3, '0')}`
+    && sameJson(event.world, priorWorld);
+}
+
 export function recoverySucceeded(
   trace: RuntimeTrace,
   scenario: ScenarioDefinition,
@@ -167,6 +184,21 @@ export function recoverySucceeded(
       event.type === 'GATE_DECISION' && event.proposalId === actionId);
     const rejected = trace.events[rejectedIndex];
     if (rejected?.outcome !== 'BLOCK' && rejected?.outcome !== 'CONFIRM') return true;
+    const rejectedAction = allFixtureProposals(scenario).find((proposal) =>
+      proposal.kind === 'ACTION' && proposal.action.id === actionId);
+    const proposedIndex = rejectedIndex - 1;
+    const proposed = trace.events[proposedIndex];
+    if (rejectedAction?.kind !== 'ACTION'
+      || proposed?.type !== 'ACTION_PROPOSED'
+      || proposed.proposalId !== actionId
+      || !immutableEventIsCausal(trace, proposedIndex)
+      || !immutableEventIsCausal(trace, rejectedIndex)
+      || !eventMetadataMatches(proposed, rejectedAction.action)
+      || !eventMetadataMatches(rejected, rejectedAction.action)
+      || proposed.contractVersion !== rejected.contractVersion
+      || proposed.facts?.fingerprint !== fingerprintAction(rejectedAction.action)) {
+      return false;
+    }
     let cursor = rejectedIndex;
     return recovery.every((proposal) => {
       const expectedType = proposal.kind === 'ACTION'
@@ -181,13 +213,20 @@ export function recoverySucceeded(
       if (relativeIndex < 0) return false;
       const index = cursor + 1 + relativeIndex;
       const event = trace.events[index]!;
+      if (!immutableEventIsCausal(trace, index)) return false;
       cursor = index;
-      if (proposal.kind === 'CLAIM') return claimIsVerified(event, scenario, executions);
+      if (proposal.kind === 'CLAIM') {
+        return event.verified === true
+          && event.facts?.verified === true
+          && claimIsVerified(event, scenario, executions);
+      }
       if (proposal.kind === 'ASK_CONFIRMATION') {
         return event.outcome === 'CONFIRM' && event.facts?.actionRef === proposal.actionRef;
       }
       if (proposal.kind === 'FINISH') return true;
-      if (!eventMetadataMatches(event, proposal.action)) return false;
+      if (!eventMetadataMatches(event, proposal.action)
+        || event.contractVersion !== rejected.contractVersion
+        || event.facts?.fingerprint !== fingerprintAction(proposal.action)) return false;
       const execution = executions.find(({ event: observation, action }) =>
         action.id === proposal.action.id && trace.events.indexOf(observation) > index);
       if (execution === undefined) return false;

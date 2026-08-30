@@ -17,6 +17,7 @@ async function runGate(source: string) {
   await writeFile(join(root, 'src', 'fixture.tsx'), source);
   await cp('scripts/security-gate.mjs', join(root, 'scripts', 'security-gate.mjs'));
   await cp('scripts/security-built-policy.mjs', join(root, 'scripts', 'security-built-policy.mjs'));
+  await cp('scripts/security-source-policy.mjs', join(root, 'scripts', 'security-source-policy.mjs'));
   const policyPath = resolve('scripts/security-policy.mjs');
   try {
     await readFile(policyPath);
@@ -27,6 +28,25 @@ async function runGate(source: string) {
   const result = spawnSync(process.execPath, ['scripts/security-gate.mjs'], {
     cwd: root,
     encoding: 'utf8',
+  });
+  return { status: result.status, output: `${result.stdout}${result.stderr}` };
+}
+
+async function runStandaloneSecurityWithStaleBuild() {
+  const root = await mkdtemp(join(tmpdir(), 'mandate-security-command-'));
+  temporaryRoots.push(root);
+  for (const path of [
+    'package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.app.json',
+    'tsconfig.node.json', 'vite.config.ts', 'index.html', 'src', 'scripts', 'dist',
+  ]) {
+    await cp(path, join(root, path), { recursive: true });
+  }
+  await symlink(resolve('node_modules'), join(root, 'node_modules'), 'dir');
+  await writeFile(join(root, 'dist', 'stale.js'), `fetch('/stale-product-endpoint')`);
+  const result = spawnSync('npm', ['run', 'test:security'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, NODE_ENV: 'production' },
   });
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
@@ -50,6 +70,25 @@ describe('structural security gate', () => {
     ['owner document escape', `const root = document.body; root.ownerDocument.defaultView.fetch('/escape')`],
     ['forbidden import', `import request from 'axios'; request('/escape')`],
     ['privileged JSX', `const node = <iframe src="/escape" />`],
+    ['bare fetch alias', `const request = fetch; request('/escape')`],
+    ['bare eval alias', `const execute = eval; execute('1')`],
+    ['call-return ambient leak', `const expose = () => globalThis; expose().fetch('/escape')`],
+    ['descriptor leak', `Object.getOwnPropertyDescriptor(globalThis, 'fetch')?.value('/escape')`],
+    ['WebSocket constructor', `new WebSocket('ws://escape.invalid')`],
+    ['XMLHttpRequest constructor', `new XMLHttpRequest()`],
+    ['EventSource constructor', `new EventSource('/escape')`],
+    ['Function constructor', `new Function('return 1')`],
+    ['typed form submit', `const form = {} as HTMLFormElement; form.submit()`],
+    ['typed form requestSubmit', `const form = {} as HTMLFormElement; form.requestSubmit()`],
+    ['typed innerHTML assignment', `const element = {} as Element; element.innerHTML = '<img>'`],
+    ['prototype submit call', `HTMLFormElement.prototype.submit.call({} as HTMLFormElement)`],
+    ['nested unknown ambient property', `globalThis['notProvenSafe'].call(undefined)`],
+    ['module require route', `module.require('node:https')`],
+    ['node export star', `export * from 'node:https'`],
+    ['forbidden re-export', `export { default as request } from 'axios'`],
+    ['TypeScript import equals', `import http = require('node:https'); void http`],
+    ['unknown call receives ambient', `const accept = (value: unknown) => value; accept(globalThis)`],
+    ['bare forbidden reference', `const authority = WebSocket; void authority`],
   ])('rejects %s', async (_, source) => {
     const result = await runGate(source);
 
@@ -65,9 +104,19 @@ describe('structural security gate', () => {
       const mobile = matchMedia('(max-width: 899px)').matches;
       const timer = window.setInterval(() => undefined, 1);
       window.clearInterval(timer);
-      export { endpointPolicy, mobile, root, tokenBudget };
+      const operation = 'submit';
+      const sentence = 'submit is a domain operation, not a capability reference';
+      export { endpointPolicy, mobile, operation, root, sentence, tokenBudget };
     `);
 
     expect(result.status, result.output).toBe(0);
+  });
+
+  it('standalone public security command rebuilds before scanning and replaces stale dist', async () => {
+    const result = await runStandaloneSecurityWithStaleBuild();
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toMatch(/vite .* building client environment/i);
+    expect(result.output).toMatch(/Built asset gate passed/);
   });
 });

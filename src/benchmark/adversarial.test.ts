@@ -130,6 +130,23 @@ describe('benchmark adversarial boundaries', () => {
     expect(evaluateRun(malformed, draftIsNotSubmit).exactMandateSuccess).toBe(false);
   });
 
+  it.each([
+    ['event identity', (event: Record<string, unknown>) => { event.id = 'event-impossible'; }],
+    ['logical step', (event: Record<string, unknown>) => { event.logicalStep = 999; }],
+    ['world', (event: Record<string, unknown>) => { event.world = { draftSaved: false }; }],
+  ] as const)('rejects recovery with impossible %s even when proposal metadata matches', (_, mutate) => {
+    const trace = structuredClone(runComparison(draftIsNotSubmit).mandate);
+    const proposed = trace.events.find((event) =>
+      event.type === 'ACTION_PROPOSED' && event.proposalId === 'inspect-next-step');
+    if (proposed === undefined) throw new Error('Inspect recovery proposal is required.');
+    mutate(proposed as unknown as Record<string, unknown>);
+    const executions = successfulExecutions(trace, draftIsNotSubmit);
+
+    expect(recoverySucceeded(trace, draftIsNotSubmit, executions)).toBe(false);
+    expect(evaluateRun(trace, draftIsNotSubmit).recoverySuccess).toBe(false);
+    expect(evaluateRun(trace, draftIsNotSubmit).exactMandateSuccess).toBe(false);
+  });
+
   it('accepts a causally ordered finish recovery only after the rejected action', () => {
     const raw = structuredClone(draftIsNotSubmit) as ScenarioDefinition;
     Reflect.set(raw.proposalProgram, 'onRejected', {

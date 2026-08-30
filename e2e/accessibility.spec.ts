@@ -74,9 +74,16 @@ test('keyboard-only journey reaches navigation, selector, Run, disclosure, tabs,
     await expect(page.getByRole('tab', { name: 'Mandate' })).toBeFocused();
   }
 
-  await benchmarkNav.focus();
+  await tabTo(page, benchmarkNav);
+  await expect(benchmarkNav).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Exact mandate benchmark' })).toBeVisible();
+
+  const runBenchmark = page.getByRole('button', { name: 'Run benchmark' });
+  await tabTo(page, runBenchmark);
+  await expect(runBenchmark).toBeFocused();
+  await page.keyboard.press(mobile ? 'Space' : 'Enter');
+  await expect(page.getByRole('status')).toContainText('Benchmark recomputed');
 
   for (const name of ['Scenario', 'Domain', 'Standard', 'Mandate', 'Failure caught']) {
     const sort = page.getByRole('button', { name: `Sort by ${name}` });

@@ -1,34 +1,23 @@
 /* global console */
-import { readdir, readFile, realpath } from 'node:fs/promises';
-import { dirname, extname, join, relative, resolve } from 'node:path';
+import { readdir, readFile } from 'node:fs/promises';
+import { extname, join, relative, resolve } from 'node:path';
 
 import ts from 'typescript';
 
 import { scanBuiltAssets } from './security-built-policy.mjs';
+import {
+  ambientRoots,
+  assertSourceImport,
+  forbiddenGlobalIdentifiers,
+  forbiddenProperties,
+  privilegedTags,
+  receiverIndependentSinks,
+  safeAmbientIdentifiers,
+  safeAmbientPaths,
+} from './security-source-policy.mjs';
 
 const sourceRoot = resolve('src');
 const distRoot = resolve('dist');
-const allowedBareImports = new Set(['react', 'react-dom/client', 'zod']);
-const ambientRoots = new Set(['window', 'globalThis', 'self', 'document', 'navigator', 'location', 'history']);
-const safeAmbientPaths = new Set([
-  'document.getElementById',
-  'globalThis.matchMedia',
-  'window.matchMedia',
-  'window.setInterval',
-  'window.clearInterval',
-]);
-const safeAmbientIdentifiers = new Set(['matchMedia']);
-const forbiddenProperties = new Set([
-  'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'sendBeacon',
-  'localStorage', 'sessionStorage', 'indexedDB', 'caches', 'cookie',
-  'eval', 'Function', 'innerHTML', 'outerHTML', 'insertAdjacentHTML',
-  'open', 'assign', 'replace', 'pushState', 'replaceState', 'submit', 'requestSubmit',
-  'contentWindow', 'defaultView', 'ownerDocument',
-]);
-const receiverIndependentSinks = new Set([
-  'innerHTML', 'outerHTML', 'insertAdjacentHTML', 'contentWindow', 'defaultView', 'ownerDocument',
-]);
-const privilegedTags = new Set(['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link', 'form']);
 
 async function filesUnder(root) {
   const entries = await readdir(root, { withFileTypes: true });
@@ -76,30 +65,37 @@ function isNestedAccess(node) {
     && node.parent.expression === node;
 }
 
-function localImportCandidates(file, specifier) {
-  const base = resolve(dirname(file), specifier);
-  return [base, `${base}.ts`, `${base}.tsx`, `${base}.css`, join(base, 'index.ts'), join(base, 'index.tsx')];
+function outermostAccess(node) {
+  let current = node;
+  while ((ts.isPropertyAccessExpression(current.parent) || ts.isElementAccessExpression(current.parent))
+    && current.parent.expression === current) {
+    current = current.parent;
+  }
+  return current;
 }
 
-async function assertImport(file, specifier) {
-  if (!specifier.startsWith('.')) {
-    if (!allowedBareImports.has(specifier)) {
-      throw new Error(`${relative('.', file)} has forbidden production import ${specifier}.`);
-    }
-    return;
-  }
-  for (const candidate of localImportCandidates(file, specifier)) {
-    try {
-      const resolved = await realpath(candidate);
-      if (!resolved.startsWith(`${sourceRoot}/`)) {
-        throw new Error(`${relative('.', file)} import escapes src: ${specifier}.`);
-      }
-      return;
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('escapes src')) throw error;
-    }
-  }
-  throw new Error(`${relative('.', file)} has unresolved local import ${specifier}.`);
+function isInsideSafeAmbientPath(node, constants) {
+  const path = ambientPath(outermostAccess(node), constants);
+  return path !== undefined && safeAmbientPaths.has(path.join('.'));
+}
+
+function containsAmbientRoot(node) {
+  let found = false;
+  const inspect = (candidate) => {
+    if (ts.isFunctionLike(candidate)) return;
+    if (ts.isIdentifier(candidate) && ambientRoots.has(candidate.text)) found = true;
+    if (!found) ts.forEachChild(candidate, inspect);
+  };
+  inspect(node);
+  return found;
+}
+
+function identifierIsPropertyName(node) {
+  return (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)
+    || (ts.isPropertyAssignment(node.parent) && node.parent.name === node)
+    || (ts.isMethodDeclaration(node.parent) && node.parent.name === node)
+    || (ts.isPropertyDeclaration(node.parent) && node.parent.name === node)
+    || (ts.isPropertySignature(node.parent) && node.parent.name === node);
 }
 
 async function scanSource(file) {
@@ -129,6 +125,19 @@ async function scanSource(file) {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       imports.push(node.moduleSpecifier.text);
     }
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined
+      && ts.isStringLiteral(node.moduleSpecifier)) {
+      imports.push(node.moduleSpecifier.text);
+    }
+    if (ts.isImportEqualsDeclaration(node)) {
+      if (ts.isExternalModuleReference(node.moduleReference)
+        && node.moduleReference.expression !== undefined
+        && ts.isStringLiteral(node.moduleReference.expression)) {
+        imports.push(node.moduleReference.expression.text);
+      } else {
+        violations.push('TypeScript import alias');
+      }
+    }
     if (ts.isCallExpression(node)) {
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword) violations.push('dynamic import');
       if (ts.isIdentifier(node.expression) && node.expression.text === 'require') violations.push('require');
@@ -138,6 +147,12 @@ async function scanSource(file) {
       }
       if (ts.isIdentifier(node.expression) && safeAmbientIdentifiers.has(node.expression.text)) {
         // Exact safe direct capability.
+      }
+      const callPath = ambientPath(node.expression, constants)?.join('.');
+      const safeCall = callPath !== undefined && safeAmbientPaths.has(callPath);
+      if (!safeCall && !safeAmbientIdentifiers.has(node.expression.getText(tree))
+        && node.arguments.some(containsAmbientRoot)) {
+        violations.push('ambient authority passed to unknown call');
       }
       if ((ts.isPropertyAccessExpression(node.expression) || ts.isElementAccessExpression(node.expression))
         && propertyName(node.expression, constants) === 'get'
@@ -152,7 +167,19 @@ async function scanSource(file) {
         if (tag === undefined || privilegedTags.has(tag.toLowerCase())) violations.push('privileged element creation');
       }
     }
-    if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && !isNestedAccess(node)) {
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)
+      && forbiddenGlobalIdentifiers.has(node.expression.text)) {
+      violations.push(`forbidden constructor ${node.expression.text}`);
+    }
+    if (ts.isIdentifier(node) && !identifierIsPropertyName(node)) {
+      if (forbiddenGlobalIdentifiers.has(node.text)) {
+        violations.push(`forbidden global identifier ${node.text}`);
+      }
+      if (ambientRoots.has(node.text) && !isInsideSafeAmbientPath(node, constants)) {
+        violations.push(`ambient authority ${node.text}`);
+      }
+    }
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const path = ambientPath(node, constants);
       const name = propertyName(node, constants);
       if (name === undefined && ambientPath(node.expression, constants) !== undefined) {
@@ -163,7 +190,7 @@ async function scanSource(file) {
         && (receiverIndependentSinks.has(name) || path !== undefined)) {
         violations.push(`forbidden property ${name}`);
       }
-      if (path !== undefined && !safeAmbientPaths.has(path.join('.'))) {
+      if (!isNestedAccess(node) && path !== undefined && !safeAmbientPaths.has(path.join('.'))) {
         violations.push(`ambient authority ${path.join('.')}`);
       }
     }
@@ -195,7 +222,7 @@ async function scanSource(file) {
   if (violations.length > 0) {
     throw new Error(`${relative('.', file)} violates structural security policy: ${[...new Set(violations)].join(', ')}.`);
   }
-  await Promise.all(imports.map((specifier) => assertImport(file, specifier)));
+  await Promise.all(imports.map((specifier) => assertSourceImport(file, specifier, sourceRoot)));
 }
 
 const sourceFiles = (await filesUnder(sourceRoot)).filter((file) =>

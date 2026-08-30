@@ -13,8 +13,9 @@
     "test:coverage": "vitest run --coverage && node scripts/coverage-directories.mjs",
     "test:e2e": "npm run build && npm run test:e2e:built",
     "test:e2e:built": "playwright test",
-    "test:security": "node scripts/security-gate.mjs",
-    "verify": "npm run typecheck && npm run lint && npm test -- --run && npm run test:coverage && npm run build && npm run test:e2e:built && npm run test:security"
+    "test:security": "npm run build && npm run test:security:built",
+    "test:security:built": "node scripts/security-gate.mjs",
+    "verify": "npm run typecheck && npm run lint && npm test -- --run && npm run test:coverage && npm run build && npm run test:e2e:built && npm run test:security:built"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "5.3.0",
