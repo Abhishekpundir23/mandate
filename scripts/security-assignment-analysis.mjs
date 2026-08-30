@@ -216,7 +216,15 @@ export function normalizeProgram(sourceFiles) {
   };
   for (const file of sourceFiles) {
     const visit = (node) => {
-      if (ts.isVariableDeclaration(node)) {
+      // A declaration in a for-in/of initializer is bound from the loop's
+      // projected key/element. Lowering it once more as an uninitialised
+      // declaration creates a false alternative (`undefined | element`) and
+      // loses the loop's value-transfer semantics.
+      const isLoopInitializerDeclaration = ts.isVariableDeclaration(node)
+        && ts.isVariableDeclarationList(node.parent)
+        && (ts.isForOfStatement(node.parent.parent) || ts.isForInStatement(node.parent.parent))
+        && node.parent.parent.initializer === node.parent;
+      if (ts.isVariableDeclaration(node) && !isLoopInitializerDeclaration) {
         lowerTarget(node.name, node.initializer, [], 'declaration', file.fileName, output);
       }
       if (ts.isParameter(node)) {

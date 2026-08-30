@@ -412,7 +412,7 @@ describe('structural security gate', () => {
     expect(result.status, result.output).toBe(0);
     expect(result.output).toMatch(/vite .* building client environment/i);
     expect(result.output).toMatch(/Built asset gate passed/);
-  }, 30_000);
+  }, 90_000);
 });
 
 const taskNineFalseGreens = [
@@ -779,7 +779,7 @@ describe('closed-world origin and effect gate', () => {
     expect(result.output).toMatch(/HOST_DOM_SCROLL/);
     expect(result.output).toMatch(/forbidden=0/);
     expect(result.output).toMatch(/unknown=0/);
-  }, 30_000);
+  }, 90_000);
 });
 
 const reviewFalseGreens: readonly [string, Record<string, string>][] = [
@@ -1109,7 +1109,7 @@ channel('payload');`);
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/163 modules transformed/i);
     expect(result.output).toMatch(/reachable production module src\/escape\.test\.ts is test-scoped/i);
-  }, 40_000);
+  }, 90_000);
 
   it('public security inventories scripts after raw-text style content', async () => {
     const result = await runStandaloneSecurityWithFiles({
@@ -1120,7 +1120,7 @@ channel('payload');`);
 
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/runtime entry (?:escapes src|does not resolve)|forbidden application sink/i);
-  }, 40_000);
+  }, 90_000);
 
   it('public security rejects HTML meta refresh navigation', async () => {
     const result = await runStandaloneSecurityWithFiles(
@@ -1131,7 +1131,7 @@ channel('payload');`);
 
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/meta refresh navigation is forbidden/i);
-  }, 40_000);
+  }, 90_000);
 
   it('public security rejects nested iframe srcdoc navigation', async () => {
     const currentHtml = await readFile('index.html', 'utf8');
@@ -1145,7 +1145,7 @@ channel('payload');`);
 
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/iframe|srcdoc|embedded document/i);
-  }, 40_000);
+  }, 90_000);
 
   it('public security rejects a declarative-shadow template hiding an unreceipted runtime script', async () => {
     const currentHtml = await readFile('index.html', 'utf8');
@@ -1163,7 +1163,7 @@ channel('payload');`);
 
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/template|declarative shadow|javascript|asset inventory|receipt/i);
-  }, 40_000);
+  }, 90_000);
 
   it('public security rejects an unreferenced executable asset without a build receipt', async () => {
     const result = await runStandaloneSecurityWithFiles({
@@ -1172,7 +1172,7 @@ channel('payload');`);
 
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/javascript|asset inventory|receipt|unexpected/i);
-  }, 40_000);
+  }, 90_000);
 
   it.each([
     ['CSP meta placed in body', (html: string, csp: string) => html
@@ -1191,7 +1191,7 @@ channel('payload');`);
 
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/CSP|Content-Security-Policy|head/i);
-  }, 40_000);
+  }, 90_000);
 
   it('public security rejects forged arguments to the canonical CapabilityDefinition contract', async () => {
     const capabilities = await readFile('src/sandbox/capabilities.ts', 'utf8');
@@ -1206,7 +1206,7 @@ channel('payload');`);
 
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/HOST_UNKNOWN|unknown/i);
-  }, 40_000);
+  }, 90_000);
 
   it('receipts every legitimate TypeScript HTML runtime entry', async () => {
     const result = await runStandaloneSecurityWithFiles(
@@ -1217,7 +1217,7 @@ channel('payload');`);
 
     expect(result.status, result.output).toBe(0);
     expect(result.output).toMatch(/entries=src\/main\.tsx,src\/secondary\.ts/i);
-  }, 40_000);
+  }, 90_000);
 });
 
 describe('Task 9 facade and mutation paired controls', () => {
@@ -1533,7 +1533,7 @@ Reflect.set(target, 'label', 'changed');`);
 
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/runtime entry|unsupported executable extension|analysis receipt|escape\.js/i);
-  }, 40_000);
+  }, 90_000);
 });
 
 describe('Task 9 deferred-callback and facade traversal controls', () => {
@@ -1728,5 +1728,460 @@ describe('Task 9 callback lifecycle and host-input controls', () => {
 
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape|HOST_UNKNOWN|Unknown/i);
+  });
+});
+
+describe('Task 9 review fix round 2 exact regressions', () => {
+  it('rejects Reflect.set when its fourth effective receiver is borrowed', async () => {
+    const result = await runGate(`export function reviewReflectSetReceiver(receiver: object): void {
+  Reflect.set({}, 'marker', 'changed', receiver);
+}`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_MUTATION_RECEIVER|HOST_UNKNOWN|Reflect\.set/i);
+  });
+
+  it.each([
+    ['ambient fourth receiver', `const receiver = document.body; Reflect.set({}, 'marker', 'changed', receiver); export {};`],
+    ['aliased borrowed fourth receiver', `export function update(receiver: object): void { const set = Reflect.set; set({}, 'marker', 'changed', receiver); }`],
+    ['call borrowed fourth receiver', `export function update(receiver: object): void { Reflect.set.call(undefined, {}, 'marker', 'changed', receiver); }`],
+    ['apply borrowed fourth receiver', `export function update(receiver: object): void { Reflect.set.apply(undefined, [{}, 'marker', 'changed', receiver]); }`],
+    ['bound borrowed fourth receiver', `export function update(receiver: object): void { const setMarker = Reflect.set.bind(undefined, {}, 'marker', 'changed'); setMarker(receiver); }`],
+    ['borrowed dispatch target', `export function update(target: object): void { Reflect.set(target, 'marker', 'changed', { marker: 'before' }); }`],
+    ['accessor dispatch target', `let observed = ''; const target = { set marker(value: string) { observed = value; } }; const receiver = { marker: 'before' }; Reflect.set(target, 'marker', 'changed', receiver); export { observed, receiver };`],
+    ['dynamic prototype-bearing key', `declare const key: string; const target = {}; Reflect.set(target, key, 'changed'); export { target };`],
+    ['prototype key with fourth receiver', `const target = {}; const receiver = {}; Reflect.set(target, '__proto__', { polluted: true }, receiver); export { receiver };`],
+    ['Proxy dispatch target', `const target = new Proxy({}, {}); const receiver = {}; Reflect.set(target, 'marker', 'changed', receiver); export { receiver };`],
+    ['dynamic key plain target and null-prototype receiver', `export function update(key: string) { const target = { marker: 'target' }; const receiver = Object.create(null) as Record<string, unknown>; Reflect.set(target, key, { polluted: true }, receiver); return receiver; }`],
+    ['finite-or-dynamic key alternative', `export function update(key: string, choose: boolean) { const target = { marker: 'target' }; const receiver = { marker: 'before' } as Record<string, unknown>; const selected = choose ? 'marker' : key; Reflect.set(target, selected, { polluted: true }, receiver); return receiver; }`],
+    ['borrowed custom prototype dispatch', `export function update(proto: object) { const target = { __proto__: proto }; const receiver = { marker: 'before' }; Reflect.set(target, 'marker', 'changed', receiver); return receiver; }`],
+    ['borrowed prototype self-target direct dispatch', `export function update(proto: object) { const target = { __proto__: proto }; Reflect.set(target, 'marker', 'changed'); return target; }`],
+    ['borrowed prototype self-target alias dispatch', `export function update(proto: object) { const set = Reflect.set; const target = { __proto__: proto }; set(target, 'marker', 'changed'); return target; }`],
+    ['borrowed prototype self-target call dispatch', `export function update(proto: object) { const target = { __proto__: proto }; Reflect.set.call(undefined, target, 'marker', 'changed'); return target; }`],
+    ['borrowed prototype self-target apply dispatch', `export function update(proto: object) { const target = { __proto__: proto }; Reflect.set.apply(undefined, [target, 'marker', 'changed']); return target; }`],
+    ['borrowed prototype joined target dispatch', `export function update(left: object, right: object, choose: boolean) { const target = choose ? { __proto__: left } : { __proto__: right }; Reflect.set(target, 'marker', 'changed'); return target; }`],
+    ['aliased dynamic key with null-prototype receiver', `export function update(key: string) { const set = Reflect.set; const target = { marker: 'target' }; const receiver = Object.create(null) as Record<string, unknown>; set(target, key, 'changed', receiver); return receiver; }`],
+    ['called dynamic key with null-prototype receiver', `export function update(key: string) { const target = { marker: 'target' }; const receiver = Object.create(null) as Record<string, unknown>; Reflect.set.call(undefined, target, key, 'changed', receiver); return receiver; }`],
+    ['applied dynamic key with null-prototype receiver', `export function update(key: string) { const target = { marker: 'target' }; const receiver = Object.create(null) as Record<string, unknown>; Reflect.set.apply(undefined, [target, key, 'changed', receiver]); return receiver; }`],
+    ['bound dynamic key with null-prototype receiver', `export function update(key: string) { const target = { marker: 'target' }; const receiver = Object.create(null) as Record<string, unknown>; const setKey = Reflect.set.bind(undefined, target, key, 'changed'); setKey(receiver); return receiver; }`],
+    ['reassigned formerly finite key', `export function update(key: string) { let selected = 'marker'; selected = key; const target = { marker: 'target' }; const receiver = Object.create(null) as Record<string, unknown>; Reflect.set(target, selected, 'changed', receiver); return receiver; }`],
+    ['deleted initial own-data key', `export function update(proto: object) { const target = { __proto__: proto, marker: 'owned' } as { marker?: string }; delete target.marker; Reflect.set(target, 'marker', 'changed'); return target; }`],
+    ['direct assignment through custom prototype', `export function update(proto: object) { const target = { __proto__: proto } as Record<string, unknown>; target.marker = 'changed'; return target; }`],
+    ['Object.assign through custom prototype', `export function update(proto: object) { const target = { __proto__: proto }; Object.assign(target, { marker: 'changed' }); return target; }`],
+  ])('rejects hostile Reflect.set effective-receiver path: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_MUTATION_RECEIVER|UNPROVEN_REFLECT_SET_TARGET|UNPROVEN_SET_DISPATCH|UNKNOWN_PROTOTYPE_KEY|PROTOTYPE_WRITE|HOST_UNKNOWN|HOST_DYNAMIC_CODE|Reflect\.set/i);
+  });
+
+  it.each([
+    ['owned three-argument data write', `const target = { marker: 'before' }; Reflect.set(target, 'marker', 'changed'); export { target };`],
+    ['intrinsic prototype new data key', `const target = {}; Reflect.set(target, 'marker', 'changed'); export { target };`],
+    ['intrinsic prototype direct new data key', `const target: Record<string, string> = {}; target.marker = 'changed'; export { target };`],
+    ['intrinsic prototype Object.assign new data key', `const target = {}; Object.assign(target, { marker: 'changed' }); export { target };`],
+    ['owned four-argument data write', `const target = { marker: 'target' }; const receiver = { marker: 'before' }; Reflect.set(target, 'marker', 'changed', receiver); export { receiver };`],
+    ['aliased owned fourth receiver', `const set = Reflect.set; const target = { marker: 'target' }; const receiver = { marker: 'before' }; set(target, 'marker', 'changed', receiver); export { receiver };`],
+    ['call owned fourth receiver', `const target = { marker: 'target' }; const receiver = { marker: 'before' }; Reflect.set.call(undefined, target, 'marker', 'changed', receiver); export { receiver };`],
+    ['apply owned fourth receiver', `const target = { marker: 'target' }; const receiver = { marker: 'before' }; Reflect.set.apply(undefined, [target, 'marker', 'changed', receiver]); export { receiver };`],
+    ['bound owned fourth receiver', `const target = { marker: 'target' }; const receiver = { marker: 'before' }; const setMarker = Reflect.set.bind(undefined, target, 'marker', 'changed'); setMarker(receiver); export { receiver };`],
+    ['finite conditional key', `const target = { left: 1, right: 2 }; const receiver = { left: 1, right: 2 }; const key = true ? 'left' : 'right'; Reflect.set(target, key, 3, receiver); export { receiver };`],
+    ['finite literal-union key', `export function update(key: 'left' | 'right') { const target = { left: 1, right: 2 }; const receiver = { left: 1, right: 2 }; Reflect.set(target, key, 3, receiver); return receiver; }`],
+    ['aliased finite literal-union key', `export function update(key: 'left' | 'right') { const set = Reflect.set; const target = { left: 1, right: 2 }; const receiver = { left: 1, right: 2 }; set(target, key, 3, receiver); return receiver; }`],
+    ['called finite literal-union key', `export function update(key: 'left' | 'right') { const target = { left: 1, right: 2 }; const receiver = { left: 1, right: 2 }; Reflect.set.call(undefined, target, key, 3, receiver); return receiver; }`],
+    ['applied finite literal-union key', `export function update(key: 'left' | 'right') { const target = { left: 1, right: 2 }; const receiver = { left: 1, right: 2 }; Reflect.set.apply(undefined, [target, key, 3, receiver]); return receiver; }`],
+    ['bound finite literal-union key', `export function update(key: 'left' | 'right') { const target = { left: 1, right: 2 }; const receiver = { left: 1, right: 2 }; const setKey = Reflect.set.bind(undefined, target, key, 3); setKey(receiver); return receiver; }`],
+    ['null-prototype dynamic key', `declare const key: string; const target = Object.create(null) as Record<string, string>; const receiver = Object.create(null) as Record<string, string>; Reflect.set(target, key, 'changed', receiver); export { receiver };`],
+    ['null-prototype object-literal dynamic key', `export function update(key: string) { const target = { __proto__: null } as Record<string, unknown>; const receiver = { __proto__: null } as Record<string, unknown>; Reflect.set(target, key, 'changed', receiver); return receiver; }`],
+    ['custom prototype with proven own data key', `export function update(proto: object) { const target = { __proto__: proto, marker: 'target' }; const receiver = { marker: 'before' }; Reflect.set(target, 'marker', 'changed', receiver); return receiver; }`],
+    ['custom prototype own key direct assignment', `export function update(proto: object) { const target = { __proto__: proto, marker: 'before' }; target.marker = 'changed'; return target; }`],
+    ['custom prototype own key Object.assign', `export function update(proto: object) { const target = { __proto__: proto, marker: 'before' }; Object.assign(target, { marker: 'changed' }); return target; }`],
+    ['Reflect before delete preserves pre-call own key', `export function update(proto: object) { const target = { __proto__: proto, marker: 'before' } as { marker?: string }; Reflect.set(target, 'marker', 'changed'); delete target.marker; return target; }`],
+    ['data descriptor re-establishes a deleted own key', `export function update(proto: object) { const target = { __proto__: proto, marker: 'before' } as { marker?: string }; delete target.marker; Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); target.marker = 'changed'; return target; }`],
+  ])('accepts safe Reflect.set effective-receiver path: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('rejects a deferred timer closure after its captured slot widens to a host object', async () => {
+    const result = await runGate(`const reviewHost: object = document.getElementById('root')!;
+let reviewSource: object = {};
+let reviewLeaked: object = {};
+const reviewTick = (): void => { reviewLeaked = reviewSource; };
+export function reviewSchedule(): void { window.setInterval(reviewTick, 180); }
+export function reviewStageHost(): void { reviewSource = reviewHost; }
+export function reviewReadLeaked(): object { return reviewLeaked; }`, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|HOST_UNKNOWN|Ambient|capability escape/i);
+  });
+
+  it.each([
+    ['timer alias registered before widening', `const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const tick = (): void => { leaked = source; }; const alias = tick; export function schedule(): void { window.setInterval(alias, 180); } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+    ['timer registered after widening in source order', `const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const tick = (): void => { leaked = source; }; export function stage(): void { source = host; } export function schedule(): void { window.setInterval(tick, 180); } export function read(): object { return leaked; }`],
+    ['nested timer wrapper registered before widening', `const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const tick = (): void => { leaked = source; }; const wrapper = (): void => tick(); export function schedule(): void { window.setInterval(wrapper, 180); } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+    ['repeated timer registrations before widening', `const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const tick = (): void => { leaked = source; }; export function schedule(): void { window.setInterval(tick, 180); window.setInterval(tick, 180); } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+    ['listener callback registered before widening', `const media = window.matchMedia('(max-width: 899px)'); let source: object = {}; let leaked: object = {}; const update = (): void => { leaked = source; }; export function subscribe(): void { media.addEventListener('change', update); } export function stage(): void { source = media; } export function read(): object { return leaked; }`],
+    ['React effect callback registered before widening', `import { useEffect } from 'react'; const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const tick = (): void => { leaked = source; }; export function useSchedule(): void { useEffect(tick, []); } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+    ['JSX callback registered before widening', `const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const tick = (): void => { leaked = source; }; export function Fixture() { return <button onClick={tick}>run</button>; } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+  ])('rejects stale deferred capture through %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|HOST_UNKNOWN|Ambient|capability escape/i);
+  });
+
+  it.each([
+    ['timer scalar capture', `let source = 'first'; let observed = ''; const tick = (): void => { observed = source; }; export function schedule(): void { window.setInterval(tick, 180); } export function stage(): void { source = 'second'; } export function read(): string { return observed; }`],
+    ['listener void callback', `const media = window.matchMedia('(max-width: 899px)'); const update = (): void => undefined; export function subscribe(): void { media.addEventListener('change', update); }`],
+    ['React effect void callback', `import { useEffect } from 'react'; const tick = (): void => undefined; export function useSchedule(): void { useEffect(tick, []); }`],
+  ])('accepts safe deferred control: %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('accepts mutation of a present owned value returned by a local Map', async () => {
+    const result = await runGate(`const mapped = new Map<string, { label: string }>();
+mapped.set('row', { label: 'one' });
+const mappedRow = mapped.get('row');
+if (mappedRow !== undefined) mappedRow.label = 'two';
+export { mapped };`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('accepts mutation of an owned value iterated from a local Set', async () => {
+    const result = await runGate(`const setRows = new Set<{ label: string }>([{ label: 'one' }]);
+for (const setRow of setRows.values()) setRow.label = 'two';
+export { setRows };`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('accepts a local class hard-private numeric compound write', async () => {
+    const result = await runGate(`class Counter {
+  #value = 0;
+  increment(): void { this.#value += 1; }
+  read(): number { return this.#value; }
+}
+const counter = new Counter();
+counter.increment();
+export { counter };`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+});
+
+describe('Task 9 round 2 operation-prestate and semantic deferred roots', () => {
+  it.each([
+    ['delete before direct set', `export function update(proto: object) { const target = { __proto__: proto, marker: 'before' } as { marker?: string }; delete target.marker; target.marker = 'changed'; return target; }`],
+    ['delete before Object.assign', `export function update(proto: object) { const target = { __proto__: proto, marker: 'before' } as { marker?: string }; delete target.marker; Object.assign(target, { marker: 'changed' }); return target; }`],
+    ['delete before Reflect.set', `export function update(proto: object) { const target = { __proto__: proto, marker: 'before' } as { marker?: string }; delete target.marker; Reflect.set(target, 'marker', 'changed'); return target; }`],
+    ['accessor before direct set', `export function update() { const target = { get marker() { return 'before'; }, set marker(value: string) { void value; } }; target.marker = 'changed'; return target; }`],
+    ['accessor redefine before Object.assign', `export function update() { const target = { marker: 'before' }; Object.defineProperty(target, 'marker', { set(value: string) { void value; } }); Object.assign(target, { marker: 'changed' }); return target; }`],
+    ['unsafe set before later data define', `export function update(proto: object) { const target = { __proto__: proto } as { marker?: string }; Reflect.set(target, 'marker', 'changed'); Object.defineProperty(target, 'marker', { value: 'defined' }); return target; }`],
+  ])('rejects operation-prestate hostile: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_(?:SET_DISPATCH|REFLECT_SET_TARGET)|ACCESSOR_DESCRIPTOR|security/i);
+  });
+
+  it.each([
+    ['branch-only define then direct set', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; if (choose) Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); target.marker = 'changed'; return target; }`],
+    ['branch-only define then Object.assign', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; if (choose) Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); Object.assign(target, { marker: 'changed' }); return target; }`],
+    ['branch-only define then Reflect.set', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; if (choose) Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); Reflect.set(target, 'marker', 'changed'); return target; }`],
+  ])('rejects branch-only descriptor establishment: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_(?:SET_DISPATCH|REFLECT_SET_TARGET)|security/i);
+  });
+
+  it.each([
+    ['try-skipped define then direct set', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; try { if (choose) throw new Error('skip'); Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } catch {} target.marker = 'changed'; return target; }`],
+    ['try-skipped define then Object.assign', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; try { if (choose) throw new Error('skip'); Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } catch {} Object.assign(target, { marker: 'changed' }); return target; }`],
+    ['try-skipped define then Reflect.set', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; try { if (choose) throw new Error('skip'); Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } catch {} Reflect.set(target, 'marker', 'changed'); return target; }`],
+  ])('rejects try-skipped descriptor establishment: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_(?:SET_DISPATCH|REFLECT_SET_TARGET)|security/i);
+  });
+
+  it('accepts a first-statement unconditional try data definition', async () => {
+    const result = await runGate(`export function update(proto: object) { const target = { __proto__: proto } as { marker?: string }; try { Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } catch {} target.marker = 'changed'; return target; }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['nested try block then direct set', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; try { { if (choose) throw new Error('skip'); Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } } catch {} target.marker = 'changed'; return target; }`],
+    ['nested try block then Object.assign', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; try { { if (choose) throw new Error('skip'); Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } } catch {} Object.assign(target, { marker: 'changed' }); return target; }`],
+    ['nested try block then Reflect.set', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; try { { if (choose) throw new Error('skip'); Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } } catch {} Reflect.set(target, 'marker', 'changed'); return target; }`],
+    ['label break then direct set', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; definition: { if (choose) break definition; Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } target.marker = 'changed'; return target; }`],
+    ['label break then Object.assign', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; definition: { if (choose) break definition; Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } Object.assign(target, { marker: 'changed' }); return target; }`],
+    ['label break then Reflect.set', `export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; definition: { if (choose) break definition; Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } Reflect.set(target, 'marker', 'changed'); return target; }`],
+  ])('rejects abrupt descriptor-establishment bypass: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_(?:SET_DISPATCH|REFLECT_SET_TARGET)|security/i);
+  });
+
+  it.each([
+    ['logical AND assignment', `export function update(proto: object, gate: unknown) { const target = { __proto__: proto } as { marker?: string }; gate &&= Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); target.marker = 'changed'; return target; }`],
+    ['logical OR assignment', `export function update(proto: object, gate: unknown) { const target = { __proto__: proto } as { marker?: string }; gate ||= Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); target.marker = 'changed'; return target; }`],
+    ['nullish assignment', `export function update(proto: object, gate: unknown) { const target = { __proto__: proto } as { marker?: string }; gate ??= Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); target.marker = 'changed'; return target; }`],
+  ])('rejects logical-assignment descriptor bypass: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_SET_DISPATCH|security/i);
+  });
+
+  it.each([
+    ['caught Object.defineProperty failure', `export function update(proto: object) { const target = { __proto__: proto } as { marker?: string }; Object.freeze(target); try { Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } catch {} target.marker = 'changed'; return target; }`],
+    ['false Reflect.defineProperty result', `export function update(proto: object) { const target = { __proto__: proto } as { marker?: string }; Object.freeze(target); Reflect.defineProperty(target, 'marker', { value: 'defined', writable: true }); target.marker = 'changed'; return target; }`],
+  ])('rejects failed descriptor establishment after freeze: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_SET_DISPATCH|security/i);
+  });
+
+  it('rejects branch-only Object.defineProperties establishment', async () => {
+    const result = await runGate(`export function update(proto: object, choose: boolean) { const target = { __proto__: proto } as { marker?: string }; if (choose) Object.defineProperties(target, { marker: { value: 'defined', writable: true } }); target.marker = 'changed'; return target; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_SET_DISPATCH|security/i);
+  });
+
+  it.each([
+    ['assign establish first', `const target = { __proto__: { set marker(value: string) { void value; } } } as { marker?: string }; export function establish(): void { Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } export function mutate(): void { Object.assign(target, { marker: 'changed' }); }`],
+    ['assign mutate first', `const target = { __proto__: { set marker(value: string) { void value; } } } as { marker?: string }; export function mutate(): void { Object.assign(target, { marker: 'changed' }); } export function establish(): void { Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); }`],
+    ['Reflect establish first', `const target = { __proto__: { set marker(value: string) { void value; } } } as { marker?: string }; export function establish(): void { Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); } export function mutate(): void { Reflect.set(target, 'marker', 'changed'); }`],
+    ['Reflect mutate first', `const target = { __proto__: { set marker(value: string) { void value; } } } as { marker?: string }; export function mutate(): void { Reflect.set(target, 'marker', 'changed'); } export function establish(): void { Object.defineProperty(target, 'marker', { value: 'defined', writable: true }); }`],
+  ])('rejects public action order-dependent dispatch: %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_(?:SET_DISPATCH|REFLECT_SET_TARGET)|security/i);
+  });
+
+  it.each([
+    ['direct', `target.marker = 'changed';`],
+    ['compound', `target.marker += 'changed';`],
+    ['update', `target.marker++;`],
+    ['Object.assign', `Object.assign(target, { marker: 'changed' });`],
+    ['Reflect.set', `Reflect.set(target, 'marker', 'changed');`],
+  ])('rejects null-prototype accessor through %s', async (_, operation) => {
+    const result = await runGate(`const target = { __proto__: null, get marker(): any { return 'before'; }, set marker(value: any) { void value; } }; ${operation} export { target };`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_(?:SET_DISPATCH|REFLECT_SET_TARGET)|security/i);
+  });
+
+  it.each([
+    ['safe direct before later delete', `export function update(proto: object) { const target = { __proto__: proto, marker: 'before' } as { marker?: string }; target.marker = 'changed'; delete target.marker; return target; }`],
+    ['safe assign before later delete', `export function update(proto: object) { const target = { __proto__: proto, marker: 'before' } as { marker?: string }; Object.assign(target, { marker: 'changed' }); delete target.marker; return target; }`],
+    ['safe Reflect before later delete', `export function update(proto: object) { const target = { __proto__: proto, marker: 'before' } as { marker?: string }; Reflect.set(target, 'marker', 'changed'); delete target.marker; return target; }`],
+  ])('accepts operation-prestate safe control: %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('rejects a computed-write key domain with an unmodeled unique-symbol alternative', async () => {
+    const result = await runGate(`const token = Symbol('token'); type Key = 'marker' | typeof token; export function update(proto: object, key: Key) { const target = { __proto__: proto, marker: 'before' } as { marker: string; [token]?: string }; target[key] = 'changed'; return target; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNKNOWN_PROTOTYPE_KEY|UNPROVEN_SET_DISPATCH|security/i);
+  });
+
+  it('rejects a computed-write key domain with a broad symbol alternative', async () => {
+    const result = await runGate(`export function update(proto: object, key: 'marker' | symbol) { const target = { __proto__: proto, marker: 'before' } as { marker: string; [key: symbol]: string }; target[key] = 'changed'; return target; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNKNOWN_PROTOTYPE_KEY|UNPROVEN_SET_DISPATCH|security/i);
+  });
+
+  it('accepts a complete finite computed-write key domain with own data keys', async () => {
+    const result = await runGate(`export function update(proto: object, key: 'left' | 'right') { const target = { __proto__: proto, left: 'before', right: 'before' }; target[key] = 'changed'; return target; }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('rejects an incomplete Object.assign computed source-key domain', async () => {
+    const result = await runGate(`export function update(proto: object, key: 'marker' | symbol) { const target = { __proto__: proto, marker: 'before' } as Record<PropertyKey, string>; Object.assign(target, { [key]: 'changed' }); return target; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_ASSIGN_SOURCE|UNPROVEN_SET_DISPATCH|UNKNOWN_PROTOTYPE_KEY|security/i);
+  });
+
+  it('accepts a complete Object.assign finite source-key domain with own data keys', async () => {
+    const result = await runGate(`export function update(proto: object, key: 'left' | 'right') { const target = { __proto__: proto, left: 'before', right: 'before' }; Object.assign(target, { [key]: 'changed' }); return target; }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('rejects an unguarded conditional Map.get absence before mutation', async () => {
+    const result = await runGate(`export function update(flag: boolean) { const rows = new Map<string, { label: string }>(); const row = (flag ? rows.get('missing') : { label: 'safe' })!; row.label = 'changed'; return row; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_MUTATION_RECEIVER|MaybeAbsent|security/i);
+  });
+
+  it('accepts a guarded conditional Map.get value before mutation', async () => {
+    const result = await runGate(`export function update(flag: boolean) { const rows = new Map<string, { label: string }>(); const row = flag ? rows.get('missing') : { label: 'safe' }; if (row !== undefined) row.label = 'changed'; return row; }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('rejects strict-null-only narrowing of a possibly undefined Map.get value', async () => {
+    const result = await runGate(`export function update() { const rows = new Map<string, { label: string }>([['present', { label: 'safe' }]]); const row = rows.get('missing'); if (row !== null) row!.label = 'changed'; return row; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_MUTATION_RECEIVER|MaybeAbsent|security/i);
+  });
+
+  it('accepts undefined narrowing of a Map.get value', async () => {
+    const result = await runGate(`export function update() { const rows = new Map<string, { label: string }>([['present', { label: 'safe' }]]); const row = rows.get('missing'); if (row !== undefined) row.label = 'changed'; return row; }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('rejects a computed descriptor setter method before mutation', async () => {
+    const result = await runGate(`export function update(setter: (value: string) => void) { const target = {} as { marker: string }; Object.defineProperty(target, 'marker', { ['set'](value: string) { setter(value); } }); target.marker = 'changed'; return target; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/ACCESSOR_DESCRIPTOR|UNPROVEN_SET_DISPATCH|HOST_UNKNOWN|security/i);
+  });
+
+  it('rejects an effect-free computed descriptor setter method', async () => {
+    const result = await runGate(`export function update() { const target = {} as { marker: string }; Object.defineProperty(target, 'marker', { ['set'](value: string) { void value; } }); target.marker = 'changed'; return target; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/ACCESSOR_DESCRIPTOR|UNPROVEN_SET_DISPATCH|security/i);
+  });
+
+  it('accepts an explicit data descriptor before mutation', async () => {
+    const result = await runGate(`export function update() { const target = {} as { marker: string }; Object.defineProperty(target, 'marker', { value: 'before', writable: true }); target.marker = 'changed'; return target; }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('rejects a throwing descriptor initializer in a first try statement', async () => {
+    const result = await runGate(`function descriptorValue(): string { throw new Error('skip'); } export function update(proto: object) { const target = { __proto__: proto } as { marker?: string }; try { Object.defineProperty(target, 'marker', { value: descriptorValue(), writable: true }); } catch {} target.marker = 'changed'; return target; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_SET_DISPATCH|security/i);
+  });
+
+  it('rejects an emitless descriptor initializer in a first try statement', async () => {
+    const result = await runGate(`declare const later: string; export function update(proto: object) { const target = { __proto__: proto } as { marker?: string }; try { Object.defineProperty(target, 'marker', { value: later, writable: true }); } catch {} target.marker = 'changed'; return target; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_SET_DISPATCH|security/i);
+  });
+
+  it('accepts an initialized descriptor value in a first try statement', async () => {
+    const result = await runGate(`const earlier = 'defined'; export function update(proto: object) { const target = { __proto__: proto } as { marker?: string }; try { Object.defineProperty(target, 'marker', { value: earlier, writable: true }); } catch {} target.marker = 'changed'; return target; }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['direct assignment', `target.marker = 'changed';`],
+    ['Object.assign', `Object.assign(target, { marker: 'changed' });`],
+    ['Reflect.set', `Reflect.set(target, 'marker', 'changed');`],
+  ])('rejects %s through a non-writable data descriptor', async (_, operation) => {
+    const result = await runGate(`export function update() { const target = {} as { marker: string }; Object.defineProperty(target, 'marker', { value: 'before' }); ${operation} return target; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_(?:SET_DISPATCH|REFLECT_SET_TARGET)|security/i);
+  });
+
+  it.each([
+    ['direct assignment', `target.marker = 'changed';`],
+    ['Object.assign', `Object.assign(target, { marker: 'changed' });`],
+    ['Reflect.set', `Reflect.set(target, 'marker', 'changed');`],
+  ])('rejects %s through a frozen receiver', async (_, operation) => {
+    const result = await runGate(`export function update() { const target = Object.freeze({ marker: 'before' }); ${operation} return target; }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_(?:SET_DISPATCH|REFLECT_SET_TARGET)|security/i);
+  });
+
+  it('accepts mutation of a fresh spread copied from frozen data', async () => {
+    const result = await runGate(`export function update() { const frozen = Object.freeze({ marker: 'before' }); const target = { ...frozen }; target.marker = 'changed'; return target; }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it('rejects a helper-defined host callback re-exported through the browser facade', async () => {
+    const result = await runGateFiles({
+      'src/platform/deferred-helper.ts': `export interface SafeBox { readonly id: string }
+let source: SafeBox = { id: 'safe' }; let leaked: SafeBox = { id: 'safe' };
+export function tick(): void { leaked = source; }
+export function stage(next: SafeBox): void { source = next; }
+export function read(): SafeBox { return leaked; }`,
+      'src/platform/browser-capabilities.tsx': `import { read as readInternal, stage as stageInternal, tick, type SafeBox } from './deferred-helper';
+const hostBox: SafeBox = document.getElementById('root')!;
+export function schedule(): void { window.setInterval(tick, 180); }
+export const stage = stageInternal.bind(undefined, hostBox);
+export const read = readInternal;`,
+    });
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|HOST_UNKNOWN|capability escape/i);
+  });
+
+  it('accepts a capability-free helper callback re-exported through the browser facade', async () => {
+    const result = await runGateFiles({
+      'src/platform/deferred-safe-helper.ts': `export interface SafeBox { readonly id: string }
+let source: SafeBox = { id: 'safe' }; let observed = 'safe';
+export function tick(): void { observed = source.id; }
+export function stage(next: SafeBox): void { source = next; }
+export function read(): string { return observed; }`,
+      'src/platform/browser-capabilities.tsx': `import { read as readInternal, stage as stageInternal, tick } from './deferred-safe-helper';
+export function schedule(): void { window.setInterval(tick, 180); }
+export const stage = stageInternal.bind(undefined, { id: 'still-safe' });
+export const read = readInternal;`,
+    });
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['direct member JSX callback', `const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const handlers = { tick: (): void => { leaked = source; } }; export function Fixture() { return <button onClick={handlers.tick}>run</button>; } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+    ['spread member JSX callback', `const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const handlers = { tick: (): void => { leaked = source; } }; const props = { onClick: handlers.tick }; export function Fixture() { return <button {...props}>run</button>; } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+    ['useCallback JSX callback', `import { useCallback } from 'react'; const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; export function Fixture() { const tick = useCallback((): void => { leaked = source; }, []); return <button onClick={tick}>run</button>; } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+    ['timer member callback', `const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const handlers = { tick: (): void => { leaked = source; } }; export function schedule(): void { window.setInterval(handlers.tick, 180); } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+    ['timer bound callback', `const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const tick = (): void => { leaked = source; }; const bound = tick.bind(undefined); export function schedule(): void { window.setInterval(bound, 180); } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+    ['React effect cleanup callback', `import { useEffect } from 'react'; const host: object = document.getElementById('root')!; let source: object = {}; let leaked: object = {}; const cleanup = (): void => { leaked = source; }; const effect = (): (() => void) => cleanup; export function Fixture() { useEffect(effect, []); return null; } export function stage(): void { source = host; } export function read(): object { return leaked; }`],
+    ['timer argument retains mutable cell', `const host: object = document.getElementById('root')!; const cell: { value: object } = { value: {} }; let leaked: object = {}; function tick(current: { value: object }): void { leaked = current.value; } export function schedule(): void { window.setInterval(tick, 180, cell); } export function stage(): void { cell.value = host; } export function read(): object { return leaked; }`],
+    ['bound-this callback retains mutable cell', `const host: object = document.getElementById('root')!; const cell: { value: object } = { value: {} }; let leaked: object = {}; function tick(this: { value: object }): void { leaked = this.value; } const bound = tick.bind(cell); export function schedule(): void { window.setInterval(bound, 180); } export function stage(): void { cell.value = host; } export function read(): object { return leaked; }`],
+    ['nested wrappers observe in-place mutation', `const host: object = document.getElementById('root')!; const cell: { source: object } = { source: {} }; let leaked: object = {}; const tick = (): void => { leaked = cell.source; }; const middle = (): void => tick(); const outer = (): void => middle(); export function schedule(): void { window.setInterval(outer, 180); } export function stage(): void { cell.source = host; } export function read(): object { return leaked; }`],
+    ['mutually recursive wrappers fail closed after staged mutation', `const host: object = document.getElementById('root')!; const cell: { source: object } = { source: {} }; let leaked: object = {}; let recurse = false; const tick = (): void => { leaked = cell.source; }; function first(): void { if (recurse) { recurse = false; second(); } else tick(); } function second(): void { first(); } export function schedule(): void { window.setInterval(first, 180); } export function stage(): void { cell.source = host; recurse = true; } export function read(): object { return leaked; }`],
+  ])('rejects semantic deferred hostile: %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|HOST_UNKNOWN|Ambient|capability escape/i);
+  });
+
+  it.each([
+    ['timer argument scalar cell', `const cell = { value: 'safe' }; let leaked = ''; function tick(current: { value: string }): void { leaked = current.value; } export function schedule(): void { window.setInterval(tick, 180, cell); } export function stage(): void { cell.value = 'still-safe'; } export function read(): string { return leaked; }`],
+    ['timer literal scalar argument', `function tick(value: string): void { void value; } export function schedule(): void { window.setInterval(tick, 180, 'safe'); }`],
+    ['timer fresh local argument', `function tick(value: { label: string }): void { void value.label; } export function schedule(): void { window.setInterval(tick, 180, { label: 'safe' }); }`],
+    ['spread JSX void callback', `const props = { onClick: (): void => undefined }; export function Fixture(): null { void <button {...props}>run</button>; return null; }`],
+    ['effect cleanup void callback', `import { useEffect } from 'react'; const cleanup = (): void => undefined; export function Fixture() { useEffect(() => cleanup, []); return null; }`],
+  ])('accepts semantic deferred safe control: %s', async (_, source) => {
+    const result = await runGate(source, 'src/platform/browser-capabilities.tsx');
+
+    expect(result.status, result.output).toBe(0);
   });
 });

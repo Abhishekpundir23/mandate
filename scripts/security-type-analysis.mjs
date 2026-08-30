@@ -74,6 +74,10 @@ function stablePropertyKey(key) {
   return typeof key === 'symbol' ? stableSymbolKey(key) : `property:${String(key)}`;
 }
 
+function descriptorPropertyKey(key) {
+  return typeof key === 'symbol' ? key : String(key);
+}
+
 function stableOriginKey(value) {
   if (!originIdentity.has(value)) {
     originIdentity.set(value, nextOriginIdentity);
@@ -125,8 +129,26 @@ function emptyOrigin() {
     callables: [],
     provenance: new Set(),
     shape: new Map(),
+    // Keys installed as own data properties by the allocation itself. This
+    // immutable proof set is deliberately separate from `shape`, which grows
+    // as transfer functions model later writes and must never retroactively
+    // authorize Reflect.set dispatch for an earlier/replayed call.
+    initialDataKeys: new Set(),
+    definedDataKeys: new Set(),
+    accessorKeys: new Set(),
+    nonWritableKeys: new Set(),
+    invalidatedDataKeys: new Set(),
     content: undefined,
+    // Absence is a control-flow fact, not a provenance tag. Keeping it
+    // separate prevents a guarded Map.get()/find()/at() result from becoming
+    // Constant|Owned (and therefore Unknown) merely because it may be absent.
+    mayBeAbsent: false,
+    mayBeNonExtensible: false,
+    finiteKeysComplete: false,
+    shapeKeysComplete: false,
     nullPrototype: false,
+    intrinsicPrototype: false,
+    ordinaryData: false,
     surfaces: new Set(),
     hiddenKeys: new Set(),
   };
@@ -151,14 +173,40 @@ function snapshotOrigin(value, seen = new WeakMap()) {
   snapshot.constants = new Set(value.constants);
   snapshot.surfaces = new Set(value.surfaces);
   snapshot.callables = [...value.callables];
+  snapshot.mayBeAbsent = value.mayBeAbsent;
+  snapshot.mayBeNonExtensible = value.mayBeNonExtensible;
+  snapshot.finiteKeysComplete = value.finiteKeysComplete;
+  snapshot.shapeKeysComplete = value.shapeKeysComplete;
   snapshot.nullPrototype = value.nullPrototype;
+  snapshot.intrinsicPrototype = value.intrinsicPrototype;
+  snapshot.ordinaryData = value.ordinaryData;
   snapshot.hiddenKeys = new Set(value.hiddenKeys);
+  snapshot.initialDataKeys = new Set(value.initialDataKeys);
+  snapshot.definedDataKeys = new Set(value.definedDataKeys);
+  snapshot.accessorKeys = new Set(value.accessorKeys);
+  snapshot.nonWritableKeys = new Set(value.nonWritableKeys);
+  snapshot.invalidatedDataKeys = new Set(value.invalidatedDataKeys);
   snapshot.content = value.content === undefined ? undefined : snapshotOrigin(value.content, seen);
   snapshot.shape = new Map([...value.shape.entries()].map(([key, child]) => [
     key,
     snapshotOrigin(child, seen),
   ]));
   return snapshot;
+}
+
+function withAbsence(value, provenance) {
+  const result = snapshotOrigin(value);
+  result.mayBeAbsent = true;
+  if (provenance !== undefined) result.provenance.add(provenance);
+  return result;
+}
+
+function withoutAbsence(value, provenance) {
+  if (!value.mayBeAbsent) return value;
+  const result = snapshotOrigin(value);
+  result.mayBeAbsent = false;
+  if (provenance !== undefined) result.provenance.add(provenance);
+  return result;
 }
 
 function signatureState() {
@@ -242,9 +290,20 @@ function abstractLargeArgument(value, provenance) {
     compact.constants = new Set(value.constants);
     compact.callables = [...value.callables];
     compact.provenance = new Set(value.provenance);
+    compact.mayBeAbsent = value.mayBeAbsent;
+    compact.mayBeNonExtensible = value.mayBeNonExtensible;
+    compact.finiteKeysComplete = value.finiteKeysComplete;
+    compact.shapeKeysComplete = value.shapeKeysComplete;
     compact.nullPrototype = value.nullPrototype;
+    compact.intrinsicPrototype = value.intrinsicPrototype;
+    compact.ordinaryData = value.ordinaryData;
     compact.surfaces = new Set(value.surfaces);
     compact.hiddenKeys = new Set(value.hiddenKeys);
+    compact.initialDataKeys = new Set(value.initialDataKeys);
+    compact.definedDataKeys = new Set(value.definedDataKeys);
+    compact.accessorKeys = new Set(value.accessorKeys);
+    compact.nonWritableKeys = new Set(value.nonWritableKeys);
+    compact.invalidatedDataKeys = new Set(value.invalidatedDataKeys);
     compact.shape = new Map([...value.shape.entries()].map(([key, child]) => {
       const childFacts = transitiveSecurityFacts(child);
       return [key, child.callables.length > 0
@@ -285,9 +344,13 @@ function widenedSecurityTail(...values) {
     .some((tag) => tags.has(tag))
     || [SURFACE.HOST, SURFACE.OPAQUE, SURFACE.UNKNOWN].some((surface) => surfaces.has(surface))
     || facts.some((item) => item.callableKinds.size > 0);
-  return hasAuthority
+  const widened = hasAuthority
     ? origin(ORIGIN.UNKNOWN, 'security-bearing structure widened at finite join boundary')
     : origin(ORIGIN.BORROWED, 'capability-free structure widened at finite join boundary');
+  widened.mayBeAbsent = values.some((value) => value.mayBeAbsent);
+  widened.mayBeNonExtensible = values.some((value) => value.mayBeNonExtensible);
+  widened.shapeKeysComplete = values.every((value) => value.shapeKeysComplete);
+  return widened;
 }
 
 function callableKey(callable, state = signatureState(), depth = 0) {
@@ -404,7 +467,18 @@ function originSubsumes(left, right, seen = new WeakMap(), depth = 0) {
   if (!setContains(left.allocations, right.allocations)
     || !setContains(left.constants, right.constants)
     || !setContains(left.surfaces, right.surfaces)) return false;
+  if (!left.mayBeAbsent && right.mayBeAbsent) return false;
+  if (!left.mayBeNonExtensible && right.mayBeNonExtensible) return false;
+  if (left.finiteKeysComplete && !right.finiteKeysComplete) return false;
+  if (left.shapeKeysComplete && !right.shapeKeysComplete) return false;
   if (left.nullPrototype && !right.nullPrototype) return false;
+  if (left.intrinsicPrototype && !right.intrinsicPrototype) return false;
+  if (left.ordinaryData && !right.ordinaryData) return false;
+  if (![...left.initialDataKeys].every((key) => right.initialDataKeys.has(key))) return false;
+  if (![...left.definedDataKeys].every((key) => right.definedDataKeys.has(key))) return false;
+  if (!setContains(left.accessorKeys, right.accessorKeys)) return false;
+  if (!setContains(left.nonWritableKeys, right.nonWritableKeys)) return false;
+  if (!setContains(left.invalidatedDataKeys, right.invalidatedDataKeys)) return false;
   if (![...left.hiddenKeys].every((key) => right.hiddenKeys.has(key))) return false;
 
   const leftCallableKeys = new Set(left.callables.map((item) => callableKey(item)));
@@ -419,14 +493,42 @@ function originSubsumes(left, right, seen = new WeakMap(), depth = 0) {
 }
 
 function mergeOriginPair(left, right, depth = 0) {
-  if (left.tags.size === 1 && left.tags.has(ORIGIN.BOTTOM)) return right;
-  if (right.tags.size === 1 && right.tags.has(ORIGIN.BOTTOM)) return left;
+  const mergeBottomMayFacts = (bottom, retained) => {
+    if (!bottom.mayBeAbsent && !bottom.mayBeNonExtensible) return retained;
+    const output = snapshotOrigin(retained);
+    output.mayBeAbsent ||= bottom.mayBeAbsent;
+    output.mayBeNonExtensible ||= bottom.mayBeNonExtensible;
+    for (const item of bottom.provenance) output.provenance.add(item);
+    return output;
+  };
+  if (left.tags.size === 1 && left.tags.has(ORIGIN.BOTTOM)) {
+    return mergeBottomMayFacts(left, right);
+  }
+  if (right.tags.size === 1 && right.tags.has(ORIGIN.BOTTOM)) {
+    return mergeBottomMayFacts(right, left);
+  }
   if (depth >= ORIGIN_JOIN_DEPTH_LIMIT) return widenedSecurityTail(left, right);
   if (left === right) return left;
   if (originSubsumes(left, right, new WeakMap(), depth)) return left;
   if (originSubsumes(right, left, new WeakMap(), depth)) return right;
   const output = emptyOrigin();
+  output.mayBeAbsent = left.mayBeAbsent || right.mayBeAbsent;
+  output.mayBeNonExtensible = left.mayBeNonExtensible || right.mayBeNonExtensible;
+  output.finiteKeysComplete = left.finiteKeysComplete && right.finiteKeysComplete;
+  output.shapeKeysComplete = left.shapeKeysComplete && right.shapeKeysComplete;
   output.nullPrototype = left.nullPrototype && right.nullPrototype;
+  output.intrinsicPrototype = left.intrinsicPrototype && right.intrinsicPrototype;
+  output.ordinaryData = left.ordinaryData && right.ordinaryData;
+  output.initialDataKeys = new Set([...left.initialDataKeys]
+    .filter((key) => right.initialDataKeys.has(key)));
+  output.definedDataKeys = new Set([...left.definedDataKeys]
+    .filter((key) => right.definedDataKeys.has(key)));
+  output.accessorKeys = new Set([...left.accessorKeys, ...right.accessorKeys]);
+  output.nonWritableKeys = new Set([...left.nonWritableKeys, ...right.nonWritableKeys]);
+  output.invalidatedDataKeys = new Set([
+    ...left.invalidatedDataKeys,
+    ...right.invalidatedDataKeys,
+  ]);
   output.hiddenKeys = new Set([...left.hiddenKeys].filter((key) => right.hiddenKeys.has(key)));
   const callableKeys = new Set();
   for (const value of [left, right]) {
@@ -630,6 +732,41 @@ export function staticKeys(node, constants, checker) {
   return values;
 }
 
+function finiteKeyDomain(node, checker) {
+  const values = new Set();
+  const visit = (type) => {
+    if (type.isUnion?.()) {
+      return type.types.length > 0 && type.types.every(visit);
+    }
+    if ((type.flags & ts.TypeFlags.StringLiteral) !== 0) {
+      values.add(type.value);
+      return true;
+    }
+    if ((type.flags & ts.TypeFlags.NumberLiteral) !== 0) {
+      values.add(type.value);
+      return true;
+    }
+    if ((type.flags & ts.TypeFlags.Never) !== 0) return true;
+    return false;
+  };
+  try {
+    const complete = visit(checker.getTypeAtLocation(unwrapExpression(node) ?? node));
+    return { complete: complete && values.size > 0, values };
+  } catch {
+    return { complete: false, values };
+  }
+}
+
+function staticKeyDomain(node, constants, checker) {
+  const direct = staticKey(node, constants, checker);
+  if (direct !== undefined) return { complete: true, keys: new Set([direct]) };
+  const finite = finiteKeyDomain(node, checker);
+  return {
+    complete: finite.complete,
+    keys: new Set([...staticKeys(node, constants, checker), ...finite.values]),
+  };
+}
+
 function originSignature(value, state = signatureState(), depth = 0) {
   const cached = depthCached(state.origins, value, depth);
   if (cached !== undefined) return cached;
@@ -665,8 +802,28 @@ function originSignature(value, state = signatureState(), depth = 0) {
     value.content === undefined ? '' : originSignature(value.content, state, depth + 1),
     'shape',
     ...shape,
+    'initial-data-keys',
+    ...[...value.initialDataKeys].map(stablePropertyKey).sort(),
+    'defined-data-keys',
+    ...[...value.definedDataKeys].map(stablePropertyKey).sort(),
+    'accessor-keys',
+    ...[...value.accessorKeys].map(stablePropertyKey).sort(),
+    'non-writable-keys',
+    ...[...value.nonWritableKeys].map(stablePropertyKey).sort(),
+    'invalidated-data-keys',
+    ...[...value.invalidatedDataKeys].map(stablePropertyKey).sort(),
+    'presence',
+    value.mayBeAbsent ? 'maybe-absent' : 'present',
+    value.mayBeNonExtensible ? 'maybe-nonextensible' : 'extensible',
+    'finite-keys',
+    value.finiteKeysComplete ? 'complete' : 'open',
+    'shape-keys',
+    value.shapeKeysComplete ? 'complete' : 'open',
     'prototype',
     value.nullPrototype ? 'null-prototype' : '',
+    value.intrinsicPrototype ? 'intrinsic-prototype' : '',
+    'ordinary-data',
+    value.ordinaryData ? 'ordinary-data' : '',
     'hidden',
     ...[...value.hiddenKeys].map(stablePropertyKey).sort(),
   ]);
@@ -678,10 +835,11 @@ function originSignature(value, state = signatureState(), depth = 0) {
 export function describeOrigin(value) {
   const tags = [...value.tags].sort().join('|');
   const trail = [...value.provenance].sort().slice(0, 6).join(' -> ');
-  return `${tags || ORIGIN.UNKNOWN}${trail.length === 0 ? '' : ` (provenance: ${trail})`}`;
+  return `${tags || ORIGIN.UNKNOWN}${value.mayBeAbsent ? '|MaybeAbsent' : ''}${trail.length === 0 ? '' : ` (provenance: ${trail})`}`;
 }
 
 export function isProvenMutableLocal(value) {
+  if (value.mayBeAbsent) return false;
   if (value.tags.size !== 1) return false;
   if (value.tags.has(ORIGIN.UI_CELL)) return true;
   return value.tags.has(ORIGIN.OWNED) && value.allocations.size > 0;
@@ -1096,6 +1254,50 @@ function isWithin(node, ancestor) {
   return false;
 }
 
+function nonNullishInequalitySymbol(condition, checker) {
+  const current = unwrapExpression(condition);
+  if (current === undefined || !ts.isBinaryExpression(current)
+    || ![ts.SyntaxKind.ExclamationEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken]
+      .includes(current.operatorToken.kind)) return undefined;
+  const nullishKind = (candidate) => {
+    const value = unwrapExpression(candidate);
+    if (value?.kind === ts.SyntaxKind.NullKeyword) return 'null';
+    if (value === undefined || !ts.isIdentifier(value) || value.text !== 'undefined') return undefined;
+    const symbol = resolvedSymbol(value, checker);
+    const declarations = symbol?.declarations ?? [];
+    return symbol === undefined || declarations.length === 0
+      || declarations.every((declaration) => /typescript[\\/]lib[\\/]lib\./u
+        .test(declaration.getSourceFile().fileName))
+      ? 'undefined'
+      : undefined;
+  };
+  const leftNullish = nullishKind(current.left);
+  const rightNullish = nullishKind(current.right);
+  const comparedKind = leftNullish ?? rightNullish;
+  // Strict `value !== null` does not exclude undefined. Loose `!= null`
+  // excludes both nullish values; comparisons against undefined do too.
+  if (comparedKind === 'null'
+    && current.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken) return undefined;
+  const candidate = leftNullish !== undefined
+    ? unwrapExpression(current.right)
+    : rightNullish !== undefined
+      ? unwrapExpression(current.left)
+      : undefined;
+  return candidate !== undefined && ts.isIdentifier(candidate)
+    ? resolvedSymbol(candidate, checker)
+    : undefined;
+}
+
+function isNarrowedPresentAt(node, symbol, checker) {
+  let current = node.parent;
+  while (current !== undefined) {
+    if (ts.isIfStatement(current) && isWithin(node, current.thenStatement)
+      && nonNullishInequalitySymbol(current.expression, checker) === symbol) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
 function isParameterBinding(node) {
   let current = node.parent;
   while (current !== undefined && !ts.isFunctionLike(current)) {
@@ -1156,6 +1358,92 @@ function nearestContainingFunction(node) {
   return undefined;
 }
 
+function identifierIsRuntimeInitialized(node, checker, useSite) {
+  const symbol = resolvedSymbol(node, checker);
+  if (symbol === undefined) return node.text === 'undefined';
+  return (symbol.declarations ?? []).some((declaration) => {
+    if (isEmitlessDeclaration(declaration)) return false;
+    if (ts.isParameter(declaration) || ts.isImportSpecifier(declaration)
+      || ts.isNamespaceImport(declaration) || ts.isImportClause(declaration)
+      || ts.isFunctionDeclaration(declaration)) return true;
+    if (ts.isVariableDeclaration(declaration)) {
+      return declaration.getSourceFile() !== useSite.getSourceFile()
+        || declaration.pos < useSite.pos;
+    }
+    return declaration.pos < useSite.pos;
+  });
+}
+
+function isTriviallyNonThrowingExpression(input, checker, useSite) {
+  const node = unwrapExpression(input);
+  if (node === undefined) return false;
+  if (ts.isIdentifier(node)) return identifierIsRuntimeInitialized(node, checker, useSite);
+  if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)
+    || ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+    || node.kind === ts.SyntaxKind.ThisKeyword || node.kind === ts.SyntaxKind.TrueKeyword
+    || node.kind === ts.SyntaxKind.FalseKeyword || node.kind === ts.SyntaxKind.NullKeyword
+    || node.kind === ts.SyntaxKind.UndefinedKeyword) return true;
+  if (ts.isArrayLiteralExpression(node)) {
+    return node.elements.every((element) => !ts.isSpreadElement(element)
+      && (ts.isOmittedExpression(element)
+        || isTriviallyNonThrowingExpression(element, checker, useSite)));
+  }
+  if (ts.isObjectLiteralExpression(node)) {
+    return node.properties.every((property) => {
+      if (ts.isSpreadAssignment(property)) return false;
+      if (property.name !== undefined && ts.isComputedPropertyName(property.name)
+        && !isTriviallyNonThrowingExpression(property.name.expression, checker, useSite)) return false;
+      if (ts.isPropertyAssignment(property)) {
+        return isTriviallyNonThrowingExpression(property.initializer, checker, useSite);
+      }
+      return ts.isShorthandPropertyAssignment(property) || ts.isMethodDeclaration(property)
+        || ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property);
+    });
+  }
+  return false;
+}
+
+function isPotentiallySkipped(node, checker) {
+  let current = node;
+  const owner = nearestContainingFunction(node);
+  while (current.parent !== undefined && current.parent !== owner) {
+    const parent = current.parent;
+    if (ts.isBlock(parent) && ts.isTryStatement(parent.parent)
+      && parent.parent.tryBlock === parent) {
+      const statementIndex = parent.statements.indexOf(current);
+      // A caught abrupt completion can leave the try and continue at the
+      // later write without executing this descriptor establishment.  Only a
+      // direct first statement is a must fact; nested blocks are deliberately
+      // not treated as transparent because they can hide throws/branches.
+      if (statementIndex !== 0 || current.parent !== parent
+        || current !== node.parent) return true;
+      if ((ts.isCallExpression(node) || ts.isNewExpression(node))
+        && [...(node.arguments ?? [])].some((argument) =>
+          !isTriviallyNonThrowingExpression(argument, checker, node))) return true;
+    }
+    // A break can leave a labelled statement and reach the later write while
+    // bypassing any descriptor establishment nested inside the label.
+    if (ts.isLabeledStatement(parent)) return true;
+    if (ts.isIfStatement(parent) && (parent.thenStatement === current || parent.elseStatement === current)) return true;
+    if (ts.isConditionalExpression(parent)
+      && (parent.whenTrue === current || parent.whenFalse === current)) return true;
+    if ((ts.isBinaryExpression(parent)
+      && [
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.QuestionQuestionToken,
+        ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+        ts.SyntaxKind.BarBarEqualsToken,
+        ts.SyntaxKind.QuestionQuestionEqualsToken,
+      ]
+        .includes(parent.operatorToken.kind)) && parent.right === current) return true;
+    if (ts.isIterationStatement(parent, false) || ts.isCaseClause(parent) || ts.isDefaultClause(parent)
+      || ts.isCatchClause(parent)) return true;
+    current = parent;
+  }
+  return false;
+}
+
 export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   const env = new Map();
   const constants = new Map();
@@ -1170,6 +1458,17 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   const referencedSymbols = new WeakMap();
   const externalParameterOrigins = new Map();
   const externallyCallableFunctionIds = new Set();
+  const externallyInvokedCallbackIds = new Set();
+  const facadeExportSymbols = new Set();
+  const deferredBoundarySites = [];
+  const deferredInvocationRecords = new Map();
+  let unresolvedDeferredInvocation = false;
+  const unresolvedDeferredReasons = new Set();
+  const failDeferredInvocation = (reason) => {
+    unresolvedDeferredInvocation = true;
+    unresolvedDeferredReasons.add(reason);
+  };
+  const hostEventCallbackInput = origin(ORIGIN.AMBIENT, 'host event-listener callback input');
   const resolvingFunctions = new Set();
   const resolvingFunctionIds = new Set();
   const functionSummaryCache = new Map();
@@ -1177,17 +1476,48 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   const functionSummaryOwner = new Map();
   const functionSummaryKeysById = new Map();
   const functionObservedOverrides = new Map();
+  const functionObservedResults = new Map();
   const resolvingLexicalSymbols = new Set();
   const contextualNodeOrigins = new WeakMap();
   const contextualCallResolutions = new WeakMap();
+  const contextualWriteDispatchProofs = new WeakMap();
   const irCallNodes = new WeakSet(ir.calls.map((call) => call.node));
   const directDependentFunctionsBySymbol = new Map();
   const callerFunctionsById = new Map();
   const functionSummaryCacheLimit = 2_048;
+  const browserFacadeFileSuffix = '/src/platform/browser-capabilities.tsx';
+  const isBrowserFacadeFile = (file) => file.fileName.replaceAll('\\', '/')
+    .endsWith(browserFacadeFileSuffix);
+  const recordDeferredInvocation = (site, callable, argumentsList, kind) => {
+    if (!callableArgumentIsResolved(callable)) {
+      failDeferredInvocation(`unresolved registration ${kind} at ${site.getSourceFile().fileName}:${site.pos}`);
+      return;
+    }
+    const siteKey = `${site.getSourceFile().fileName}:${site.pos}:${kind}`;
+    const records = deferredInvocationRecords.get(siteKey) ?? [];
+    const semanticKey = structuralDigest([
+      kind,
+      ...callable.callables.map((entry) => callableKey(entry)).sort(),
+      'arguments',
+      ...argumentsList.map((value) => originSignature(value)),
+    ]);
+    if (!records.some((record) => record.semanticKey === semanticKey)) {
+      if (records.length >= 32) {
+        failDeferredInvocation(`registration alternatives exceeded for ${siteKey}`);
+      } else {
+        records.push({ argumentsList, callable, kind, semanticKey, site });
+        deferredInvocationRecords.set(siteKey, records);
+      }
+    }
+  };
   const recordContextualOrigin = (node, value) => {
     const previous = contextualNodeOrigins.get(node);
     const snapshot = snapshotOrigin(value);
     contextualNodeOrigins.set(node, previous === undefined ? snapshot : joinOrigins(previous, snapshot));
+  };
+  const recordWriteDispatchProof = (node, safe) => {
+    const previous = contextualWriteDispatchProofs.get(node);
+    contextualWriteDispatchProofs.set(node, previous === undefined ? safe : previous && safe);
   };
   const mergeContextualCallResolution = (previous, next) => {
     const stabilized = {
@@ -1197,6 +1527,8 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       mutationReceivers: next.mutationReceivers.map((mutation) => ({
         ...mutation,
         receiver: snapshotOrigin(mutation.receiver),
+        target: mutation.target === undefined ? undefined : snapshotOrigin(mutation.target),
+        keys: new Set(mutation.keys ?? []),
       })),
     };
     if (previous === undefined) return stabilized;
@@ -1207,6 +1539,14 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       mutations.set(key, existing === undefined ? mutation : {
         ...existing,
         receiver: joinOrigins(existing.receiver, mutation.receiver),
+        target: existing.target === undefined
+          ? mutation.target
+          : mutation.target === undefined
+            ? existing.target
+            : joinOrigins(existing.target, mutation.target),
+        keys: new Set([...(existing.keys ?? []), ...(mutation.keys ?? [])]),
+        keysComplete: existing.keysComplete !== false && mutation.keysComplete !== false,
+        dispatchSafe: existing.dispatchSafe !== false && mutation.dispatchSafe !== false,
       });
     }
     return {
@@ -1254,6 +1594,13 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       for (const key of [...(functionSummaryKeysById.get(functionId) ?? [])]) deleteFunctionSummary(key);
       pending.push(...(callerFunctionsById.get(functionId) ?? []));
     }
+  };
+  const recordFunctionResult = (functionId, value) => {
+    const snapshot = snapshotOrigin(value);
+    const previous = functionObservedResults.get(functionId);
+    functionObservedResults.set(functionId, previous === undefined
+      ? snapshot
+      : joinOrigins(previous, snapshot));
   };
   const THIS_ORIGIN = Symbol('this-origin');
   const privateMemberKeys = new WeakMap();
@@ -1440,7 +1787,12 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
 
   const functionIdFromExpression = (input, seen = new Set()) => {
     const node = unwrapExpression(input);
-    if (node === undefined || !ts.isIdentifier(node)) return undefined;
+    if (node === undefined) return undefined;
+    if (ts.isFunctionLike(node) && node.body !== undefined) {
+      const id = `${node.getSourceFile().fileName}:${node.pos}`;
+      return functions.has(id) ? id : undefined;
+    }
+    if (!ts.isIdentifier(node)) return undefined;
     const symbol = resolvedSymbol(node, checker);
     if (symbol === undefined || seen.has(symbol)) return undefined;
     if (functionBySymbol.has(symbol)) return functionBySymbol.get(symbol);
@@ -1521,8 +1873,10 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       const symbol = (exported.flags & ts.SymbolFlags.Alias) !== 0
         ? checker.getAliasedSymbol(exported)
         : exported;
+      if (isBrowserFacadeFile(file)) facadeExportSymbols.add(symbol);
       const directId = functionBySymbol.get(symbol);
       if (directId !== undefined) externallyCallableFunctionIds.add(directId);
+      for (const id of functionTargetsForSymbol(symbol)) externallyCallableFunctionIds.add(id);
       for (const declaration of symbol.declarations ?? []) {
         if (ts.isVariableDeclaration(declaration) && declaration.initializer !== undefined) {
           const id = functionIdFromExpression(declaration.initializer);
@@ -1584,6 +1938,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     const id = functionIdFromExpression(input);
     const fn = id === undefined ? undefined : functions.get(id);
     if (fn === undefined) return;
+    externallyInvokedCallbackIds.add(id);
     for (const parameter of fn.parameters) {
       if (!ts.isIdentifier(parameter.name)) continue;
       const symbol = resolvedSymbol(parameter.name, checker);
@@ -1608,16 +1963,41 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       if (ts.isVariableDeclaration(node) && node.initializer !== undefined
         && /(?:RefCallback|EventHandler|MouseEventHandler|KeyboardEventHandler)/u.test(typeText(node.name, checker))) {
         markExternalCallback(node.initializer, `external callback contract ${typeText(node.name, checker)}`);
+        deferredBoundarySites.push({ expression: node.initializer, kind: 'typed-callback' });
       }
       if (ts.isJsxAttribute(node) && node.initializer !== undefined && ts.isJsxExpression(node.initializer)
-        && node.initializer.expression !== undefined) {
+        && node.initializer.expression !== undefined
+        && (/^on[A-Z]/u.test(node.name.getText()) || node.name.getText() === 'ref')) {
         markExternalCallback(node.initializer.expression, `JSX callback edge ${node.name.getText()}`);
+        deferredBoundarySites.push({
+          expression: node.initializer.expression,
+          kind: `jsx:${node.name.getText()}`,
+        });
+      }
+      if (ts.isJsxSpreadAttribute(node)) {
+        deferredBoundarySites.push({ expression: node.expression, kind: 'jsx-spread' });
       }
       if (ts.isCallExpression(node)
         && (ts.isPropertyAccessExpression(node.expression) || ts.isElementAccessExpression(node.expression))
         && propertyText(node.expression, constants, checker) === 'addEventListener'
         && node.arguments[1] !== undefined) {
         markExternalCallback(node.arguments[1], 'host event-listener callback edge');
+      }
+      if (ts.isCallExpression(node)) {
+        const callee = unwrapExpression(node.expression);
+        const name = callee !== undefined && ts.isIdentifier(callee)
+          ? callee.text
+          : callee !== undefined
+            && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))
+            ? propertyText(callee, constants, checker)
+            : undefined;
+        if (['setInterval', 'setTimeout'].includes(name ?? '') && node.arguments[0] !== undefined) {
+          markExternalCallback(node.arguments[0], `host ${name} callback edge`);
+        }
+        const imported = callee === undefined ? undefined : importIdentity(callee, checker);
+        if (imported === 'react:useEffect' && node.arguments[0] !== undefined) {
+          markExternalCallback(node.arguments[0], 'React effect callback edge');
+        }
       }
       ts.forEachChild(node, visitBoundary);
     };
@@ -1626,6 +2006,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
 
   const constantOrigin = (value, provenance) => origin(ORIGIN.CONSTANT, provenance, {
     constants: new Set([value === undefined ? '<undefined>' : value]),
+    finiteKeysComplete: typeof value === 'string' || typeof value === 'number',
   });
 
   const declaredOrigin = (node, provenance) => {
@@ -1644,7 +2025,11 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     }
     if (isDomLikeType(node, checker)) return origin(ORIGIN.AMBIENT, provenance);
     if (expressionTypeIsUncertain(node, checker)) return origin(ORIGIN.UNKNOWN, provenance);
-    return origin(ORIGIN.BORROWED, provenance);
+    const finiteDomain = finiteKeyDomain(node, checker);
+    return origin(ORIGIN.BORROWED, provenance, finiteDomain.complete ? {
+      constants: finiteDomain.values,
+      finiteKeysComplete: true,
+    } : {});
   };
 
   const project = (value, projection, allocationNode, overrides = new Map(), depth = 0) => {
@@ -1675,8 +2060,9 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         const children = [...shape.values()];
         current = freshOwned(allocationNode, allocationProvenance(allocationNode, `${step.rest} rest allocation`), {
           shape,
+          initialDataKeys: new Set(shape.keys()),
           content: children.length === 0 ? undefined : joinOrigins(...children),
-          nullPrototype: current.nullPrototype,
+          intrinsicPrototype: true,
         });
         continue;
       }
@@ -1751,6 +2137,10 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           name: extendsType.expression.getText(),
         }, argumentsList, node, depth + 1);
         for (const [key, value] of base.shape) instance.shape.set(key, value);
+        for (const key of base.initialDataKeys) instance.initialDataKeys.add(key);
+        for (const key of base.definedDataKeys) instance.definedDataKeys.add(key);
+        for (const key of base.nonWritableKeys) instance.nonWritableKeys.add(key);
+        for (const key of base.invalidatedDataKeys) instance.invalidatedDataKeys.add(key);
         for (const key of base.hiddenKeys) instance.hiddenKeys.add(key);
         instance.content = base.content;
       }
@@ -1761,6 +2151,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       if (!ts.isIdentifier(parameter.name) || parameter.modifiers === undefined) return;
       instance.shape.set(parameter.name.text, argumentsList[index]
         ?? declaredOrigin(parameter.name, `constructor parameter ${parameter.name.text}`));
+      instance.initialDataKeys.add(parameter.name.text);
     });
     for (const member of declaration.members) {
       if (member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) continue;
@@ -1773,6 +2164,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         instance.shape.set(key, unresolvedClassMemberKey(key)
           ? joinOrigins(value, origin(ORIGIN.UNKNOWN, 'unresolved computed public class field'))
           : value);
+        if (!unresolvedClassMemberKey(key)) instance.initialDataKeys.add(key);
       }
       if (ts.isMethodDeclaration(member) && member.body !== undefined) {
         const key = classMemberShapeKey(member.name);
@@ -1810,10 +2202,6 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   const evaluateFunction = (entry, argumentsList, depth, mutationCollector = [], forceReplay = false) => {
     const fn = functions.get(entry.id);
     if (fn === undefined || depth > 12) return origin(ORIGIN.UNKNOWN, `unresolved function ${entry.name}`);
-    if (forceReplay) {
-      for (const write of functionWrites.get(entry.id) ?? []) contextualNodeOrigins.delete(write.receiver);
-      for (const call of functionAllCalls.get(entry.id) ?? []) contextualCallResolutions.delete(call.node);
-    }
     const returnNodes = collectReturns(fn);
     if (resolvingFunctionIds.has(entry.id)) {
       return collectReturns(fn).length === 0
@@ -1962,6 +2350,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       if (!convergeBindings()) {
         const widened = origin(ORIGIN.UNKNOWN, `function fixed point exceeded for ${entry.name}`);
         recordObservedOverrides();
+        recordFunctionResult(entry.id, widened);
         cacheFunctionSummary(cacheKey, widened, entry.id, mutationCollector.slice(mutationStart));
         return widened;
       }
@@ -2031,23 +2420,55 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
               overrides,
               depth + 1,
             );
-          const keys = write.literalKey !== undefined
-            ? new Set([write.literalKey])
-            : write.keyNode === undefined
-              ? new Set()
-              : staticKeys(write.keyNode, constants, checker);
-          for (const key of keys) mergeShapeValue(receiver, key, written);
-          mergeContent(receiver, written, `function-local ${write.channel} write transfer`);
-          mutationCollector.push(receiver);
+          const keyDomain = mutationKeyDomainForWrite(write);
+          const { keys } = keyDomain;
+          // Bottom is a provisional no-value state while an earlier ordered
+          // collection mutation is still being replayed. It cannot witness a
+          // runtime dispatch; a permanently Bottom receiver still fails the
+          // scanner fallback, while a later reachable state records a proof.
+          if (!(receiver.tags.size === 1 && receiver.tags.has(ORIGIN.BOTTOM))) {
+            recordWriteDispatchProof(
+              write.node,
+              write.channel === 'delete'
+                || ordinarySetDispatchSafe(receiver, keys, keyDomain.complete),
+            );
+          }
+          if (write.channel === 'delete') {
+            const invalidated = !keyDomain.complete || keys.size === 0
+              ? new Set([...receiver.initialDataKeys, ...receiver.definedDataKeys])
+              : keys;
+            for (const key of invalidated) {
+              const normalized = descriptorPropertyKey(key);
+              receiver.definedDataKeys.delete(normalized);
+              receiver.accessorKeys.delete(normalized);
+              receiver.nonWritableKeys.delete(normalized);
+              receiver.invalidatedDataKeys.add(normalized);
+              receiver.shape.delete(normalized);
+            }
+          } else {
+            for (const key of keys) mergeShapeValue(receiver, key, written);
+            mergeContent(receiver, written, `function-local ${write.channel} write transfer`);
+          }
+          mutationCollector.push({
+            receiver,
+            target: receiver,
+            keys,
+            keysComplete: keys.size > 0 || receiver.nullPrototype,
+            dispatchSafe: true,
+            label: `function-local ${write.channel} write`,
+            api: 'direct-write',
+            argumentsList: [],
+          });
         } else {
           const { call } = operation;
           const resolution = resolveCall(call.node, overrides, depth + 1);
-          mutationCollector.push(...resolution.mutationReceivers.map((mutation) => mutation.receiver));
+          mutationCollector.push(...resolution.mutationReceivers);
         }
       }
       if (mutationOperations.length > 0 && !convergeBindings()) {
         const widened = origin(ORIGIN.UNKNOWN, `function fixed point exceeded for ${entry.name}`);
         recordObservedOverrides();
+        recordFunctionResult(entry.id, widened);
         cacheFunctionSummary(cacheKey, widened, entry.id, mutationCollector.slice(mutationStart));
         return widened;
       }
@@ -2057,6 +2478,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         ? constantOrigin(undefined, `void return from ${entry.name}`)
         : joinOrigins(...returns);
       const result = abstractLargeArgument(rawResult, `return from ${entry.name}`);
+      recordFunctionResult(entry.id, result);
       cacheFunctionSummary(cacheKey, result, entry.id, mutationCollector.slice(mutationStart));
       return result;
     } finally {
@@ -2075,7 +2497,8 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         || forbiddenCapabilityEffects.has(path) || browserFacadeCalls.has(path)) {
         return withCallable({ kind: 'builtin', name: path }, `global callable ${path}`);
       }
-      if (/^(?:Object|Reflect|Array|JSON|Math|Number|String)\./u.test(path)) {
+      if (/^(?:Object|Reflect|Array|JSON|Math|Number|String)\./u.test(path)
+        && !['call', 'apply', 'bind'].includes(name ?? '')) {
         return withCallable({ kind: 'unknown', name: path }, `unsummarized global callable ${path}`);
       }
     }
@@ -2181,52 +2604,111 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   const objectOrigin = (node, overrides, depth) => {
     const shape = new Map();
     const children = [];
+    const initialDataKeys = new Set();
+    const accessorKeys = new Set();
+    let shapeKeysComplete = true;
+    let literalPrototype = 'default';
     for (const property of node.properties) {
       if (ts.isSpreadAssignment(property)) {
         const spread = evaluate(property.expression, overrides, depth + 1);
+        shapeKeysComplete &&= spread.shapeKeysComplete;
         for (const [key, child] of spread.shape) {
-          if (!spread.hiddenKeys.has(key)) shape.set(key, child);
+          if (!spread.hiddenKeys.has(key)) {
+            shape.set(key, child);
+            initialDataKeys.add(String(key));
+          }
         }
         children.push(spread.content ?? spread);
         continue;
       }
       if (ts.isPropertyAssignment(property)) {
-        const key = ts.isComputedPropertyName(property.name)
-          ? staticString(property.name.expression, constants, checker)
-          : property.name.getText().replace(/^['"]|['"]$/gu, '');
+        const keyDomain = ts.isComputedPropertyName(property.name)
+          ? staticKeyDomain(property.name.expression, constants, checker)
+          : {
+            complete: true,
+            keys: new Set([property.name.getText().replace(/^['"]|['"]$/gu, '')]),
+          };
         const value = evaluate(property.initializer, overrides, depth + 1);
-        if (key !== undefined) shape.set(key, value);
+        shapeKeysComplete &&= keyDomain.complete;
+        const key = keyDomain.keys.size === 1 ? [...keyDomain.keys][0] : undefined;
+        const prototypeSetter = key === '__proto__' && !ts.isComputedPropertyName(property.name);
+        if (prototypeSetter) {
+          literalPrototype = property.initializer.kind === ts.SyntaxKind.NullKeyword
+            ? 'null'
+            : 'custom';
+        } else {
+          for (const possibleKey of keyDomain.keys) shape.set(descriptorPropertyKey(possibleKey), value);
+          if (keyDomain.complete && keyDomain.keys.size === 1 && key !== undefined) {
+            initialDataKeys.add(descriptorPropertyKey(key));
+          }
+        }
         children.push(value);
         continue;
       }
       if (ts.isShorthandPropertyAssignment(property)) {
         const value = evaluate(property.name, overrides, depth + 1);
         shape.set(property.name.text, value);
+        initialDataKeys.add(property.name.text);
         children.push(value);
         continue;
       }
       if (ts.isMethodDeclaration(property)) {
-        const key = property.name.getText().replace(/^['"]|['"]$/gu, '');
+        const keyDomain = ts.isComputedPropertyName(property.name)
+          ? staticKeyDomain(property.name.expression, constants, checker)
+          : {
+            complete: true,
+            keys: new Set([property.name.getText().replace(/^['"]|['"]$/gu, '')]),
+          };
         const value = functionCallable(property, overrides);
-        shape.set(key, value);
+        shapeKeysComplete &&= keyDomain.complete;
+        for (const key of keyDomain.keys) shape.set(descriptorPropertyKey(key), value);
+        if (keyDomain.complete && keyDomain.keys.size === 1) {
+          initialDataKeys.add(descriptorPropertyKey([...keyDomain.keys][0]));
+        }
         children.push(value);
         continue;
       }
       if (ts.isGetAccessorDeclaration(property) && property.body !== undefined) {
-        const key = property.name.getText().replace(/^['"]|['"]$/gu, '');
+        const keyDomain = ts.isComputedPropertyName(property.name)
+          ? staticKeyDomain(property.name.expression, constants, checker)
+          : {
+            complete: true,
+            keys: new Set([property.name.getText().replace(/^['"]|['"]$/gu, '')]),
+          };
         const value = evaluateFunction({
           kind: 'function',
           id: `${property.getSourceFile().fileName}:${property.pos}`,
           name: functionName(property),
           closure: overrides,
         }, [], depth + 1);
-        shape.set(key, value);
+        shapeKeysComplete &&= keyDomain.complete;
+        for (const key of keyDomain.keys) {
+          shape.set(descriptorPropertyKey(key), value);
+          accessorKeys.add(descriptorPropertyKey(key));
+        }
         children.push(value);
+      }
+      if (ts.isSetAccessorDeclaration(property)) {
+        const keyDomain = ts.isComputedPropertyName(property.name)
+          ? staticKeyDomain(property.name.expression, constants, checker)
+          : {
+            complete: true,
+            keys: new Set([property.name.getText().replace(/^['"]|['"]$/gu, '')]),
+          };
+        shapeKeysComplete &&= keyDomain.complete;
+        for (const key of keyDomain.keys) accessorKeys.add(descriptorPropertyKey(key));
       }
     }
     const result = freshOwned(node, allocationProvenance(node, 'fresh object allocation'), {
       shape,
+      initialDataKeys,
+      accessorKeys,
+      shapeKeysComplete,
       content: children.length === 0 ? undefined : joinOrigins(...children),
+      nullPrototype: literalPrototype === 'null',
+      intrinsicPrototype: literalPrototype === 'default',
+      ordinaryData: !node.properties.some((property) =>
+        ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property)),
     });
     const capabilityMethods = ['deriveResource', 'facts', 'reduce'];
     const exactCapabilityShape = shape.size === 5
@@ -2266,9 +2748,13 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     });
     return freshOwned(node, allocationProvenance(node, 'fresh array allocation'), {
       shape,
+      shapeKeysComplete: true,
+      initialDataKeys: new Set(shape.keys()),
+      intrinsicPrototype: true,
       content: children.length === 0
         ? origin(ORIGIN.BORROWED, 'empty array element type')
         : joinOrigins(...children),
+      ordinaryData: true,
     });
   };
 
@@ -2288,7 +2774,16 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)
       || node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword
       || node.kind === ts.SyntaxKind.NullKeyword || node.kind === ts.SyntaxKind.UndefinedKeyword) {
-      return constantOrigin(node.text, allocationProvenance(node, 'literal'));
+      const literalValue = node.kind === ts.SyntaxKind.TrueKeyword
+        ? true
+        : node.kind === ts.SyntaxKind.FalseKeyword
+          ? false
+          : node.kind === ts.SyntaxKind.NullKeyword
+            ? null
+            : node.kind === ts.SyntaxKind.UndefinedKeyword
+              ? undefined
+              : node.text;
+      return constantOrigin(literalValue, allocationProvenance(node, 'literal'));
     }
     if (ts.isTemplateExpression(node)) {
       return constantOrigin(undefined, allocationProvenance(node, 'template value'));
@@ -2314,8 +2809,18 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         }
         if (moduleName === 'zod') return withBrand(ORIGIN.ZOD, `Zod import ${importedName}`);
       }
-      if (symbol !== undefined && overrides.has(symbol)) return overrides.get(symbol);
-      if (symbol !== undefined && env.has(symbol)) return env.get(symbol);
+      if (symbol !== undefined && overrides.has(symbol)) {
+        const value = overrides.get(symbol);
+        return isNarrowedPresentAt(node, symbol, checker)
+          ? withoutAbsence(value, `non-nullish guard for ${node.text}`)
+          : value;
+      }
+      if (symbol !== undefined && env.has(symbol)) {
+        const value = env.get(symbol);
+        return isNarrowedPresentAt(node, symbol, checker)
+          ? withoutAbsence(value, `non-nullish guard for ${node.text}`)
+          : value;
+      }
       if (symbol !== undefined && functionBySymbol.has(symbol)) {
         return functionCallable(functions.get(functionBySymbol.get(symbol)), overrides);
       }
@@ -2390,11 +2895,17 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         const right = evaluate(node.right, overrides, depth + 1);
         if (left.tags.size === 1 && left.tags.has(ORIGIN.CONSTANT)
           && left.constants.size === 1 && left.constants.has('<undefined>')) return right;
-        return joinOrigins(left, right);
+        return left.mayBeAbsent
+          ? joinOrigins(withoutAbsence(left, 'present coalescing branch'), right)
+          : left;
       }
       if ([ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken,
         ts.SyntaxKind.CommaToken].includes(node.operatorToken.kind)) {
         return joinOrigins(evaluate(node.left, overrides, depth + 1), evaluate(node.right, overrides, depth + 1));
+      }
+      const finiteKey = staticKey(node, constants, checker);
+      if (finiteKey !== undefined) {
+        return constantOrigin(finiteKey, allocationProvenance(node, 'computed finite primitive'));
       }
       return constantOrigin(undefined, allocationProvenance(node, 'computed primitive'));
     }
@@ -2457,13 +2968,147 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   };
 
   const mergeShapeValue = (receiver, key, value) => {
-    const normalized = String(key);
+    const normalized = descriptorPropertyKey(key);
     receiver.shape.set(normalized, receiver.shape.has(normalized)
       ? joinOrigins(receiver.shape.get(normalized), value)
       : value);
   };
 
-  const applyObjectMutationTransfer = (api, receiver, argumentsList, callNode) => {
+  const finiteKeysFromOrigin = (value) => new Set([...(value?.constants ?? [])]
+    .filter((key) => key !== '<undefined>' && (typeof key === 'string' || typeof key === 'number')));
+
+  const hasDefinitelyPresentOwnDataKey = (value, key) => {
+    const normalized = descriptorPropertyKey(key);
+    return (value.initialDataKeys.has(normalized) || value.definedDataKeys.has(normalized))
+      && !value.invalidatedDataKeys.has(normalized);
+  };
+
+  const hasInitialOwnDataKey = (value, key) => value.initialDataKeys
+    .has(descriptorPropertyKey(key));
+
+  const initialOrdinarySetDispatchSafe = (value, keys, keysComplete = keys?.size > 0) => {
+    if (!isProvenMutableLocal(value)) return false;
+    if (value.mayBeNonExtensible) return false;
+    if (value.tags.has(ORIGIN.UI_CELL)) return true;
+    if (keys === undefined || keys.size === 0) {
+      return value.nullPrototype && value.accessorKeys.size === 0;
+    }
+    if ([...keys].some((key) => value.accessorKeys.has(descriptorPropertyKey(key))
+      || value.nonWritableKeys.has(descriptorPropertyKey(key)))) return false;
+    if (!keysComplete && (value.accessorKeys.size > 0 || value.nonWritableKeys.size > 0)) return false;
+    if (value.nullPrototype) return true;
+    if (!keysComplete || keys.has('__proto__')) return false;
+    return value.intrinsicPrototype || [...keys].every((key) => hasInitialOwnDataKey(value, key));
+  };
+
+  const ordinarySetDispatchSafe = (value, keys, keysComplete = keys?.size > 0) => {
+    if (!isProvenMutableLocal(value)) return false;
+    if (value.mayBeNonExtensible) return false;
+    if (value.tags.has(ORIGIN.UI_CELL)) return true;
+    if (keys === undefined || keys.size === 0) {
+      return value.nullPrototype && value.accessorKeys.size === 0;
+    }
+    if ([...keys].some((key) => value.accessorKeys.has(descriptorPropertyKey(key))
+      || value.nonWritableKeys.has(descriptorPropertyKey(key)))) return false;
+    if (!keysComplete && (value.accessorKeys.size > 0 || value.nonWritableKeys.size > 0)) return false;
+    if (value.nullPrototype) return true;
+    if (!keysComplete || keys === undefined || keys.size === 0 || keys.has('__proto__')) return false;
+    return value.intrinsicPrototype
+      || [...keys].every((key) => hasDefinitelyPresentOwnDataKey(value, key));
+  };
+
+  const mutationKeyDomainForWrite = (write) => write.keyNode !== undefined
+    && ts.isPrivateIdentifier(write.keyNode)
+    ? { complete: true, keys: new Set([classMemberShapeKey(write.keyNode)]) }
+    : write.literalKey !== undefined
+      ? { complete: true, keys: new Set([write.literalKey]) }
+      : write.keyNode === undefined
+        ? { complete: false, keys: new Set() }
+        : staticKeyDomain(write.keyNode, constants, checker);
+
+  const mutationKeysForWrite = (write) => mutationKeyDomainForWrite(write).keys;
+
+  const directMutationKeys = (api, callNode) => {
+    if (!ts.isCallExpression(callNode) && !ts.isNewExpression(callNode)) return new Set();
+    const calleePath = actualStaticPath(callNode.expression, constants, checker);
+    return calleePath === api && callNode.arguments?.[1] !== undefined
+      ? staticKeys(callNode.arguments[1], constants, checker)
+      : new Set();
+  };
+
+  const dominatingDataDefinition = (callNode, targetNode, keys) => {
+    if (keys.size === 0) return false;
+    const owner = nearestContainingFunction(callNode);
+    const targetText = unwrapExpression(targetNode)?.getText();
+    return ir.calls.some((candidate) => {
+      if (candidate.node.pos >= callNode.pos || nearestContainingFunction(candidate.node) !== owner
+        || isPotentiallySkipped(candidate.node, checker) || !ts.isCallExpression(candidate.node)) return false;
+      const path = actualStaticPath(candidate.node.expression, constants, checker);
+      if (!['Object.defineProperty', 'Reflect.defineProperty'].includes(path ?? '')) return false;
+      const candidateTarget = candidate.node.arguments[0] === undefined
+        ? undefined
+        : unwrapExpression(candidate.node.arguments[0])?.getText();
+      if (candidateTarget !== targetText || candidate.node.arguments[1] === undefined) return false;
+      const candidateKeys = staticKeys(candidate.node.arguments[1], constants, checker);
+      if (![...keys].every((key) => candidateKeys.has(key))) return false;
+      const descriptor = candidate.node.arguments[2];
+      return descriptor !== undefined && ts.isObjectLiteralExpression(unwrapExpression(descriptor))
+        && !unwrapExpression(descriptor).properties.some((property) =>
+          (ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)
+            || ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property))
+          && ['get', 'set'].includes(property.name?.getText?.() ?? ''));
+    });
+  };
+
+  const mutationRecord = (api, argumentsList, callNode, label) => {
+    const target = argumentsList[0] ?? origin(ORIGIN.UNKNOWN, `missing ${api} target`);
+    const receiver = api === 'Reflect.set' && argumentsList.length >= 4
+      ? argumentsList[3]
+      : target;
+    const keyOrigin = argumentsList[1]
+      ?? origin(ORIGIN.UNKNOWN, `missing ${api} property key`);
+    const keys = new Set([
+      ...finiteKeysFromOrigin(keyOrigin),
+      ...directMutationKeys(api, callNode),
+    ]);
+    const keysComplete = keyOrigin.finiteKeysComplete && keys.size > 0;
+    const operationDispatchSafe = (candidateTarget, candidateKeys, complete) => {
+      const currentSafe = ordinarySetDispatchSafe(candidateTarget, candidateKeys, complete);
+      if (!currentSafe) return false;
+      return initialOrdinarySetDispatchSafe(candidateTarget, candidateKeys, complete)
+        || (argumentsList[0] !== undefined
+          && dominatingDataDefinition(callNode, callNode.arguments?.[0], candidateKeys));
+    };
+    const objectAssignDispatchSafe = api !== 'Object.assign'
+      || argumentsList.slice(1).every((source) => {
+        if (!source.shapeKeysComplete || !source.ordinaryData) return false;
+        const sourceKeys = new Set([...source.shape.keys()]
+          .filter((key) => !source.hiddenKeys.has(key)));
+        return sourceKeys.size === 0 || operationDispatchSafe(target, sourceKeys, true);
+      });
+    return {
+      receiver: receiver ?? origin(ORIGIN.UNKNOWN, `missing ${api} effective receiver`),
+      target,
+      keys,
+      keysComplete,
+      dispatchSafe: api === 'Reflect.set'
+        ? operationDispatchSafe(target, keys, keysComplete)
+        : objectAssignDispatchSafe,
+      label,
+      api,
+      argumentsList,
+      potentiallySkipped: isPotentiallySkipped(callNode, checker),
+    };
+  };
+
+  const applyObjectMutationTransfer = (api, mutation, argumentsList) => {
+    const { receiver } = mutation;
+    const descriptorIsDefinitelyWritable = (descriptor) => {
+      const writable = descriptor.shape.get('writable');
+      return writable !== undefined && writable.tags.size === 1
+        && writable.tags.has(ORIGIN.CONSTANT) && writable.constants.size === 1
+        && writable.constants.has(true);
+    };
     if (api === 'Object.assign') {
       for (const source of argumentsList.slice(1)) {
         for (const [key, value] of source.shape) mergeShapeValue(receiver, key, value);
@@ -2478,19 +3123,54 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     }
     if (api === 'Reflect.set') {
       const value = argumentsList[2] ?? origin(ORIGIN.UNKNOWN, 'missing Reflect.set value');
-      const keyNode = callNode.arguments?.[1];
-      const keys = keyNode === undefined ? new Set() : staticKeys(keyNode, constants, checker);
-      for (const key of keys) mergeShapeValue(receiver, key, value);
+      for (const key of mutation.keys) mergeShapeValue(receiver, key, value);
       mergeContent(receiver, value, 'Reflect.set value transfer');
+      return;
+    }
+    if (api === 'Reflect.deleteProperty') {
+      const invalidated = mutation.keysComplete && mutation.keys.size > 0
+        ? mutation.keys
+        : new Set([...receiver.initialDataKeys, ...receiver.definedDataKeys]);
+      for (const key of invalidated) {
+        const normalized = descriptorPropertyKey(key);
+        receiver.definedDataKeys.delete(normalized);
+        receiver.accessorKeys.delete(normalized);
+        receiver.nonWritableKeys.delete(normalized);
+        receiver.invalidatedDataKeys.add(normalized);
+        receiver.shape.delete(normalized);
+      }
       return;
     }
     if (api === 'Object.defineProperty' || api === 'Reflect.defineProperty') {
       const descriptor = argumentsList[2] ?? origin(ORIGIN.UNKNOWN, `missing ${api} descriptor`);
       const value = descriptor.shape.get('value') ?? descriptor.content
         ?? origin(ORIGIN.UNKNOWN, `${api} descriptor value is unresolved`);
-      const keyNode = callNode.arguments?.[1];
-      const keys = keyNode === undefined ? new Set() : staticKeys(keyNode, constants, checker);
-      for (const key of keys) mergeShapeValue(receiver, key, value);
+      const dataOnly = descriptor.ordinaryData
+        && !descriptor.shape.has('get') && !descriptor.shape.has('set');
+      for (const key of mutation.keys) {
+        mergeShapeValue(receiver, key, value);
+        if (dataOnly) {
+          const normalized = descriptorPropertyKey(key);
+          if (!mutation.potentiallySkipped && !receiver.mayBeNonExtensible
+            && descriptorIsDefinitelyWritable(descriptor)) {
+            receiver.definedDataKeys.add(normalized);
+            receiver.invalidatedDataKeys.delete(normalized);
+            receiver.accessorKeys.delete(normalized);
+            receiver.nonWritableKeys.delete(normalized);
+          } else {
+            receiver.definedDataKeys.delete(normalized);
+            receiver.invalidatedDataKeys.add(normalized);
+            receiver.nonWritableKeys.add(normalized);
+          }
+        } else {
+          const normalized = descriptorPropertyKey(key);
+          receiver.definedDataKeys.delete(normalized);
+          receiver.accessorKeys.delete(normalized);
+          receiver.nonWritableKeys.delete(normalized);
+          receiver.invalidatedDataKeys.add(normalized);
+          receiver.accessorKeys.add(normalized);
+        }
+      }
       mergeContent(receiver, value, `${api} descriptor transfer`);
       return;
     }
@@ -2501,6 +3181,25 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         const value = descriptor.shape.get('value') ?? descriptor.content
           ?? origin(ORIGIN.UNKNOWN, `Object.defineProperties descriptor ${key} is unresolved`);
         mergeShapeValue(receiver, key, value);
+        if (descriptor.ordinaryData && descriptorIsDefinitelyWritable(descriptor)
+          && !mutation.potentiallySkipped
+          && !receiver.mayBeNonExtensible
+          && !descriptor.shape.has('get') && !descriptor.shape.has('set')) {
+          receiver.definedDataKeys.add(descriptorPropertyKey(key));
+          receiver.invalidatedDataKeys.delete(descriptorPropertyKey(key));
+          receiver.accessorKeys.delete(descriptorPropertyKey(key));
+          receiver.nonWritableKeys.delete(descriptorPropertyKey(key));
+        } else {
+          receiver.definedDataKeys.delete(descriptorPropertyKey(key));
+          receiver.invalidatedDataKeys.add(descriptorPropertyKey(key));
+          if (descriptor.ordinaryData && !descriptor.shape.has('get')
+            && !descriptor.shape.has('set')) {
+            receiver.nonWritableKeys.add(descriptorPropertyKey(key));
+          } else {
+            receiver.nonWritableKeys.delete(descriptorPropertyKey(key));
+            receiver.accessorKeys.add(descriptorPropertyKey(key));
+          }
+        }
         mergeContent(receiver, value, 'Object.defineProperties descriptor transfer');
       }
     }
@@ -2529,11 +3228,9 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       }
       const nestedMutationReceivers = [];
       const result = evaluateFunction(entry, invocationArguments, depth + 1, nestedMutationReceivers);
-      mutationReceivers.push(...nestedMutationReceivers.map((receiver) => ({
-        receiver,
-        label: `nested mutation in ${entry.name}`,
-        api: 'local-function',
-        argumentsList: invocationArguments,
+      mutationReceivers.push(...nestedMutationReceivers.map((mutation) => ({
+        ...mutation,
+        label: `nested mutation in ${entry.name}: ${mutation.label}`,
       })));
       return result;
     };
@@ -2543,6 +3240,23 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         ...target,
         closure: new Map([...(target.closure ?? []), [THIS_ORIGIN, thisOrigin]]),
       };
+    const evaluateDeferredCallable = (target, invocationArguments) => {
+      if (target.kind === 'function') return evaluateDirectFunction(target, invocationArguments);
+      if (target.kind === 'bound') {
+        const results = target.targets.map((nested) => evaluateDeferredCallable(
+          functionWithThis(
+            nested,
+            target.boundThis ?? constantOrigin(undefined, 'undefined bound this'),
+          ),
+          [...target.boundArguments, ...invocationArguments],
+        ));
+        return results.length === 0
+          ? origin(ORIGIN.UNKNOWN, 'bound deferred callable has no targets')
+          : joinOrigins(...results);
+      }
+      if (target.kind === 'ui') return constantOrigin(undefined, `UI deferred callback ${target.name}`);
+      return origin(ORIGIN.UNKNOWN, `unsupported deferred callable ${target.kind}:${target.name ?? ''}`);
+    };
     let invokeDirect;
     invokeDirect = (target, invocationArguments) => {
       if (target.kind === 'function') {
@@ -2561,14 +3275,9 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       if (target.kind === 'builtin') {
         if (objectMutationCalls.has(target.name)) {
           effects.add(objectMutationCalls.get(target.name));
-          const receiver = invocationArguments[0] ?? origin(ORIGIN.UNKNOWN, 'missing mutation target');
-          applyObjectMutationTransfer(target.name, receiver, invocationArguments, node);
-          mutationReceivers.push({
-            receiver,
-            label: `${target.name} target`,
-            api: target.name,
-            argumentsList: invocationArguments,
-          });
+          const mutation = mutationRecord(target.name, invocationArguments, node, `${target.name} target`);
+          applyObjectMutationTransfer(target.name, mutation, invocationArguments);
+          mutationReceivers.push(mutation);
           outcomes.push(target.name === 'Object.assign'
             ? invocationArguments[0] ?? origin(ORIGIN.UNKNOWN, 'missing Object.assign target')
             : constantOrigin(target.name.startsWith('Reflect.') ? true : undefined, `${target.name} result`));
@@ -2587,7 +3296,10 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
               if (callback !== undefined) escapeOwned(callback, 'escaped through unresolved timer callback');
             } else {
               const callbackArguments = invocationArguments.slice(2);
-              callback.callables.forEach((callable) => invokeDirect(callable, callbackArguments));
+              recordDeferredInvocation(node, callback, callbackArguments, 'timer');
+              callback.callables.forEach((callable) => {
+                evaluateDeferredCallable(callable, callbackArguments);
+              });
             }
           }
           effects.add(browserFacadeCalls.get(target.name));
@@ -2723,14 +3435,16 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
             effects.add('HOST_UNKNOWN');
             argumentsList.forEach((value) => escapeOwned(value, 'escaped through unresolved React effect registration'));
           } else if (summary === 'REACT_USE_EFFECT') {
-            const cleanupResults = argumentsList[0].callables.map((item) => item.kind === 'function'
-              ? evaluateFunction(item, [], depth + 1)
-              : constantOrigin(undefined, 'React effect without cleanup'));
+            recordDeferredInvocation(node, argumentsList[0], [], 'react-effect');
+            const cleanupResults = argumentsList[0].callables.map((item) =>
+              evaluateDeferredCallable(item, []));
             const cleanup = joinOrigins(...cleanupResults);
             if ((cleanup.callables.length > 0 && !callableArgumentIsResolved(cleanup))
               || cleanup.tags.has(ORIGIN.UNKNOWN)) {
               effects.add('HOST_UNKNOWN');
               escapeOwned(cleanup, 'escaped through unresolved React effect cleanup');
+            } else if (cleanup.callables.length > 0) {
+              recordDeferredInvocation(node, cleanup, [], 'react-cleanup');
             }
           }
           effects.add('HOST_UI_STATE');
@@ -2785,9 +3499,9 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           argumentsList.forEach((value) => escapeOwned(value, 'escaped through unresolved host event listener'));
         } else if (ambientName === 'addEventListener') {
           const callback = argumentsList[1];
-          const hostInput = origin(ORIGIN.AMBIENT, 'host event-listener callback input');
+          recordDeferredInvocation(node, callback, [hostEventCallbackInput], 'event-listener');
           for (const callable of callback.callables) {
-            invokeDirect(callable, [hostInput]);
+            evaluateDeferredCallable(callable, [hostEventCallbackInput]);
           }
         }
         const facadeEffect = browserFacadeCalls.get(ambientName);
@@ -2879,9 +3593,9 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
             content: element,
           }));
         } else if (entry.name === 'at' || entry.name === 'find' || entry.name === 'get') {
-          outcomes.push(entry.receiver.content ?? (entry.name === 'get'
-            ? constantOrigin(undefined, 'empty owned collection lookup')
-            : origin(ORIGIN.BORROWED, `${entry.name} result`)));
+          const elementResult = entry.receiver.content
+            ?? origin(ORIGIN.BOTTOM, `empty ${entry.name} result`);
+          outcomes.push(withAbsence(elementResult, `${entry.name} result may be absent`));
         } else {
           outcomes.push(origin(ORIGIN.BORROWED, `pure method result ${entry.name}`));
         }
@@ -2890,14 +3604,9 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       if (entry.kind === 'contract-object-assign' || entry.kind === 'contract-reflect-set') {
         effects.add('HOST_LOCAL_MUTATION');
         const api = entry.kind === 'contract-object-assign' ? 'Object.assign' : 'Reflect.set';
-        const receiver = argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing mutation target');
-        applyObjectMutationTransfer(api, receiver, argumentsList, node);
-        mutationReceivers.push({
-          receiver,
-          label: `${entry.name} target`,
-          api,
-          argumentsList,
-        });
+        const mutation = mutationRecord(api, argumentsList, node, `${entry.name} target`);
+        applyObjectMutationTransfer(api, mutation, argumentsList);
+        mutationReceivers.push(mutation);
         outcomes.push(entry.kind === 'contract-object-assign'
           ? argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing mutation target')
           : constantOrigin(true, 'Reflect.set result'));
@@ -3002,8 +3711,27 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           effects.add(forbiddenConstructors.get(entry.name));
           outcomes.push(origin(ORIGIN.AMBIENT, `forbidden constructor ${entry.name}`));
         } else if (ownedConstructors.has(entry.name)) {
+          const iterable = argumentsList[0];
+          const collectionContent = ['Set', 'WeakSet'].includes(entry.name)
+            ? iterable === undefined
+              ? undefined
+              : iterable.content ?? (iterable.shape.size === 0
+                ? origin(ORIGIN.UNKNOWN, `unresolved ${entry.name} iterable content`)
+                : joinOrigins(...iterable.shape.values()))
+            : ['Map', 'WeakMap'].includes(entry.name) && iterable !== undefined
+              ? (() => {
+                const pairs = iterable.shape.size > 0
+                  ? [...iterable.shape.values()]
+                  : iterable.content === undefined ? [] : [iterable.content];
+                if (pairs.length === 0) {
+                  return origin(ORIGIN.UNKNOWN, `unresolved ${entry.name} entry content`);
+                }
+                return joinOrigins(...pairs.map((pair) => pair.shape.get('1')
+                  ?? origin(ORIGIN.UNKNOWN, `unresolved ${entry.name} entry value`)));
+              })()
+              : argumentsList.length === 0 ? undefined : joinOrigins(...argumentsList);
           outcomes.push(freshOwned(node, allocationProvenance(node, `new ${entry.name}`), {
-            content: argumentsList.length === 0 ? undefined : joinOrigins(...argumentsList),
+            content: collectionContent,
           }));
         } else {
           effects.add('HOST_UNKNOWN');
@@ -3015,14 +3743,9 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         const name = entry.name;
         if (objectMutationCalls.has(name)) {
           effects.add(objectMutationCalls.get(name));
-          const receiver = argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing mutation target');
-          applyObjectMutationTransfer(name, receiver, argumentsList, node);
-          mutationReceivers.push({
-            receiver,
-            label: `${name} target`,
-            api: name,
-            argumentsList,
-          });
+          const mutation = mutationRecord(name, argumentsList, node, `${name} target`);
+          applyObjectMutationTransfer(name, mutation, argumentsList);
+          mutationReceivers.push(mutation);
           outcomes.push(name === 'Object.assign'
             ? argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing Object.assign target')
             : constantOrigin(name.startsWith('Reflect.') ? true : undefined, `${name} result`));
@@ -3037,7 +3760,10 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
               if (callback !== undefined) escapeOwned(callback, 'escaped through unresolved timer callback');
             } else {
               const callbackArguments = argumentsList.slice(2);
-              callback.callables.forEach((callable) => invokeDirect(callable, callbackArguments));
+              recordDeferredInvocation(node, callback, callbackArguments, 'timer');
+              callback.callables.forEach((callable) => {
+                evaluateDeferredCallable(callable, callbackArguments);
+              });
             }
           }
           effects.add(browserFacadeCalls.get(name));
@@ -3047,7 +3773,10 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
               ? origin(ORIGIN.AMBIENT, `browser result ${name}`)
               : constantOrigin(undefined, `browser call ${name}`));
         } else if (name === 'Object.freeze') {
-          outcomes.push(argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing Object.freeze value'));
+          const frozen = argumentsList[0] ?? origin(ORIGIN.UNKNOWN, 'missing Object.freeze value');
+          frozen.mayBeNonExtensible = true;
+          frozen.provenance.add('Object.freeze may make the allocation non-extensible');
+          outcomes.push(frozen);
         } else if (name === 'Object.getOwnPropertyDescriptor') {
           outcomes.push(origin(ORIGIN.OPAQUE, 'opaque property descriptor'));
         } else if (name === 'Object.getOwnPropertyDescriptors') {
@@ -3078,6 +3807,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           outcomes.push(freshOwned(node, allocationProvenance(node, `${name} result`), {
             content: ownedContent,
             nullPrototype: name === 'Object.create' && node.arguments?.[0]?.kind === ts.SyntaxKind.NullKeyword,
+            ordinaryData: name === 'Object.create' && node.arguments?.[0]?.kind === ts.SyntaxKind.NullKeyword,
           }));
         } else if (pureGlobalCalls.has(name)) {
           if (name === 'Array.from' && node.arguments?.[1] !== undefined
@@ -3209,7 +3939,10 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           || (name !== undefined && mutatingMethodEffects.has(name))) return true;
         if (name !== undefined && (pureStandardMethods.has(name) || uiMethods.has(name))
           && isStandardReceiverType(current.expression, checker)) return false;
-        return (node.arguments?.length ?? 0) > 0;
+        // An unsummarized local receiver call can mutate captured/instance
+        // state even with zero explicit arguments (`counter.increment()`).
+        // Keep it in the contextual replay set so THIS_ORIGIN is preserved.
+        return true;
       }
       return true;
     });
@@ -3239,7 +3972,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         || (name !== undefined && mutatingMethodEffects.has(name))) return true;
       if (name !== undefined && (pureStandardMethods.has(name) || uiMethods.has(name))
         && isStandardReceiverType(current.expression, checker)) return false;
-      return (node.arguments?.length ?? 0) > 0;
+      return true;
     }
     return true;
   };
@@ -3268,6 +4001,11 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   const originStateCalls = ir.calls.filter((call) =>
     nearestContainingFunction(call.node) === undefined && callMayChangeOriginState(call));
   const topLevelWrites = ir.writes.filter((write) => nearestContainingFunction(write.node) === undefined);
+  const topLevelMutationOperations = [
+    ...topLevelWrites.map((write) => ({ kind: 'write', node: write.node, write })),
+    ...originStateCalls.map((call) => ({ kind: 'call', call, node: call.node })),
+  ].sort((left, right) => left.node.getSourceFile().fileName.localeCompare(right.node.getSourceFile().fileName)
+    || left.node.pos - right.node.pos);
 
   const closureForFunction = (fn, id) => {
     const parent = nearestContainingFunction(fn.parent);
@@ -3306,6 +4044,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   };
 
   const appliedWrites = new Set();
+  const appliedTopLevelCalls = new Set();
   const callMutationSignatures = new WeakMap();
   const recordBoundaryOverride = (symbol, value, target, closed) => {
     const owner = nearestContainingFunction(target);
@@ -3549,39 +4288,55 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     }
     boundaryTransfersApplied = true;
     }
-    for (const write of topLevelWrites) {
-      if (appliedWrites.has(write)) continue;
-      const receiver = evaluate(write.receiver);
-      if (!isProvenMutableLocal(receiver)) continue;
-      const written = write.source === undefined
-        ? constantOrigin(undefined, `delete ${write.receiver.getText()}`)
-        : project(evaluate(write.source), write.projection, write.node);
-      const keys = write.literalKey !== undefined
-        ? new Set([write.literalKey])
-        : write.keyNode === undefined
-          ? new Set()
-          : staticKeys(write.keyNode, constants, checker);
-      for (const key of keys) {
-        const normalizedKey = String(key);
-        receiver.shape.set(normalizedKey, receiver.shape.has(normalizedKey)
-          ? joinOrigins(receiver.shape.get(normalizedKey), written)
-          : written);
+    for (const operation of topLevelMutationOperations) {
+      if (operation.kind === 'write') {
+        const { write } = operation;
+        const receiver = evaluate(write.receiver);
+        const keyDomain = mutationKeyDomainForWrite(write);
+        const { keys } = keyDomain;
+        recordContextualOrigin(write.receiver, receiver);
+        if (!(receiver.tags.size === 1 && receiver.tags.has(ORIGIN.BOTTOM))) {
+          recordWriteDispatchProof(
+            write.node,
+            write.channel === 'delete'
+              || ordinarySetDispatchSafe(receiver, keys, keyDomain.complete),
+          );
+        }
+        if (appliedWrites.has(write) || !isProvenMutableLocal(receiver)) continue;
+        const written = write.source === undefined
+          ? constantOrigin(undefined, `delete ${write.receiver.getText()}`)
+          : project(evaluate(write.source), write.projection, write.node);
+        if (write.channel === 'delete') {
+          const invalidated = !keyDomain.complete || keys.size === 0
+            ? new Set([...receiver.initialDataKeys, ...receiver.definedDataKeys])
+            : keys;
+          for (const key of invalidated) {
+            const normalized = descriptorPropertyKey(key);
+            receiver.definedDataKeys.delete(normalized);
+            receiver.accessorKeys.delete(normalized);
+            receiver.nonWritableKeys.delete(normalized);
+            receiver.invalidatedDataKeys.add(normalized);
+            receiver.shape.delete(normalized);
+          }
+        } else {
+          for (const key of keys) mergeShapeValue(receiver, key, written);
+          mergeContent(receiver, written, `value transfer through ${write.channel} write`);
+        }
+        appliedWrites.add(write);
+        invalidateFunctionSummaries();
+        continue;
       }
-      mergeContent(receiver, written, `value transfer through ${write.channel} write`);
-      appliedWrites.add(write);
-      invalidateFunctionSummaries();
-    }
-    for (const call of originStateCalls) {
+      const { call } = operation;
+      if (appliedTopLevelCalls.has(call)) continue;
       const resolution = resolveCall(call.node);
+      appliedTopLevelCalls.add(call);
       if (resolution.mutationReceivers.length > 0 || resolution.effects.has('HOST_UNKNOWN')) {
         const signature = structuralDigest([
           ...resolution.mutationReceivers.map((mutation) => originSignature(mutation.receiver)).sort(),
           resolution.effects.has('HOST_UNKNOWN') ? 'unknown-effect' : '',
         ]);
-        if (callMutationSignatures.get(call.node) !== signature) {
-          invalidateFunctionSummaries();
-        }
         callMutationSignatures.set(call.node, signature);
+        invalidateFunctionSummaries();
       }
     }
     // Individual transfer phases may temporarily materialize a value that a
@@ -3596,16 +4351,164 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     }
   }
 
+  // Facade exports and host registrations are semantic invocation roots, not
+  // merely functions whose declarations happen to live in the facade file.
+  // Preserve the resolved callable origin plus its live arguments/bound this:
+  // timers can retain a mutable local cell, re-exports can target helper
+  // modules, and React cleanups are invoked after the registering effect.
+  const externalFunctionWithThis = (target, thisOrigin) => target.kind !== 'function'
+    ? target
+    : {
+      ...target,
+      closure: new Map([...(target.closure ?? []), [THIS_ORIGIN, thisOrigin]]),
+    };
+  const invokeExternalCallable = (entry, argumentsList, depth = 0) => {
+    if (depth > 12) {
+      failDeferredInvocation(`external callable depth limit for ${entry.kind}:${entry.name ?? ''}`);
+      return origin(ORIGIN.UNKNOWN, 'external callable depth limit exceeded');
+    }
+    if (entry.kind === 'function') {
+      invalidateFunctionSummaries();
+      return evaluateFunction(entry, argumentsList, depth + 1, [], true);
+    }
+    if (entry.kind === 'bound') {
+      const results = entry.targets.map((target) => invokeExternalCallable(
+        externalFunctionWithThis(
+          target,
+          entry.boundThis ?? constantOrigin(undefined, 'undefined bound this'),
+        ),
+        [...entry.boundArguments, ...argumentsList],
+        depth + 1,
+      ));
+      if (results.length > 0) return joinOrigins(...results);
+    }
+    if (entry.kind === 'ui') return constantOrigin(undefined, `UI external callback ${entry.name}`);
+    failDeferredInvocation(`unresolved external callable ${entry.kind}:${entry.name ?? ''}`);
+    return origin(ORIGIN.UNKNOWN, `unresolved external callable ${entry.kind}:${entry.name ?? ''}`);
+  };
+  const invokeExternalOrigin = (value, argumentsList, kind, site) => {
+    if (!callableArgumentIsResolved(value)) {
+      failDeferredInvocation(`unresolved replay ${kind} at ${site.getSourceFile().fileName}:${site.pos}`);
+      return origin(ORIGIN.UNKNOWN, `unresolved ${kind} callable`);
+    }
+    const results = value.callables.map((entry) => invokeExternalCallable(entry, argumentsList));
+    const result = results.length === 0
+      ? origin(ORIGIN.UNKNOWN, `${kind} has no analyzed callable target`)
+      : joinOrigins(...results);
+    if (kind === 'react-effect' && result.callables.length > 0) {
+      recordDeferredInvocation(site, result, [], 'react-cleanup');
+    }
+    return result;
+  };
+  const facadeExportOrigin = (symbol) => {
+    const value = env.get(symbol);
+    if (value !== undefined) return value;
+    const id = functionBySymbol.get(symbol);
+    const fn = id === undefined ? undefined : functions.get(id);
+    return fn === undefined ? undefined : functionCallable(fn, closureForFunction(fn, id));
+  };
+  const invokeExportSurface = (value, seenOrigins = new WeakSet(), seenCallables = new Set(), depth = 0) => {
+    if (depth > 10 || seenOrigins.has(value)) return;
+    seenOrigins.add(value);
+    for (const entry of value.callables) {
+      const key = callableKey(entry);
+      if (seenCallables.has(key)) continue;
+      seenCallables.add(key);
+      invokeExternalCallable(entry, [], depth + 1);
+    }
+    for (const [key, child] of value.shape) {
+      if (!value.hiddenKeys.has(key)) invokeExportSurface(child, seenOrigins, seenCallables, depth + 1);
+    }
+    if (value.content !== undefined) {
+      invokeExportSurface(value.content, seenOrigins, seenCallables, depth + 1);
+    }
+  };
+  const jsxHostInput = origin(ORIGIN.AMBIENT, 'host JSX callback input');
+  const typedHostInput = origin(ORIGIN.AMBIENT, 'typed host callback input');
+  const refreshDeferredBoundarySites = () => {
+    for (const site of deferredBoundarySites) {
+      const value = evaluate(site.expression, ensureContextualOverrides(site.expression));
+      if (site.kind === 'jsx-spread') {
+        for (const [key, child] of value.shape) {
+          if (value.hiddenKeys.has(key)) continue;
+          const name = String(key);
+          if (/^on[A-Z]/u.test(name) || name === 'ref') {
+            if (name === 'ref' && !callableArgumentIsResolved(child)) continue;
+            recordDeferredInvocation(site.expression, child, [jsxHostInput], `jsx:${name}`);
+          }
+        }
+        continue;
+      }
+      if (site.kind === 'jsx:ref' && !callableArgumentIsResolved(value)) continue;
+      recordDeferredInvocation(
+        site.expression,
+        value,
+        [site.kind === 'typed-callback' ? typedHostInput : jsxHostInput],
+        site.kind,
+      );
+    }
+  };
+  const deferredRecordSignature = () => [...deferredInvocationRecords.entries()]
+    .flatMap(([siteKey, records]) => records.map((record) => `${siteKey}:${record.kind}:${record.semanticKey}:${originSignature(record.callable)}:${record.argumentsList.map((value) => originSignature(value)).join(',')}`))
+    .sort();
+  const externalStateSignature = () => structuralDigest([
+    environmentSignature(),
+    'overrides',
+    ...[...functionObservedOverrides.entries()].flatMap(([id, overrides]) => [...overrides]
+      .map(([symbol, value]) => `${id}:${stableSymbolKey(symbol)}=${originSignature(value)}`)).sort(),
+    'results',
+    ...[...functionObservedResults.entries()]
+      .map(([id, value]) => `${id}:${originSignature(value)}`).sort(),
+    'deferred',
+    ...deferredRecordSignature(),
+  ]);
+  const hasExternalRoots = facadeExportSymbols.size > 0 || deferredBoundarySites.length > 0
+    || deferredInvocationRecords.size > 0 || externallyInvokedCallbackIds.size > 0;
+  let externalFixedPointConverged = !hasExternalRoots;
+  const externalIterationBudget = Math.max(
+    32,
+    (facadeExportSymbols.size + deferredBoundarySites.length + deferredInvocationRecords.size + 1) * 8,
+  );
+  for (let iteration = 0; iteration < externalIterationBudget && hasExternalRoots; iteration += 1) {
+    const beforeIteration = externalStateSignature();
+    for (const symbol of facadeExportSymbols) {
+      const value = facadeExportOrigin(symbol);
+      if (value !== undefined) invokeExportSurface(value);
+    }
+    refreshDeferredBoundarySites();
+    const records = [...deferredInvocationRecords.values()].flatMap((items) => [...items]);
+    for (const record of records) {
+      invalidateFunctionSummaries();
+      invokeExternalOrigin(record.callable, record.argumentsList, record.kind, record.site);
+    }
+    if (beforeIteration === externalStateSignature()) {
+      externalFixedPointConverged = !unresolvedDeferredInvocation;
+      break;
+    }
+  }
+
   const callableResultOf = (value, depth = 0) => {
     if (depth > 8 || value.callables.length === 0) {
       return origin(ORIGIN.UNKNOWN, depth > 8 ? 'exported callable depth limit' : 'exported value is not directly analyzed callable');
     }
     const results = [];
     for (const entry of value.callables) {
-      if (entry.kind === 'function') results.push(evaluateFunction(entry, [], depth + 1));
+      if (entry.kind === 'function') {
+        const evaluated = evaluateFunction(entry, [], depth + 1);
+        results.push(joinOrigins(evaluated, functionObservedResults.get(entry.id)));
+      }
       else if (entry.kind === 'bound') {
         for (const target of entry.targets) {
-          if (target.kind === 'function') results.push(evaluateFunction(target, entry.boundArguments, depth + 1));
+          if (target.kind === 'function') {
+            const boundTarget = externalFunctionWithThis(
+              target,
+              entry.boundThis ?? constantOrigin(undefined, 'undefined bound this'),
+            );
+            results.push(joinOrigins(
+              evaluateFunction(boundTarget, entry.boundArguments, depth + 1),
+              functionObservedResults.get(target.id),
+            ));
+          }
           else results.push(origin(ORIGIN.UNKNOWN, `unresolved exported bound target ${target.kind}`));
         }
       } else if (entry.kind === 'local-class') {
@@ -3625,11 +4528,26 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     constants,
     env,
     originOf: (node) => {
+      const narrowAtNode = (value) => {
+        const current = unwrapExpression(node);
+        const symbol = current !== undefined && ts.isIdentifier(current)
+          ? resolvedSymbol(current, checker)
+          : undefined;
+        return symbol !== undefined && isNarrowedPresentAt(current, symbol, checker)
+          ? withoutAbsence(value, `non-nullish guard for ${current.text}`)
+          : value;
+      };
       const recorded = contextualNodeOrigins.get(node);
-      if (recorded !== undefined) return recorded;
+      if (recorded !== undefined) return narrowAtNode(recorded);
       const overrides = ensureContextualOverrides(node);
-      return contextualNodeOrigins.get(node) ?? evaluate(node, overrides);
+      return narrowAtNode(contextualNodeOrigins.get(node) ?? evaluate(node, overrides));
     },
+    ordinarySetDispatchSafe,
+    mutationKeyDomainForWrite,
+    mutationKeysForWrite,
+    writeDispatchSafe: (node, receiver, keys, keysComplete = keys?.size > 0) =>
+      contextualWriteDispatchProofs.get(node)
+      ?? ordinarySetDispatchSafe(receiver, keys, keysComplete),
     declarationOriginOf: (node) => {
       if (ts.isFunctionLike(node) && node.body !== undefined) return functionCallable(node);
       if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
@@ -3645,7 +4563,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         : origin(ORIGIN.UNKNOWN, `unresolved exported function ${functionName(node)}`);
     },
     callableResultOf,
-    fixedPointExhausted: !fixedPointConverged,
+    fixedPointExhausted: !fixedPointConverged || !externalFixedPointConverged,
     isUnknownJsx: (node) => unknownJsxSites.includes(node),
     isResolvedCallable: (value) => callableArgumentIsResolved(value),
     requiresCallableResolution: (node, value) => callableArgumentRequiresResolution(node, value, checker),
@@ -3658,6 +4576,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     staticString: (node) => staticString(node, constants, checker),
     staticKey: (node) => staticKey(node, constants, checker),
     staticKeys: (node) => staticKeys(node, constants, checker),
+    staticKeyDomain: (node) => staticKeyDomain(node, constants, checker),
     staticStrings: (node) => staticStrings(node, constants, checker),
   };
 }

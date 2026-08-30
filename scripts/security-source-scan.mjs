@@ -95,18 +95,12 @@ function jsxTag(node) {
   return node.tagName.getText(node.getSourceFile()).toLowerCase();
 }
 
-function targetKeys(write, analysis) {
-  if (write.literalKey !== undefined) return new Set([write.literalKey]);
-  if (write.keyNode !== undefined) return analysis.staticKeys(write.keyNode);
-  return new Set();
-}
-
 function mutationEffect(receiver) {
   return receiver.tags.has('UiCell') ? 'HOST_UI_STATE' : 'HOST_LOCAL_MUTATION';
 }
 
 function literalPropertyKeys(name, analysis) {
-  if (ts.isComputedPropertyName(name)) return analysis.staticKeys(name.expression);
+  if (ts.isComputedPropertyName(name)) return analysis.staticKeyDomain(name.expression).keys;
   if (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) {
     return new Set([name.text]);
   }
@@ -125,18 +119,23 @@ function getterFreeObject(node, analysis) {
     if (ts.isSpreadAssignment(property) || ts.isGetAccessor(property) || ts.isSetAccessor(property)) {
       return { safe: false, keys };
     }
-    const propertyKeys = ts.isShorthandPropertyAssignment(property)
-      ? new Set([property.name.text])
+    const propertyDomain = ts.isShorthandPropertyAssignment(property)
+      ? { complete: true, keys: new Set([property.name.text]) }
       : ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)
-        ? literalPropertyKeys(property.name, analysis)
-        : new Set();
-    if (propertyKeys.size === 0) return { safe: false, keys };
+        ? ts.isComputedPropertyName(property.name)
+          ? analysis.staticKeyDomain(property.name.expression)
+          : { complete: true, keys: literalPropertyKeys(property.name, analysis) }
+        : { complete: false, keys: new Set() };
+    if (!propertyDomain.complete || propertyDomain.keys.size === 0) {
+      return { safe: false, keys };
+    }
+    const propertyKeys = propertyDomain.keys;
     for (const key of propertyKeys) keys.add(key);
   }
   return { safe: true, keys };
 }
 
-function descriptorIsDataOnly(node) {
+function descriptorIsDataOnly(node, analysis) {
   let current = node;
   while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)
     || ts.isTypeAssertionExpression(current) || ts.isSatisfiesExpression(current)) {
@@ -145,19 +144,23 @@ function descriptorIsDataOnly(node) {
   if (!ts.isObjectLiteralExpression(current)) return false;
   return current.properties.every((property) => {
     if (ts.isSpreadAssignment(property) || ts.isGetAccessor(property) || ts.isSetAccessor(property)) return false;
-    const name = property.name?.getText().replace(/^['"]|['"]$/gu, '');
-    return name !== 'get' && name !== 'set' && name !== '__proto__';
+    if (property.name === undefined) return false;
+    const domain = ts.isComputedPropertyName(property.name)
+      ? analysis.staticKeyDomain(property.name.expression)
+      : { complete: true, keys: literalPropertyKeys(property.name, analysis) };
+    return domain.complete && domain.keys.size > 0
+      && [...domain.keys].every((name) => !['get', 'set', '__proto__'].includes(String(name)));
   });
 }
 
-function descriptorMapIsDataOnly(node) {
+function descriptorMapIsDataOnly(node, analysis) {
   let current = node;
   while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)
     || ts.isTypeAssertionExpression(current) || ts.isSatisfiesExpression(current)) {
     current = current.expression;
   }
   return ts.isObjectLiteralExpression(current) && current.properties.every((property) =>
-    ts.isPropertyAssignment(property) && descriptorIsDataOnly(property.initializer));
+    ts.isPropertyAssignment(property) && descriptorIsDataOnly(property.initializer, analysis));
 }
 
 function callName(node, analysis) {
@@ -554,8 +557,19 @@ export async function scanSourceFiles(sourceFiles, sourceRoot, configPath) {
 
   for (const write of ir.writes) {
     const receiver = analysis.originOf(write.receiver);
-    const keys = targetKeys(write, analysis);
-    if (!validateMutation(write.node, receiver, keys, `${write.channel} write to ${write.receiver.getText()}`)) continue;
+    const keyDomain = analysis.mutationKeyDomainForWrite(write);
+    const validationKeys = keyDomain.complete ? keyDomain.keys : new Set();
+    if (!validateMutation(write.node, receiver, validationKeys, `${write.channel} write to ${write.receiver.getText()}`)) continue;
+    if (write.channel !== 'delete'
+      && !analysis.writeDispatchSafe(write.node, receiver, keyDomain.keys, keyDomain.complete)) {
+      diagnostics.push(diagnostic(
+        write.node,
+        'UNPROVEN_SET_DISPATCH',
+        `${write.channel} uses ordinary [[Set]] without a proven intrinsic/null prototype or definitely-present own data property`,
+        describeOrigin(receiver),
+      ));
+      continue;
+    }
     recordEffect(write.node, mutationEffect(receiver), `${write.channel} local write`, describeOrigin(receiver));
   }
 
@@ -577,21 +591,40 @@ export async function scanSourceFiles(sourceFiles, sourceRoot, configPath) {
             validateMutation(source, mutation.receiver, sourceShape.keys, mutation.label);
           }
         }
+        if (mutation.dispatchSafe === false) {
+          diagnostics.push(diagnostic(
+            call.node,
+            'UNPROVEN_SET_DISPATCH',
+            'Object.assign pre-dispatch proof found neither an intrinsic/null prototype nor a definitely-present own data property',
+            describeOrigin(mutation.receiver),
+          ));
+        }
         if (args.length < 2) validateMutation(call.node, mutation.receiver, undefined, mutation.label);
         continue;
       }
       if (api === 'Object.defineProperties') {
         const descriptorMap = args[1] === undefined ? { safe: false, keys: new Set() } : getterFreeObject(args[1], analysis);
         validateMutation(call.node, mutation.receiver, descriptorMap.safe ? descriptorMap.keys : new Set(), mutation.label);
-        if (args[1] === undefined || !descriptorMapIsDataOnly(args[1])) {
+        if (args[1] === undefined || !descriptorMapIsDataOnly(args[1], analysis)) {
           diagnostics.push(diagnostic(call.node, 'ACCESSOR_DESCRIPTOR', 'only direct data-only descriptor maps are supported; accessors and unresolved descriptor maps are forbidden'));
         }
         continue;
       }
       if (['Object.defineProperty', 'Reflect.defineProperty', 'Reflect.set', 'Reflect.deleteProperty'].includes(api ?? '')) {
-        validateMutation(call.node, mutation.receiver, args[1] === undefined ? new Set() : analysis.staticKeys(args[1]), mutation.label);
+        const keys = mutation.keysComplete === false
+          ? new Set()
+          : mutation.keys ?? (args[1] === undefined ? new Set() : analysis.staticKeys(args[1]));
+        if (api === 'Reflect.set' && mutation.dispatchSafe === false) {
+          diagnostics.push(diagnostic(
+            call.node,
+            'UNPROVEN_REFLECT_SET_TARGET',
+            'Reflect.set dispatch target must be a proven fresh accessor-free ordinary data object',
+            mutation.target === undefined ? undefined : describeOrigin(mutation.target),
+          ));
+        }
+        validateMutation(call.node, mutation.receiver, keys, mutation.label);
         if (api === 'Object.defineProperty' || api === 'Reflect.defineProperty') {
-          if (args[2] === undefined || !descriptorIsDataOnly(args[2])) {
+          if (args[2] === undefined || !descriptorIsDataOnly(args[2], analysis)) {
             diagnostics.push(diagnostic(call.node, 'ACCESSOR_DESCRIPTOR', 'only direct data-only descriptors are supported; accessors and unresolved descriptors are forbidden'));
           }
         }
