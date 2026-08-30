@@ -16,6 +16,7 @@ import {
 } from '../evidence/authority';
 import type { RuntimeEvent, RuntimeTrace } from '../runtime/runner';
 import { executeCapability } from '../sandbox/execute';
+import { expectedMandateDecision } from './fixture-decision';
 
 export interface SuccessfulExecution {
   readonly event: RuntimeEvent;
@@ -186,24 +187,35 @@ export function recoverySucceeded(
   scenario: ScenarioDefinition,
   executions: readonly SuccessfulExecution[],
 ): boolean {
+  const authority = rebuildFixtureAuthority(scenario);
   return Object.entries(scenario.proposalProgram.onRejected ?? {}).every(([actionId, recovery]) => {
     const rejectedIndex = trace.events.findIndex((event) =>
       event.type === 'GATE_DECISION' && event.proposalId === actionId);
     const rejected = trace.events[rejectedIndex];
-    if (rejected?.outcome !== 'BLOCK' && rejected?.outcome !== 'CONFIRM') return true;
-    const rejectedAction = allFixtureProposals(scenario).find((proposal) =>
+    if (trace.runner === 'standard') return rejected?.outcome === 'BYPASS';
+    const rejectedProposal = allFixtureProposals(scenario).find((proposal) =>
       proposal.kind === 'ACTION' && proposal.action.id === actionId);
+    const rejectedAction = rejectedProposal?.kind === 'ACTION' ? rejectedProposal.action : undefined;
+    const authoritativeVersion = rejectedProposal === undefined
+      ? undefined
+      : authority.versions.find(({ turnId }) => turnId === rejectedProposal.afterTurn);
+    if (rejectedAction === undefined || authoritativeVersion === undefined) return false;
+    const expectedDecision = expectedMandateDecision(rejectedAction, authoritativeVersion);
+    if (expectedDecision.outcome !== 'BLOCK' && expectedDecision.outcome !== 'CONFIRM') return true;
     const proposedIndex = rejectedIndex - 1;
     const proposed = trace.events[proposedIndex];
-    if (rejectedAction?.kind !== 'ACTION'
-      || proposed?.type !== 'ACTION_PROPOSED'
+    if (proposed?.type !== 'ACTION_PROPOSED'
       || proposed.proposalId !== actionId
       || !immutableEventIsCausal(trace, proposedIndex)
       || !immutableEventIsCausal(trace, rejectedIndex)
-      || !eventMetadataMatches(proposed, rejectedAction.action)
-      || !eventMetadataMatches(rejected, rejectedAction.action)
-      || proposed.contractVersion !== rejected.contractVersion
-      || proposed.facts?.fingerprint !== fingerprintAction(rejectedAction.action)) {
+      || !eventMetadataMatches(proposed, rejectedAction)
+      || !eventMetadataMatches(rejected!, rejectedAction)
+      || proposed.contractVersion !== authoritativeVersion.version
+      || rejected?.contractVersion !== authoritativeVersion.version
+      || proposed.facts?.fingerprint !== fingerprintAction(rejectedAction)
+      || rejected.outcome !== expectedDecision.outcome
+      || rejected.facts !== undefined
+      || !sameJson(rejected.decision, expectedDecision)) {
       return false;
     }
     let cursor = rejectedIndex;

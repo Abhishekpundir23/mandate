@@ -20,6 +20,7 @@ async function runGate(source: string) {
   await cp('scripts/security-built-policy.mjs', join(root, 'scripts', 'security-built-policy.mjs'));
   await cp('scripts/security-source-policy.mjs', join(root, 'scripts', 'security-source-policy.mjs'));
   await cp('scripts/security-source-scan.mjs', join(root, 'scripts', 'security-source-scan.mjs'));
+  await cp('scripts/security-type-analysis.mjs', join(root, 'scripts', 'security-type-analysis.mjs'));
   const policyPath = resolve('scripts/security-policy.mjs');
   try {
     await readFile(policyPath);
@@ -112,6 +113,48 @@ describe('structural security gate', () => {
       Object.getOwnPropertyDescriptor(globalThis, 'fetch')?.value?.('/escape');
     `],
     ['Proxy metaprogramming', `new Proxy({}, {})`],
+    ['dynamic function constructor callee', `
+      const key = 'constructor'.slice(0);
+      const callable = (() => {}) as unknown as Record<string, (...args: string[]) => () => unknown>;
+      callable[key]!('return 1')();
+    `],
+    ['destructured Object reflection aliases', `
+      const root = { label: 'local' };
+      const { getPrototypeOf: prototypeOf, getOwnPropertyDescriptor: describe } = Object;
+      describe(prototypeOf(root), 'inner' + 'HTML')?.set?.call({}, '<img>');
+    `],
+    ['assigned dynamic callable access', `
+      const key = 'handler'.slice(0);
+      const table: Record<string, (() => void) | undefined> = {};
+      const member = table[key];
+      member?.();
+    `],
+    ['returned dynamic callable access', `
+      export function leak(table: Record<string, () => void>, key: string) { return table[key]; }
+    `],
+    ['optional dynamic callable access', `
+      const key = 'handler'.slice(0);
+      const table: Record<string, (() => void) | undefined> = {};
+      table?.[key]?.();
+    `],
+    ['dynamic unknown access', `
+      export function leak(table: Record<string, unknown>, key: string) { return table[key]; }
+    `],
+    ['unresolved Object element access', `
+      declare const key: string;
+      export const member = Object[key];
+    `],
+    ['nested reflection binding with default', `
+      const source = { nested: Object };
+      const { nested: { getOwnPropertyDescriptor: describe = () => undefined } = Object } = source;
+      void describe;
+    `],
+    ['computed constructor binding', `
+      const key = 'constructor' as const;
+      const source = { constructor: () => undefined };
+      const { [key]: build } = source;
+      void build;
+    `],
   ])('rejects %s', async (_, source) => {
     const result = await runGate(source);
 
@@ -149,6 +192,27 @@ describe('structural security gate', () => {
       export { constructor };
     `],
   ])('allows safe locally shadowed %s', async (_, source) => {
+    const result = await runGate(source);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['ordinary dynamic data indexing', `
+      export function read(row: Record<string, string>, key: string) { return row[key]; }
+    `],
+    ['ordinary nested destructuring', `
+      const source: { label: string; nested?: { value?: number } } = { label: 'safe' };
+      const { label, nested: { value = 1 } = {} } = source;
+      export { label, value };
+    `],
+    ['local Object shadow with data indexing', `
+      export function read(Object: Record<string, string>, key: string) { return Object[key]; }
+    `],
+    ['local Reflect shadow with ordinary destructuring', `
+      export function read(Reflect: { label: string }) { const { label } = Reflect; return label; }
+    `],
+  ])('allows %s', async (_, source) => {
     const result = await runGate(source);
 
     expect(result.status, result.output).toBe(0);

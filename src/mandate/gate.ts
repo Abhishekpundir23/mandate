@@ -245,10 +245,10 @@ function validateCapability(
     if (declaredEffects === undefined) {
       return ['Capability validation failed closed'];
     }
-    if (declaredEffects.length !== 1) {
+    const [declaredEffect, ...additionalEffects] = declaredEffects;
+    if (declaredEffect === undefined || additionalEffects.length !== 0) {
       return ['Composite operations are not allowed'];
     }
-    const declaredEffect = declaredEffects[0];
     if (typeof declaredEffect !== 'string' || !effects.has(declaredEffect as Effect)) {
       return ['Capability validation failed closed'];
     }

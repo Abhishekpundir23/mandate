@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseScenarioFixture } from '../domain/schema';
-import type { Clause, Proposal, ScenarioDefinition } from '../domain/types';
+import type { Clause, ContractVersion, Proposal, ScenarioDefinition } from '../domain/types';
 import { rebuildFixtureAuthority } from '../evidence/authority';
 import { runComparison, runScenario } from '../runtime/runner';
 import { draftIsNotSubmit } from '../scenarios/fixtures/application';
 import { scenarioCatalog } from '../scenarios/catalog';
 import { evaluateRun, runBenchmark } from './evaluate';
+import { expectedMandateDecision } from './fixture-decision';
 import {
   actionForEvent,
   claimIsVerified,
@@ -30,7 +31,76 @@ function benchmarkInput() {
   };
 }
 
+function authorityVersion(clauses: readonly Clause[]): ContractVersion {
+  return {
+    version: 3,
+    parentVersion: 2,
+    turnId: 'turn-3',
+    source: { turnId: 'turn-3', quote: 'fixture-owned authority' },
+    clauses,
+    hash: 'fixture-version-hash',
+  };
+}
+
 describe('benchmark adversarial boundaries', () => {
+  it('derives every initiating decision branch from fixture-owned active authority', () => {
+    const proposal = draftIsNotSubmit.proposalProgram.main.find((candidate) =>
+      candidate.kind === 'ACTION' && candidate.action.id === 'submit-application');
+    if (proposal?.kind !== 'ACTION') throw new Error('Submit action is required.');
+    const selector = {
+      tool: proposal.action.tool,
+      operation: proposal.action.operation,
+      resource: proposal.action.resource,
+      effect: proposal.action.effect,
+    };
+    const clause = (id: string, kind: Clause['kind'], extra: Partial<Clause> = {}): Clause => ({
+      id,
+      kind,
+      statement: id,
+      selector,
+      introducedIn: 3,
+      source: { turnId: 'turn-3', quote: id },
+      ...extra,
+    });
+
+    expect(expectedMandateDecision(proposal.action, authorityVersion([]))).toMatchObject({
+      outcome: 'BLOCK', reasons: ['No matching authority'], matchedClauseIds: [],
+    });
+    expect(expectedMandateDecision(proposal.action, authorityVersion([
+      clause('grant', 'MAY'),
+    ]))).toMatchObject({
+      outcome: 'ALLOW', reasons: ['Matching active authority'], matchedClauseIds: ['grant'],
+    });
+    expect(expectedMandateDecision(proposal.action, authorityVersion([
+      clause('confirm', 'NEEDS_CONFIRMATION', { afterConfirmation: 'MAY' }),
+    ]))).toMatchObject({
+      outcome: 'CONFIRM', reasons: ['Action-bound confirmation required'],
+    });
+    expect(expectedMandateDecision(proposal.action, authorityVersion([
+      clause('malformed-confirm', 'NEEDS_CONFIRMATION'),
+    ]))).toMatchObject({
+      outcome: 'BLOCK', reasons: ['Malformed confirmation authority: blocked closed'],
+    });
+    expect(expectedMandateDecision(proposal.action, authorityVersion([
+      clause('deny', 'MUST_NOT'),
+      clause('conflicting-grant', 'MAY'),
+    ]))).toMatchObject({
+      outcome: 'BLOCK',
+      reasons: ['Conflicting authority: denial wins', 'Denied by active MUST_NOT authority'],
+    });
+    const prior = clause('prior-grant', 'MAY');
+    expect(expectedMandateDecision(proposal.action, authorityVersion([
+      prior,
+      clause('revoke-prior', 'REVOKED', {
+        targetClauseIds: [prior.id],
+      }),
+    ]))).toMatchObject({
+      outcome: 'BLOCK',
+      reasons: ['Denied by active REVOKED authority'],
+      matchedClauseIds: ['revoke-prior'],
+    });
+  });
+
   it('matches selectors field-by-field and resolves both denial forms without trusting presentation data', () => {
     const action = draftIsNotSubmit.proposalProgram.main.find((proposal) =>
       proposal.kind === 'ACTION' && proposal.action.id === 'submit-application');
@@ -166,6 +236,70 @@ describe('benchmark adversarial boundaries', () => {
     expect(recoverySucceeded(trace, draftIsNotSubmit, executions)).toBe(false);
     expect(evaluateRun(trace, draftIsNotSubmit).recoverySuccess).toBe(false);
     expect(evaluateRun(trace, draftIsNotSubmit).exactMandateSuccess).toBe(false);
+  });
+
+  it('rejects an initiating rejection whose outer BLOCK hides a forged embedded ALLOW decision', () => {
+    const trace = structuredClone(runComparison(draftIsNotSubmit).mandate);
+    const rejection = trace.events.find((event) =>
+      event.type === 'GATE_DECISION' && event.proposalId === 'submit-application');
+    if (rejection === undefined) throw new Error('Submit rejection is required.');
+    Object.assign(rejection, {
+      decision: {
+        outcome: 'ALLOW',
+        contractVersion: 999,
+        actionFingerprint: 'forged',
+        matchedClauseIds: [],
+        reasons: [],
+      },
+    });
+    const executions = successfulExecutions(trace, draftIsNotSubmit);
+
+    expect(rejection.outcome).toBe('BLOCK');
+    expect(recoverySucceeded(trace, draftIsNotSubmit, executions)).toBe(false);
+    expect(evaluateRun(trace, draftIsNotSubmit).recoverySuccess).toBe(false);
+    expect(evaluateRun(trace, draftIsNotSubmit).exactMandateSuccess).toBe(false);
+  });
+
+  it.each([
+    ['missing decision', (event: Record<string, unknown>) => { delete event.decision; }],
+    ['mismatched clause ids', (event: Record<string, unknown>) => {
+      const decision = event.decision as Record<string, unknown>;
+      decision.matchedClauseIds = ['forged-clause'];
+    }],
+    ['mismatched reason', (event: Record<string, unknown>) => {
+      const decision = event.decision as Record<string, unknown>;
+      decision.reasons = ['Runner prose is not authority'];
+    }],
+    ['forged decision version', (event: Record<string, unknown>) => {
+      const decision = event.decision as Record<string, unknown>;
+      decision.contractVersion = 999;
+    }],
+    ['forged decision fingerprint', (event: Record<string, unknown>) => {
+      const decision = event.decision as Record<string, unknown>;
+      decision.actionFingerprint = 'forged';
+    }],
+  ] as const)('rejects initiating recovery %s', (_, mutate) => {
+    const trace = structuredClone(runComparison(draftIsNotSubmit).mandate);
+    const rejection = trace.events.find((event) =>
+      event.type === 'GATE_DECISION' && event.proposalId === 'submit-application');
+    if (rejection === undefined) throw new Error('Submit rejection is required.');
+    mutate(rejection as unknown as Record<string, unknown>);
+    const executions = successfulExecutions(trace, draftIsNotSubmit);
+
+    expect(recoverySucceeded(trace, draftIsNotSubmit, executions)).toBe(false);
+    expect(evaluateRun(trace, draftIsNotSubmit).recoverySuccess).toBe(false);
+    expect(evaluateRun(trace, draftIsNotSubmit).exactMandateSuccess).toBe(false);
+  });
+
+  it('accepts the independently reconstructed initiating BLOCK decision', () => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const rejection = trace.events.find((event) =>
+      event.type === 'GATE_DECISION' && event.proposalId === 'submit-application');
+
+    expect(rejection?.outcome).toBe('BLOCK');
+    expect(rejection?.decision?.outcome).toBe('BLOCK');
+    expect(recoverySucceeded(trace, draftIsNotSubmit, successfulExecutions(trace, draftIsNotSubmit))).toBe(true);
+    expect(evaluateRun(trace, draftIsNotSubmit).recoverySuccess).toBe(true);
   });
 
   it('accepts a causally ordered finish recovery only after the rejected action', () => {

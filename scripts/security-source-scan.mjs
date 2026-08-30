@@ -13,37 +13,29 @@ import {
   safeAmbientPaths,
   safeReflectionSites,
 } from './security-source-policy.mjs';
-
-function resolvedSymbol(node, checker) {
-  const symbol = checker.getSymbolAtLocation(node);
-  return symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0
-    ? checker.getAliasedSymbol(symbol)
-    : symbol;
-}
-
-function isActualGlobal(node, checker) {
-  const symbol = resolvedSymbol(node, checker);
-  if (symbol === undefined) return true;
-  const declarations = symbol.getDeclarations() ?? [];
-  return !declarations.some((declaration) => !declaration.getSourceFile().isDeclarationFile);
-}
-
-function staticString(node, constants, checker) {
-  if (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
-  if (ts.isParenthesizedExpression(node)) return staticString(node.expression, constants, checker);
-  if (ts.isIdentifier(node)) return constants.get(resolvedSymbol(node, checker));
-  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = staticString(node.left, constants, checker);
-    const right = staticString(node.right, constants, checker);
-    return left === undefined || right === undefined ? undefined : left + right;
-  }
-  return undefined;
-}
+import {
+  dynamicElementAccessIsUnsafe,
+  isActualGlobal,
+  resolvedSymbol,
+  staticString,
+} from './security-type-analysis.mjs';
 
 function propertyName(node, constants, checker) {
   if (ts.isPropertyAccessExpression(node)) return node.name.text;
   return ts.isElementAccessExpression(node) && node.argumentExpression !== undefined
     ? staticString(node.argumentExpression, constants, checker)
+    : undefined;
+}
+
+function bindingPropertyName(node, constants, checker) {
+  if (!ts.isObjectBindingPattern(node.parent)) return undefined;
+  const property = node.propertyName;
+  if (property === undefined) return ts.isIdentifier(node.name) ? node.name.text : undefined;
+  if (ts.isIdentifier(property) || ts.isStringLiteralLike(property) || ts.isNumericLiteral(property)) {
+    return property.text;
+  }
+  return ts.isComputedPropertyName(property)
+    ? staticString(property.expression, constants, checker)
     : undefined;
 }
 
@@ -163,11 +155,21 @@ async function scanSource(file, tree, checker, sourceRoot) {
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const path = ambientPath(node, constants, checker);
       const name = propertyName(node, constants, checker);
+      if (dynamicElementAccessIsUnsafe(node, name, checker)) violations.push('forbidden dynamic capability access');
       if (name === undefined && ambientPath(node.expression, constants, checker) !== undefined) violations.push('unknown computed ambient property');
       if (name !== undefined && forbiddenProperties.has(name)
         && (receiverIndependentSinks.has(name) || path !== undefined)
         && !isSafeReflection(node, name, file, checker)) violations.push(`forbidden property ${name}`);
       if (!isNestedAccess(node) && path !== undefined && !safeAmbientPaths.has(path.join('.'))) violations.push(`ambient authority ${path.join('.')}`);
+    }
+    if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+      const name = bindingPropertyName(node, constants, checker);
+      if (name === undefined && ts.isComputedPropertyName(node.propertyName)) {
+        violations.push('unknown computed binding property');
+      } else if (name !== undefined
+        && (receiverIndependentSinks.has(name) || ['Reflect', 'Proxy'].includes(name))) {
+        violations.push(`forbidden binding property ${name}`);
+      }
     }
     if (ts.isVariableDeclaration(node) && node.initializer !== undefined
       && ambientPath(node.initializer, constants, checker) !== undefined) violations.push('ambient authority alias/destructure');

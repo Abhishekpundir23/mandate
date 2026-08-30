@@ -1,11 +1,9 @@
 import {
   canonicalize,
-  fingerprintAction,
   normalizeJsonValue,
 } from '../domain/canonical';
 import { evaluatePredicate } from '../domain/predicates';
 import type {
-  ActionProposal,
   ContractVersion,
   JsonPrimitive,
   JsonValue,
@@ -13,10 +11,9 @@ import type {
   ScenarioDefinition,
 } from '../domain/types';
 import { rebuildFixtureAuthority } from '../evidence/authority';
-import { activeClauses } from '../mandate/ledger';
 import type { RuntimeEvent, RuntimeTrace } from '../runtime/runner';
 import { executeCapability } from '../sandbox/execute';
-import { denialMatches, selectorMatches } from './fixture-evaluator';
+import { expectedMandateDecision } from './fixture-decision';
 
 type EventPayload = Omit<RuntimeEvent, 'id' | 'logicalStep' | 'world'>;
 
@@ -40,50 +37,6 @@ function eventPayload(event: RuntimeEvent): EventPayload {
   delete payload.logicalStep;
   delete payload.world;
   return payload as EventPayload;
-}
-
-function mandateDecision(action: ActionProposal, version: ContractVersion) {
-  const fingerprint = fingerprintAction(action);
-  const matching = activeClauses(version).filter((clause) =>
-    clause.kind === 'REVOKED'
-      ? denialMatches(action, clause, version)
-      : selectorMatches(action, clause.selector));
-  const denials = matching.filter(({ kind }) => kind === 'MUST_NOT' || kind === 'REVOKED');
-  const grants = matching.filter(({ kind }) => kind === 'MUST' || kind === 'MAY');
-  const confirmations = matching.filter(({ kind }) => kind === 'NEEDS_CONFIRMATION');
-  let outcome: 'ALLOW' | 'BLOCK' | 'CONFIRM';
-  let reasons: readonly string[];
-  if (denials.length > 0) {
-    outcome = 'BLOCK';
-    reasons = [
-      ...(denials.some(({ kind }) => kind === 'MUST_NOT') ? ['Denied by active MUST_NOT authority'] : []),
-      ...(denials.some(({ kind }) => kind === 'REVOKED') ? ['Denied by active REVOKED authority'] : []),
-      ...(grants.length > 0 ? ['Conflicting authority: denial wins'] : []),
-    ];
-  } else if (confirmations.some(({ afterConfirmation }) =>
-    afterConfirmation !== 'MAY' && afterConfirmation !== 'MUST')) {
-    outcome = 'BLOCK';
-    reasons = ['Malformed confirmation authority: blocked closed'];
-  } else if (confirmations.length > 0) {
-    outcome = 'CONFIRM';
-    reasons = ['Action-bound confirmation required'];
-  } else if (grants.length > 0) {
-    outcome = 'ALLOW';
-    reasons = ['Matching active authority'];
-  } else {
-    outcome = 'BLOCK';
-    reasons = ['No matching authority'];
-  }
-  return {
-    outcome,
-    decision: {
-      outcome,
-      contractVersion: version.version,
-      actionFingerprint: fingerprint,
-      matchedClauseIds: [...new Set(matching.map(({ id }) => id))].sort(),
-      reasons: [...new Set(reasons)].sort(),
-    },
-  } as const;
 }
 
 function claimEvidence(
@@ -115,7 +68,8 @@ export function lifecycleMatches(trace: RuntimeTrace, scenario: ScenarioDefiniti
   const processProposal = (proposal: Proposal, version: ContractVersion): void => {
     if (proposal.kind === 'ACTION') {
       const action = proposal.action;
-      const fingerprint = fingerprintAction(action);
+      const mandate = expectedMandateDecision(action, version);
+      const fingerprint = mandate.actionFingerprint;
       const metadata = {
         proposalId: action.id,
         tool: action.tool,
@@ -125,11 +79,10 @@ export function lifecycleMatches(trace: RuntimeTrace, scenario: ScenarioDefiniti
         contractVersion: version.version,
       };
       append({ type: 'ACTION_PROPOSED', ...metadata, facts: { fingerprint } });
-      const mandate = mandateDecision(action, version);
       const outcome = trace.runner === 'standard' ? 'BYPASS' : mandate.outcome;
       append(trace.runner === 'standard'
         ? { type: 'GATE_DECISION', ...metadata, outcome, facts: { fingerprint } }
-        : { type: 'GATE_DECISION', ...metadata, outcome, decision: mandate.decision });
+        : { type: 'GATE_DECISION', ...metadata, outcome, decision: mandate });
       if (outcome === 'ALLOW' || outcome === 'BYPASS') {
         const logicalStep = expected.length + 1;
         const execution = executeCapability(world, action, {

@@ -63,13 +63,9 @@ function normalizeUnknown(value: unknown, ancestors: WeakSet<object>, path: stri
     }
 
     return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, normalizeUnknown(
-          (value as Readonly<Record<string, unknown>>)[key],
-          ancestors,
-          `${path}.${key}`,
-        )]),
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, normalizeUnknown(item, ancestors, `${path}.${key}`)]),
     );
   } finally {
     ancestors.delete(value);
