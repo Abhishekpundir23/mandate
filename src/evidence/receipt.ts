@@ -12,7 +12,7 @@ import type {
   ScenarioDefinition,
   ToolObservation,
 } from '../domain/types';
-import { activeClauses } from '../mandate/ledger';
+import { activeClauses, isTombstoneRetirement } from '../mandate/ledger';
 import type { RuntimeEvent } from '../runtime/runner';
 import {
   emittedAuthorityMatchesFixture,
@@ -78,6 +78,9 @@ function denialMatches(
     return selectorMatches(action, denial.selector);
   }
   if (denial.kind !== 'REVOKED') {
+    return false;
+  }
+  if (isTombstoneRetirement(denial, version)) {
     return false;
   }
   if (selectorMatches(action, denial.revokedSelector)) {

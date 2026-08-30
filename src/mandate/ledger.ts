@@ -126,11 +126,25 @@ export function activeClauses(version: ContractVersion): readonly Clause[] {
   const revokedIds = new Set(tombstones.flatMap((clause) => clause.targetClauseIds ?? []));
 
   const active = version.clauses.filter((clause) =>
-    clause.kind === 'REVOKED'
-    || (!revokedIds.has(clause.id)
-      && !tombstones.some((tombstone) =>
-        tombstone.revokedSelector !== undefined
+    !revokedIds.has(clause.id)
+    && (clause.kind === 'REVOKED'
+      || !tombstones.some((tombstone) =>
+        tombstone.introducedIn >= clause.introducedIn
+        && tombstone.revokedSelector !== undefined
         && selectorMatches(clause.selector, tombstone.revokedSelector))));
 
   return deepFreeze(structuredClone(active));
+}
+
+export function isTombstoneRetirement(
+  tombstone: Clause,
+  version: ContractVersion,
+): boolean {
+  if (tombstone.kind !== 'REVOKED' || tombstone.targetClauseIds?.length === 0) {
+    return false;
+  }
+  const targets = tombstone.targetClauseIds ?? [];
+  const clausesById = new Map(version.clauses.map((clause) => [clause.id, clause]));
+  return targets.length > 0
+    && targets.every((targetId) => clausesById.get(targetId)?.kind === 'REVOKED');
 }

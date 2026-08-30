@@ -14,6 +14,7 @@ import {
   fixtureVersionForAction,
   rebuildFixtureAuthority,
 } from '../evidence/authority';
+import { isTombstoneRetirement } from '../mandate/ledger';
 import type { RuntimeEvent, RuntimeTrace } from '../runtime/runner';
 import { executeCapability } from '../sandbox/execute';
 import { expectedMandateDecision } from './fixture-decision';
@@ -67,6 +68,7 @@ export function denialMatches(
 ): boolean {
   if (clause.kind === 'MUST_NOT') return selectorMatches(action, clause.selector);
   if (clause.kind !== 'REVOKED') return false;
+  if (isTombstoneRetirement(clause, version)) return false;
   if (selectorMatches(action, clause.revokedSelector)) return true;
   const targets = new Set(clause.targetClauseIds ?? []);
   return version.clauses.some((candidate) =>

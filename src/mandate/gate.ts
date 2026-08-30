@@ -15,7 +15,7 @@ import type {
   GateRequest,
 } from '../domain/types';
 import { consumeConfirmation } from './confirmation';
-import { activeClauses } from './ledger';
+import { activeClauses, isTombstoneRetirement } from './ledger';
 
 const effects = new Set<Effect>([
   'READ',
@@ -110,6 +110,9 @@ function revocationMatches(
   tombstone: Clause,
   version: ContractVersion,
 ): boolean {
+  if (isTombstoneRetirement(tombstone, version)) {
+    return false;
+  }
   if (selectorMatches(proposal, tombstone.revokedSelector)) {
     return true;
   }

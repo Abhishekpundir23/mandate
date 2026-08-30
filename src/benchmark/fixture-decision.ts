@@ -6,7 +6,7 @@ import type {
   ContractVersion,
   GateDecision,
 } from '../domain/types';
-import { activeClauses } from '../mandate/ledger';
+import { activeClauses, isTombstoneRetirement } from '../mandate/ledger';
 
 function selectorMatches(action: ActionProposal, selector: ActionSelector | undefined): boolean {
   return selector !== undefined
@@ -18,6 +18,7 @@ function selectorMatches(action: ActionProposal, selector: ActionSelector | unde
 
 function denialMatches(action: ActionProposal, clause: Clause, version: ContractVersion): boolean {
   if (clause.kind === 'MUST_NOT') return selectorMatches(action, clause.selector);
+  if (isTombstoneRetirement(clause, version)) return false;
   if (selectorMatches(action, clause.revokedSelector)) return true;
   const targets = new Set(clause.targetClauseIds ?? []);
   return version.clauses.some((candidate) =>
