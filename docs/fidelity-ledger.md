@@ -1,0 +1,23 @@
+# Fidelity ledger
+
+Compared in one pass against `design/concepts/live-desktop.png`, `live-mobile.png`, and `benchmark-desktop.png` using the final non-stitched captures. Measurements below are from the exact 1586×992 desktop and 853×1844 mobile viewports. Fidelity is subordinate to trace truth and accessibility: fabricated timestamps, authority rows, friendly aliases, or evidence are never added merely to match artwork.
+
+| Checkpoint | Final evidence | Disposition |
+| --- | --- | --- |
+| 1. Header | Desktop header retains wordmark, two destinations, selector, and 212px-minimum Run allocation; mobile uses a two-row 853px layout and hides desktop destinations. | Matched visual hierarchy. Desktop control allocation is wider than the concept's approximate 211px action area because selector and CTA remain robust at intermediate widths. |
+| 2. Column proportions | Desktop Live is a three-rail composition with the comparison band dominant; Benchmark preserves table/inspector separation. Mobile stacks history, comparison, then authority. | Matched main-band geometry; responsive stack is intentional. |
+| 3. Typography | Local Roboto Condensed wordmark and IBM Plex Mono operational text; no font CDN. Status text is at least 16px. | Matched families. Status text is larger than the artwork for legibility. |
+| 4. Cobalt treatment | `#1648e6` identifies selected destination, scenario focus/selection, active trace tab, and selected benchmark row. | Matched. |
+| 5. Selected v3 anatomy | v3 is selected and exposes the actual active denial and source turn. The prior v2 inspection permission remains available through v2 history rather than being restated as a v3 addition. | Intentional truth-first deviation from the artwork's decorative diff anatomy. |
+| 6. Event spine/card anatomy | Paired ordered events, connecting spine, status icons, capabilities, and outcomes are preserved. Mobile removes secondary tool arguments while keeping event causality and exactly one visible lane. | Matched structure with responsive reduction. |
+| 7. Standard red outcome | Standard ends `APPLICATION SUBMITTED` in a red outcome treatment. | Matched. Dark red semantic text replaces raw bright red to meet contrast. |
+| 8. Mandate block | The same submit proposal ends `BLOCKED by mandate v3`, with the matched denial available in the trace. | Matched. Dark red semantic text replaces raw bright red to meet contrast. |
+| 9. Green preservation | Draft saved, next step inspected, boundary preserved, and exact receipt use green outcome styling. | Matched. Dark green semantic text replaces raw bright green to meet contrast. |
+| 10. Authority-table rules | Authority rows use ruled key/value structure and expose current version, active constraints, matched denial, and sandbox state. | Matched composition; values are derived from trace/receipt rather than decorative copy. |
+| 11. Receipt composition | Receipt includes exact status, required/evidence state, unauthorized actions, and evidence IDs; footer remains visible in both exact captures. | Matched composition with raw provenance. No fabricated timestamps. |
+| 12. Mobile reductions | At 853×1844 the desktop nav, previous history versions, secondary event metadata, and redundant receipt facts are removed; stacked authority, receipt, and footer fit within the viewport. Short 793×496 zoom reflow restores destination nav so controls stay reachable. | Intentional responsive/accessibility behavior; fixes the earlier tablet-layout overflow. |
+| 13. Benchmark metric band | Three computed groups compare exact success, unauthorized effects, and false claims above the table. | Matched. Values are imported from the evaluator, not image copy. |
+| 14. Table/inspector split | All 15 compact rows fit the 1586×992 evidence viewport with a selected scenario and full evidence inspector. Horizontal table scrolling remains available at narrow widths. | Matched information density. Raw fixture failure identifiers may clip rather than being replaced with friendlier fabricated labels. |
+| 15. Footer | Live reports local-only boundary; Benchmark reports result range and seed/catalog/proposal/trace provenance. Desktop stays on one compact line; mobile hides checksum detail while preserving the local-only statement. | Matched role. Raw checksums are intentionally shown instead of decorative provenance. |
+
+One notable concept-only row is deliberately absent: the artwork's fabricated `REVOKED — Publish or upload` entry is not present in the canonical flagship authority history. The actual v3 `MUST_NOT` submit boundary is rendered. This avoids claiming a compiler output or authority mutation that did not occur.

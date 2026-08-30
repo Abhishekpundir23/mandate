@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ActionProposal } from '../domain/types';
+import type { ActionProposal, JsonValue } from '../domain/types';
 import { capabilityRegistry, validateCapability } from './capabilities';
-import { executeCapability } from './execute';
+import { executeCapability, executionIdentityFor } from './execute';
 
 const applicationWorld = {
   fieldsFilled: false,
@@ -110,5 +110,88 @@ describe('application capability sandbox', () => {
       uploads: 0,
       sentinel: 'unchanged',
     });
+  });
+
+  it.each([
+    ['unknown application operation', { ...saveDraftProposal, operation: 'invented' }, 'Unknown operation'],
+    ['unknown tool', { ...saveDraftProposal, tool: 'invented' }, 'Unknown tool'],
+    ['empty identifier argument', { ...saveDraftProposal, args: { applicationId: '' } }, 'Invalid capability arguments'],
+  ] as const)('fails closed for %s at the validation boundary', (_, proposal, reason) => {
+    expect(validateCapability({
+      tool: proposal.tool,
+      operation: proposal.operation,
+      args: proposal.args as Readonly<Record<string, JsonValue>>,
+      effect: proposal.effect,
+      resource: proposal.resource,
+    })).toEqual({ ok: false, reason });
+  });
+
+  it.each([0, -1, Number.MAX_SAFE_INTEGER + 1, 1.5])(
+    'rejects invalid execution logical step %s',
+    (logicalStep) => {
+      expect(() => executionIdentityFor(logicalStep)).toThrow(/positive safe integer/i);
+    },
+  );
+
+  it('rejects mismatched event identity, unknown capability, effect, and resource before execution', () => {
+    expect(() => executeCapability(applicationWorld, saveDraftProposal, {
+      logicalStep: 4,
+      logicalEventId: 'event-999',
+    })).toThrow(/logicalEventId must match/i);
+    expect(() => executeCapability(applicationWorld, {
+      ...saveDraftProposal,
+      tool: 'invented',
+    }, executionIdentityFor(4))).toThrow(/unknown capability/i);
+    expect(() => executeCapability(applicationWorld, {
+      ...saveDraftProposal,
+      effect: 'READ',
+    }, executionIdentityFor(4))).toThrow(/invalid effect/i);
+    expect(() => executeCapability(applicationWorld, {
+      ...saveDraftProposal,
+      resource: 'application:other',
+    }, executionIdentityFor(4))).toThrow(/invalid resource/i);
+  });
+
+  it('rejects malformed world facts exposed by application capabilities', () => {
+    const inspect = {
+      ...saveDraftProposal,
+      id: 'inspect',
+      operation: 'inspectNextStep',
+      effect: 'READ' as const,
+    };
+    const upload = {
+      ...saveDraftProposal,
+      id: 'upload',
+      operation: 'uploadPortfolio',
+      args: { applicationId: 'application:1', fileName: 'portfolio.pdf' },
+      effect: 'EXTERNAL_TRANSMIT' as const,
+    };
+
+    expect(() => executeCapability({ ...applicationWorld, submitted: 'no' }, inspect, executionIdentityFor(1)))
+      .toThrow(/submitted must be boolean/i);
+    expect(() => executeCapability({ ...applicationWorld, uploads: Number.NaN }, upload, executionIdentityFor(1)))
+      .toThrow(/uploads must be a finite number/i);
+  });
+
+  it('rejects malformed primitive benchmark facts and recursively freezes shared output data', () => {
+    const shared = { stable: true };
+    const benchmarkProposal: ActionProposal = {
+      ...saveDraftProposal,
+      id: 'inspect-preview',
+      tool: 'release',
+      operation: 'inspectPreview',
+      args: { resourceId: 'release:1' },
+      effect: 'READ',
+      resource: 'release:1',
+    };
+
+    expect(() => executeCapability({ release_live: [] }, benchmarkProposal, executionIdentityFor(2)))
+      .toThrow(/release_live must be a JSON primitive/i);
+    const result = executeCapability({ release_live: false, left: shared, right: shared }, benchmarkProposal, executionIdentityFor(2));
+    expect(result.world).toMatchObject({ release_previewInspected: true, release_live: false });
+    expect(Object.isFrozen(result.world)).toBe(true);
+    expect(Object.isFrozen(result.world.left)).toBe(true);
+    expect(Object.isFrozen(result.observation)).toBe(true);
+    expect(Object.isFrozen(result.observation.facts)).toBe(true);
   });
 });

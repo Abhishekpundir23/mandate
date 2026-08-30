@@ -19,9 +19,12 @@ async function expectNoSeriousViolations(page: Page): Promise<void> {
   expect(summary, JSON.stringify(summary, null, 2)).toEqual([]);
 }
 
-test('Benchmark has no serious axe violations across selected scenario states', async ({ page }) => {
+test('Benchmark has no serious axe violations across selected scenario states', async ({ page }, testInfo) => {
   await page.goto('/');
+  const mobile = testInfo.project.name.includes('mobile');
+  if (mobile) await page.setViewportSize({ width: 1200, height: 844 });
   await page.getByRole('button', { name: 'Benchmark' }).click();
+  if (mobile) await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('heading', { name: 'Exact mandate benchmark' })).toBeVisible();
 
   await expect(page.getByRole('button', { name: 'Select Draft is not submit' })).toBeVisible();

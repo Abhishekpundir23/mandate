@@ -51,11 +51,11 @@
 .authority-must dt,
 .authority-may dt,
 .authority-evidence dt {
-  color: var(--green);
+  color: var(--green-text);
 }
 
 .authority-must-not dt {
-  color: var(--red);
+  color: var(--red-text);
 }
 
 .completion-receipt h2 {
@@ -75,7 +75,7 @@
 }
 
 .receipt-body > p:not(.receipt-success) {
-  color: var(--green);
+  color: var(--green-text);
 }
 
 .receipt-success {
@@ -85,6 +85,6 @@
   margin: 24px -17px -17px !important;
   padding: 16px;
   border: 2px solid var(--green);
-  color: var(--green);
+  color: var(--green-text);
   font-weight: 700;
 }

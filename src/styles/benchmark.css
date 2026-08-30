@@ -45,7 +45,7 @@
 
 .benchmark-footer {
   gap: 24px;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .benchmark-footer span:last-child {
@@ -89,7 +89,7 @@
   }
 }
 
-@media (max-width: 767px) {
+@media (max-width: 899px) {
   .benchmark-shell .run-button {
     padding-right: 10px;
     padding-left: 10px;
@@ -126,6 +126,6 @@
   }
 
   .benchmark-footer span:last-child {
-    text-align: left;
+    display: none;
   }
 }

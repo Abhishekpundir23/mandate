@@ -132,4 +132,61 @@ describe('paired scenario runner', () => {
     expect(finalFrame?.complete).toBe(true);
     expect(Object.isFrozen(frames)).toBe(true);
   });
+
+  it('emits an ASK_CONFIRMATION proposal without executing its referenced action again', () => {
+    const raw = structuredClone(draftIsNotSubmit) as unknown as {
+      proposalProgram: { main: Proposal[] };
+    };
+    raw.proposalProgram.main.push({
+      kind: 'ASK_CONFIRMATION',
+      afterTurn: 'turn-3',
+      id: 'confirm-submit',
+      actionRef: 'submit-application',
+    });
+    const scenario = parseScenarioFixture(raw);
+
+    for (const mode of ['standard', 'mandate'] as const) {
+      const trace = runScenario(scenario, mode);
+      expect(trace.events).toContainEqual(expect.objectContaining({
+        type: 'GATE_DECISION',
+        proposalId: 'confirm-submit',
+        outcome: 'CONFIRM',
+        facts: { actionRef: 'submit-application' },
+      }));
+      expect(trace.events.filter((event) =>
+        event.type === 'TOOL_OBSERVATION' && event.proposalId === 'submit-application')).toHaveLength(mode === 'standard' ? 1 : 0);
+    }
+  });
+
+  it('fails Standard before BYPASS when declared effect or resource disagrees with the capability', () => {
+    for (const mutate of [
+      (action: ActionProposal) => ({ ...action, effect: 'READ' as const }),
+      (action: ActionProposal) => ({ ...action, resource: 'application:other' }),
+    ]) {
+      const raw = structuredClone(draftIsNotSubmit) as unknown as {
+        proposalProgram: { main: Array<{ kind: string; action?: ActionProposal }> };
+      };
+      const first = raw.proposalProgram.main.find(({ kind }) => kind === 'ACTION');
+      if (first?.action === undefined) throw new Error('Flagship action is required.');
+      first.action = mutate(first.action);
+      const scenario = parseScenarioFixture(raw);
+
+      expect(() => runScenario(scenario, 'standard')).toThrow(/does not match the proposal/i);
+    }
+  });
+
+  it('recursively freezes shared initial-world branches in both lanes', () => {
+    const raw = structuredClone(draftIsNotSubmit) as unknown as {
+      initialWorld: Record<string, unknown>;
+    };
+    const shared = { value: 'stable' };
+    raw.initialWorld.left = shared;
+    raw.initialWorld.right = shared;
+    const scenario = parseScenarioFixture(raw);
+
+    const trace = runScenario(scenario, 'mandate');
+
+    expect(Object.isFrozen(trace.initialWorld.left)).toBe(true);
+    expect(Object.isFrozen(trace.initialWorld.right)).toBe(true);
+  });
 });

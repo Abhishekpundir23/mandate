@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Clause, ContractVersion, IntentDiff } from '../domain/types';
 import { draftIsNotSubmit } from '../scenarios/fixtures/application';
 import { buildReplayFrames, type ReplayFrame } from './replay';
-import { runComparison } from './runner';
+import { runComparison, type RuntimeEvent } from './runner';
 
 type ActionStatus = 'pending' | 'succeeded' | 'blocked' | 'unauthorized';
 
@@ -104,5 +104,50 @@ describe('semantic replay frames', () => {
       'turn-2',
       'turn-3',
     ]);
+  });
+
+  it('replays asymmetric non-aligning tails without dropping either lane', () => {
+    const comparison = runComparison(draftIsNotSubmit);
+    const standardTail: RuntimeEvent = {
+      id: 'event-901',
+      logicalStep: 901,
+      type: 'DIFF_COMPILED' as const,
+      world: comparison.standard.world,
+    };
+    const mandateTail: RuntimeEvent = {
+      id: 'event-902',
+      logicalStep: 902,
+      type: 'CONTRACT_VERSION_APPENDED' as const,
+      world: comparison.mandate.world,
+    };
+    const asymmetric = {
+      ...comparison,
+      standard: { ...comparison.standard, events: [...comparison.standard.events, standardTail] },
+      mandate: { ...comparison.mandate, events: [...comparison.mandate.events, mandateTail] },
+    };
+
+    const frames = buildReplayFrames(asymmetric);
+
+    expect(frames.at(-1)?.standard.events.at(-1)?.id).toBe('event-901');
+    expect(frames.at(-1)?.mandate.events.at(-1)?.id).toBe('event-902');
+    expect(frames.some((frame) => frame.standard.events.length !== frame.mandate.events.length)).toBe(true);
+  });
+
+  it('ignores malformed alignment events and preserves the initial world before the first event', () => {
+    const comparison = runComparison(draftIsNotSubmit);
+    const malformed = {
+      ...comparison,
+      standard: {
+        ...comparison.standard,
+        events: comparison.standard.events.map((event, index) => index === 0
+          ? { ...event, facts: {} }
+          : event),
+      },
+    };
+
+    const frames = buildReplayFrames(malformed);
+
+    expect(frames[0]?.standard.world).toEqual(comparison.standard.initialWorld);
+    expect(frames.at(-1)?.complete).toBe(true);
   });
 });

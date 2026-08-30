@@ -91,12 +91,12 @@
 }
 
 .action-status {
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.25;
 }
 
 .event-success {
-  color: var(--green);
+  color: var(--green-text);
 }
 
 .event-success strong,
@@ -108,7 +108,7 @@
 .event-blocked,
 .event-warning {
   border-color: var(--red);
-  color: var(--red);
+  color: var(--red-text);
 }
 
 .event-info {
@@ -125,10 +125,10 @@
 
 .outcome-danger {
   background: var(--red-pale);
-  color: var(--red);
+  color: var(--red-text);
 }
 
 .outcome-safe {
   background: var(--green-pale);
-  color: var(--green);
+  color: var(--green-text);
 }

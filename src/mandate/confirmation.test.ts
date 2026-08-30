@@ -193,4 +193,32 @@ describe('scoped single-use confirmations', () => {
       expect(result.confirmationStore.consumedTokenIds).toEqual([]);
     },
   );
+
+  it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects invalid confirmation issuance step %s',
+    (logicalStep) => {
+      expect(() => issueConfirmation(emptyConfirmationStore, version(2), sendToBob, logicalStep))
+        .toThrow(/non-negative safe integer/i);
+    },
+  );
+
+  it('rejects malformed proposal input without changing the confirmation store', () => {
+    const malformed = { ...sendToBob, args: { body: Symbol('unsafe') } };
+    const issued = issueConfirmation(emptyConfirmationStore, version(2), sendToBob, 4);
+
+    const result = consumeConfirmation(issued.store, issued.token, version(2), malformed);
+
+    expect(result).toEqual({ ok: false, store: issued.store });
+  });
+
+  it('deduplicates identical issued tokens and keeps deterministic immutable ordering', () => {
+    const v2 = version(2);
+    const first = issueConfirmation(emptyConfirmationStore, v2, sendToBob, 5);
+    const earlier = issueConfirmation(first.store, v2, sendToBob, 3);
+    const duplicate = issueConfirmation(earlier.store, v2, sendToBob, 5);
+
+    expect(duplicate.store.issuedTokens).toHaveLength(2);
+    expect(duplicate.store.issuedTokens.map(({ id }) => id))
+      .toEqual([...duplicate.store.issuedTokens.map(({ id }) => id)].sort());
+  });
 });

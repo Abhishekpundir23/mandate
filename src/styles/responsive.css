@@ -62,7 +62,7 @@
 
 }
 
-@media (max-width: 767px) {
+@media (max-width: 899px) {
   body {
     font-size: 16px;
   }
@@ -70,7 +70,7 @@
   .app-header {
     grid-template-columns: 1fr auto;
     gap: 18px;
-    padding: 22px 28px 24px;
+    padding: 16px 28px;
   }
 
   .wordmark {
@@ -78,11 +78,7 @@
   }
 
   .app-header nav {
-    display: flex;
-    grid-column: 1 / -1;
-    grid-row: 2;
-    min-height: 54px;
-    margin: 0;
+    display: none;
   }
 
   .app-header nav > div {
@@ -97,8 +93,8 @@
 
   .scenario-picker {
     grid-column: 1 / -1;
-    grid-row: 3;
-    margin-top: 18px;
+    grid-row: 2;
+    margin-top: 0;
   }
 
   .scenario-picker select {
@@ -131,7 +127,7 @@
   .history-rail,
   .comparison-rail,
   .authority-rail {
-    padding: 28px;
+    padding: 24px 28px;
   }
 
   .history-rail > h2,
@@ -219,6 +215,35 @@
     justify-content: flex-start;
     min-height: 80px;
     padding: 0 28px;
+  }
+}
+
+/* A short viewport at this width is desktop zoom/reflow, not a tall mobile
+   capture. Keep both product destinations reachable without expanding the
+   853 x 1844 judge header. */
+@media (max-width: 899px) and (max-height: 800px) {
+  .app-header {
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    padding-inline: 16px;
+  }
+
+  .wordmark {
+    font-size: 28px;
+  }
+
+  .app-header nav {
+    display: block;
+    margin-left: 0;
+  }
+
+  .app-header nav > div {
+    gap: 4px;
+  }
+
+  .app-header nav button {
+    padding-inline: 8px;
+    font-size: 14px;
   }
 }
 

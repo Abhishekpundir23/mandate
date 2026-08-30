@@ -274,4 +274,50 @@ describe('append-only authority ledger', () => {
         .toThrow(new RegExp(`cannot replace.*${kind}`, 'i'));
     },
   );
+
+  it('rejects append to an empty ledger and mismatched diff provenance', () => {
+    expect(() => appendVersion([], discussionDiff)).toThrow(/empty authority ledger/i);
+    expect(() => appendVersion(createLedger([draftMust], 'draft-1'), {
+      ...discussionDiff,
+      source: { turnId: 'other-turn', quote: discussionDiff.source.quote },
+    })).toThrow(/source turn.*does not match/i);
+  });
+
+  it('uses a blank source only when no initial clause belongs to the ledger turn', () => {
+    const versions = createLedger([purchaseMay], 'different-turn');
+
+    expect(versions[0]?.source).toEqual({ turnId: 'different-turn', quote: '' });
+  });
+
+  it('copies replacement confidence into generated tombstones without inventing a selector', () => {
+    const selectorless: Clause = {
+      id: 'selectorless-must',
+      kind: 'MUST',
+      statement: 'Selectorless requirement',
+      introducedIn: 1,
+      source: draftMust.source,
+    };
+    const diff: IntentDiff = {
+      baseVersion: 1,
+      turnId: 'draft-2',
+      source: { turnId: 'draft-2', quote: 'Replace the requirement.' },
+      ops: [{
+        op: 'REPLACE',
+        targetClauseIds: [selectorless.id],
+        replacement: {
+          id: 'replacement-must',
+          kind: 'MUST',
+          statement: 'Replacement requirement',
+          confidence: 0.9,
+          source: { turnId: 'draft-2', quote: 'Replace the requirement.' },
+        },
+      }],
+    };
+
+    const latest = appendVersion(createLedger([selectorless], 'draft-1'), diff).at(-1)!;
+    const tombstone = latest.clauses.find(({ kind }) => kind === 'REVOKED');
+
+    expect(tombstone).toMatchObject({ confidence: 0.9, targetClauseIds: [selectorless.id] });
+    expect(tombstone).not.toHaveProperty('revokedSelector');
+  });
 });

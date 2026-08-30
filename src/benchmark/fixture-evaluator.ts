@@ -100,6 +100,7 @@ function validExecution(
     return false;
   }
   const index = trace.events.indexOf(event);
+  if (index < 0) return false;
   const before = index === 0 ? trace.initialWorld : trace.events[index - 1]!.world;
   try {
     const reconstructed = executeCapability(before, action, {

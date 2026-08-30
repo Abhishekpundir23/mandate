@@ -143,4 +143,18 @@ describe('scenario fixture validation', () => {
 
     expect(() => parseScenarioFixture(fabricatedQuote)).toThrow(/source quote/i);
   });
+
+  it('accepts shared JSON values without exposing mutable aliases', () => {
+    const shared = { status: 'draft' };
+    const withSharedWorld = {
+      ...validScenario,
+      initialWorld: { left: shared, right: shared },
+    };
+
+    const parsed = parseScenarioFixture(withSharedWorld);
+
+    expect(parsed.initialWorld).toEqual({ left: { status: 'draft' }, right: { status: 'draft' } });
+    expect(Object.isFrozen(parsed.initialWorld.left)).toBe(true);
+    expect(Object.isFrozen(parsed.initialWorld.right)).toBe(true);
+  });
 });

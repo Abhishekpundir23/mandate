@@ -348,4 +348,77 @@ describe('deterministic action gate', () => {
     expect(decision.outcome).toBe('BLOCK');
     expect(decision.reasons).toContain('Malformed confirmation authority: blocked closed');
   });
+
+  it.each([
+    ['empty action id', { id: ' ' }, /id must not be empty/i],
+    ['empty step id', { stepId: ' ' }, /stepId must not be empty/i],
+    ['malformed tool', { tool: 'application tool' }, /tool is malformed/i],
+    ['malformed operation', { operation: 'submit now' }, /operation is malformed/i],
+    ['empty resource', { resource: ' ' }, /resource must not be empty/i],
+    ['non-JSON args', { args: { unsafe: () => true } }, /non-json value/i],
+  ] as const)('blocks a malformed proposal with a stable invalid fingerprint for %s', (_, change, message) => {
+    const result = evaluateAction({
+      version: version([clause('allow-submit', 'MAY')]),
+      proposal: { ...submitProposal, ...change } as ActionProposal,
+      validateCapability,
+      confirmationStore: emptyConfirmationStore,
+    });
+
+    expect(result.decision.outcome).toBe('BLOCK');
+    expect(result.decision.actionFingerprint).toMatch(/^invalid-/);
+    expect(result.decision.reasons).toEqual([expect.stringMatching(message)]);
+  });
+
+  it.each([
+    ['extra response key', { ok: true, effects: ['EXTERNAL_TRANSMIT'], resource: 'application:1', extra: true }],
+    ['symbol response key', Object.assign({ ok: true, effects: ['EXTERNAL_TRANSMIT'], resource: 'application:1' }, { [Symbol('hidden')]: true })],
+    ['sparse effects', { ok: true, effects: new Array(1), resource: 'application:1' }],
+    ['non-array effects', { ok: true, effects: { 0: 'EXTERNAL_TRANSMIT', length: 1 }, resource: 'application:1' }],
+    ['custom effects prototype', { ok: true, effects: Object.setPrototypeOf(['EXTERNAL_TRANSMIT'], null), resource: 'application:1' }],
+    ['non-string rejection reason', { ok: false, reason: 7 }],
+  ] as const)('fails closed for hostile capability result: %s', (_, response) => {
+    const result = evaluateAction({
+      version: version([clause('allow-submit', 'MAY')]),
+      proposal: submitProposal,
+      validateCapability: (() => response) as unknown as CapabilityValidationPort,
+      confirmationStore: emptyConfirmationStore,
+    });
+
+    expect(result.decision.outcome).toBe('BLOCK');
+    expect(result.decision.reasons).toContain('Capability validation failed closed');
+  });
+
+  it('fails closed for malformed denial authority but ignores a malformed non-denial grant', () => {
+    const malformed = { tool: 'application tool' };
+    const denial = { ...clause('bad-denial', 'MUST_NOT'), selector: malformed } as Clause;
+    const grant = { ...clause('bad-grant', 'MAY'), selector: malformed } as Clause;
+
+    const denied = gate(version([denial]), submitProposal);
+    const ignored = gate(version([grant]), submitProposal);
+
+    expect(denied.outcome).toBe('BLOCK');
+    expect(denied.matchedClauseIds).toEqual(['bad-denial']);
+    expect(denied.reasons).toContain('Malformed denial authority: blocked closed');
+    expect(ignored.outcome).toBe('BLOCK');
+    expect(ignored.matchedClauseIds).toEqual([]);
+    expect(ignored.reasons).toContain('No matching authority');
+  });
+
+  it('matches a tombstone through its target clause when no revoked selector is present', () => {
+    const grant = clause('prior-submit', 'MAY');
+    const tombstone: Clause = {
+      id: 'revoke-prior-submit',
+      kind: 'REVOKED',
+      statement: 'Prior submit grant revoked.',
+      targetClauseIds: [grant.id],
+      introducedIn: 2,
+      source,
+    };
+
+    const result = gate(version([grant, tombstone], 2), submitProposal);
+
+    expect(result.outcome).toBe('BLOCK');
+    expect(result.matchedClauseIds).toContain('revoke-prior-submit');
+    expect(result.reasons).toContain('Denied by active REVOKED authority');
+  });
 });

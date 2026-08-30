@@ -27,7 +27,7 @@
 
 .scenario-results th,
 .scenario-results td {
-  height: 44px;
+  height: 37px;
   padding: 0 16px;
   border-bottom: 1px solid var(--rule);
   text-align: left;
@@ -58,7 +58,7 @@
 
 .scenario-results th button,
 .scenario-name button {
-  min-height: 44px;
+  min-height: 37px;
   padding: 0;
   border: 0;
   background: transparent;
