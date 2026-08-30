@@ -164,7 +164,7 @@ function readExactDataRecord(
     return undefined;
   }
 
-  const ownKeys = Reflect.ownKeys(value);
+  const ownKeys = [...Object.getOwnPropertyNames(value), ...Object.getOwnPropertySymbols(value)];
   if (ownKeys.some((key) => typeof key !== 'string')) {
     return undefined;
   }
@@ -203,7 +203,7 @@ function readDenseDataArray(value: unknown): readonly unknown[] | undefined {
     ...Array.from({ length: length as number }, (_, index) => String(index)),
     'length',
   ];
-  const ownKeys = Reflect.ownKeys(value);
+  const ownKeys = [...Object.getOwnPropertyNames(value), ...Object.getOwnPropertySymbols(value)];
   if (ownKeys.some((key) => typeof key !== 'string')) {
     return undefined;
   }

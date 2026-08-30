@@ -15,9 +15,11 @@ async function runGate(source: string) {
   await cp('dist', join(root, 'dist'), { recursive: true });
   await symlink(resolve('node_modules'), join(root, 'node_modules'), 'dir');
   await writeFile(join(root, 'src', 'fixture.tsx'), source);
+  await cp('tsconfig.app.json', join(root, 'tsconfig.app.json'));
   await cp('scripts/security-gate.mjs', join(root, 'scripts', 'security-gate.mjs'));
   await cp('scripts/security-built-policy.mjs', join(root, 'scripts', 'security-built-policy.mjs'));
   await cp('scripts/security-source-policy.mjs', join(root, 'scripts', 'security-source-policy.mjs'));
+  await cp('scripts/security-source-scan.mjs', join(root, 'scripts', 'security-source-scan.mjs'));
   const policyPath = resolve('scripts/security-policy.mjs');
   try {
     await readFile(policyPath);
@@ -89,6 +91,27 @@ describe('structural security gate', () => {
     ['TypeScript import equals', `import http = require('node:https'); void http`],
     ['unknown call receives ambient', `const accept = (value: unknown) => value; accept(globalThis)`],
     ['bare forbidden reference', `const authority = WebSocket; void authority`],
+    ['compound nested reflection escapes', `
+      const safeRoot = () => ({ nested: () => document.body });
+      Reflect.get(safeRoot().nested().ownerDocument.defaultView, 'fetch')('/escape');
+      const prototype = Object.getPrototypeOf(safeRoot());
+      Object.getOwnPropertyDescriptor(prototype, 'inner' + 'HTML')?.set?.call({}, '<img>');
+      (() => {}).constructor('return 1')();
+    `],
+    ['nested Reflect return escape', `
+      const safeRoot = () => ({ nested: () => document.body });
+      Reflect.get(safeRoot().nested().ownerDocument.defaultView, 'fetch')('/escape');
+    `],
+    ['prototype descriptor optional setter escape', `
+      const safeRoot = () => ({ label: 'local' });
+      const prototype = Object.getPrototypeOf(safeRoot());
+      Object.getOwnPropertyDescriptor(prototype, 'inner' + 'HTML')?.set?.call({}, '<img>');
+    `],
+    ['function constructor escape', `(() => {}).constructor('return 1')()`],
+    ['optional descriptor value call', `
+      Object.getOwnPropertyDescriptor(globalThis, 'fetch')?.value?.('/escape');
+    `],
+    ['Proxy metaprogramming', `new Proxy({}, {})`],
   ])('rejects %s', async (_, source) => {
     const result = await runGate(source);
 
@@ -108,6 +131,25 @@ describe('structural security gate', () => {
       const sentence = 'submit is a domain operation, not a capability reference';
       export { endpointPolicy, mobile, operation, root, sentence, tokenBudget };
     `);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['history parameter', `export function countHistory(history: readonly string[]) { return history.length; }`],
+    ['location parameter', `export function describeLocation(location: string) { return location.toUpperCase(); }`],
+    ['navigator parameter', `export function nameNavigator(navigator: { readonly label: string }) { return navigator.label; }`],
+    ['Reflect parameter', `
+      export function readLocal(Reflect: { get: (value: { readonly label: string }, key: 'label') => string }) {
+        return Reflect.get({ label: 'local' }, 'label');
+      }
+    `],
+    ['constructor domain declaration', `
+      const constructor = (value: string) => ({ value });
+      export { constructor };
+    `],
+  ])('allows safe locally shadowed %s', async (_, source) => {
+    const result = await runGate(source);
 
     expect(result.status, result.output).toBe(0);
   });

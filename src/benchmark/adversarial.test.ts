@@ -147,6 +147,27 @@ describe('benchmark adversarial boundaries', () => {
     expect(evaluateRun(trace, draftIsNotSubmit).exactMandateSuccess).toBe(false);
   });
 
+  it('rejects a forged recovery gate even when the later observation remains replay-valid', () => {
+    const trace = structuredClone(runComparison(draftIsNotSubmit).mandate);
+    const gate = trace.events.find((event) =>
+      event.type === 'GATE_DECISION' && event.proposalId === 'inspect-next-step');
+    if (gate === undefined) throw new Error('Inspect recovery gate is required.');
+    Object.assign(gate, {
+      id: 'event-impossible',
+      logicalStep: 999,
+      type: 'FINISH_EVALUATED',
+      outcome: 'BLOCK',
+      operation: 'invented',
+      contractVersion: 999,
+    });
+    const executions = successfulExecutions(trace, draftIsNotSubmit);
+
+    expect(executions.some(({ action }) => action.id === 'inspect-next-step')).toBe(true);
+    expect(recoverySucceeded(trace, draftIsNotSubmit, executions)).toBe(false);
+    expect(evaluateRun(trace, draftIsNotSubmit).recoverySuccess).toBe(false);
+    expect(evaluateRun(trace, draftIsNotSubmit).exactMandateSuccess).toBe(false);
+  });
+
   it('accepts a causally ordered finish recovery only after the rejected action', () => {
     const raw = structuredClone(draftIsNotSubmit) as ScenarioDefinition;
     Reflect.set(raw.proposalProgram, 'onRejected', {

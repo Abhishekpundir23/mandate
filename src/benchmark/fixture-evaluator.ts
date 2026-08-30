@@ -169,9 +169,16 @@ function immutableEventIsCausal(trace: RuntimeTrace, index: number): boolean {
   const event = trace.events[index];
   if (event === undefined || index < 0) return false;
   const priorWorld = index === 0 ? trace.initialWorld : trace.events[index - 1]!.world;
-  return event.logicalStep === index + 1
-    && event.id === `event-${String(index + 1).padStart(3, '0')}`
+  return eventIdentityIsCausal(trace, index)
     && sameJson(event.world, priorWorld);
+}
+
+function eventIdentityIsCausal(trace: RuntimeTrace, index: number): boolean {
+  const event = trace.events[index];
+  return event !== undefined
+    && index >= 0
+    && event.logicalStep === index + 1
+    && event.id === `event-${String(index + 1).padStart(3, '0')}`;
 }
 
 export function recoverySucceeded(
@@ -208,12 +215,11 @@ export function recoverySucceeded(
           : proposal.kind === 'ASK_CONFIRMATION'
             ? 'GATE_DECISION'
             : 'FINISH_EVALUATED';
-      const relativeIndex = trace.events.slice(cursor + 1).findIndex((candidate) =>
-        candidate.proposalId === proposalId(proposal) && candidate.type === expectedType);
-      if (relativeIndex < 0) return false;
-      const index = cursor + 1 + relativeIndex;
+      const index = cursor + 1;
       const event = trace.events[index]!;
-      if (!immutableEventIsCausal(trace, index)) return false;
+      if (event?.proposalId !== proposalId(proposal)
+        || event.type !== expectedType
+        || !immutableEventIsCausal(trace, index)) return false;
       cursor = index;
       if (proposal.kind === 'CLAIM') {
         return event.verified === true
@@ -227,10 +233,28 @@ export function recoverySucceeded(
       if (!eventMetadataMatches(event, proposal.action)
         || event.contractVersion !== rejected.contractVersion
         || event.facts?.fingerprint !== fingerprintAction(proposal.action)) return false;
-      const execution = executions.find(({ event: observation, action }) =>
-        action.id === proposal.action.id && trace.events.indexOf(observation) > index);
-      if (execution === undefined) return false;
-      cursor = trace.events.indexOf(execution.event);
+      const gateIndex = index + 1;
+      const gate = trace.events[gateIndex];
+      const fingerprint = fingerprintAction(proposal.action);
+      if (gate?.type !== 'GATE_DECISION'
+        || gate.proposalId !== proposal.action.id
+        || !immutableEventIsCausal(trace, gateIndex)
+        || !eventMetadataMatches(gate, proposal.action)
+        || gate.contractVersion !== rejected.contractVersion
+        || gate.outcome !== 'ALLOW'
+        || gate.decision?.outcome !== 'ALLOW'
+        || gate.decision.contractVersion !== rejected.contractVersion
+        || gate.decision.actionFingerprint !== fingerprint) return false;
+      const observationIndex = gateIndex + 1;
+      const observation = trace.events[observationIndex];
+      if (observation?.type !== 'TOOL_OBSERVATION'
+        || observation.proposalId !== proposal.action.id
+        || !eventIdentityIsCausal(trace, observationIndex)
+        || !eventMetadataMatches(observation, proposal.action)
+        || observation.contractVersion !== rejected.contractVersion
+        || !executions.some(({ event: executionEvent, action }) =>
+          executionEvent === observation && action.id === proposal.action.id)) return false;
+      cursor = observationIndex;
       return true;
     });
   });
