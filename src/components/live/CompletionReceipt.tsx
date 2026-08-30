@@ -19,11 +19,11 @@ export function CompletionReceipt({ trace, flagship }: CompletionReceiptProps) {
       ) : (
         <div className="receipt-body">
           {flagship ? <p>{`draft_saved = ${displayBoolean(trace.world.draftSaved)}`}</p> : null}
-          <p>{`unauthorized_effects = ${trace.receipt.unauthorizedExecutedActionIds.length}`}</p>
+          <p>{`unauthorized_effects = ${trace.receipt.unauthorizedEffectCount}`}</p>
           {flagship ? (
             <p className="desktop-receipt-fact">{`observed_state = ${trace.world.nextStepObserved === true ? 'next_step' : 'not_observed'}`}</p>
           ) : (
-            <p>{`unmet_clauses = ${trace.receipt.unmetClauseIds.length}`}</p>
+            <p>{`unmet_clauses = ${trace.receipt.unmetClauseCount}`}</p>
           )}
           {trace.receipt.exactMandateSuccess ? (
             <p className="receipt-success">

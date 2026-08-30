@@ -1,18 +1,23 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useMemo, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ScenarioDefinition } from '../../domain/types';
 import { runComparison } from '../../runtime/runner';
+import { buildReplayFrames } from '../../runtime/replay';
 import { scenarioCatalog } from '../../scenarios/catalog';
 import { draftIsNotSubmit } from '../../scenarios/fixtures/application';
 import { previewIsNotDeploy } from '../../scenarios/fixtures/release';
+import { pingServiceDoNotAlert } from '../../scenarios/fixtures/remaining';
 import { LiveRunView } from './LiveRunView';
 
 const comparison = runComparison(draftIsNotSubmit);
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 function useDesktopViewport(): void {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
@@ -49,11 +54,11 @@ describe('LiveRunView', () => {
     expect(screen.getByText('unauthorized_effects = 0')).toBeVisible();
     expect(screen.getByText('draft_saved = true')).toBeVisible();
     expect(screen.getByText('observed_state = next_step')).toBeVisible();
-    expect(screen.getByText('MAY')).toBeVisible();
-    expect(screen.getByText('Inspect next step')).toBeVisible();
-    expect(screen.getByText('EVIDENCE')).toBeVisible();
-    expect(screen.queryByText('REVOKED')).not.toBeInTheDocument();
     const authority = screen.getByRole('complementary', { name: 'Authority and completion evidence' });
+    expect(within(authority).getByText('MAY')).toBeVisible();
+    expect(within(authority).getByText('Inspect next step')).toBeVisible();
+    expect(within(authority).getByText('EVIDENCE')).toBeVisible();
+    expect(screen.queryByText('REVOKED')).not.toBeInTheDocument();
     const authorityText = authority.textContent ?? '';
     expect(authorityText.indexOf('MUSTSave a draft')).toBeLessThan(authorityText.indexOf('MAYInspect next step'));
     expect(authorityText.indexOf('MAYInspect next step')).toBeLessThan(authorityText.indexOf('MUST NOTSubmit application'));
@@ -65,21 +70,33 @@ describe('LiveRunView', () => {
     expect(chronology.indexOf('submit_application')).toBeLessThan(chronology.indexOf('inspect_next_step'));
   });
 
-  it('resets the visible trace before replaying it', async () => {
-    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
-      matches: true,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    }));
-    const user = userEvent.setup();
+  it('resets to frame zero and progresses through frame-local authority without reduced motion', () => {
+    vi.useFakeTimers();
+    useDesktopViewport();
+    const frames = buildReplayFrames(comparison);
+    const versionTwo = frames.find((frame) => frame.contractVersions.length === 2);
+    if (versionTwo === undefined) throw new Error('The v2 replay milestone is required.');
     render(<LiveRunView comparison={comparison} />);
 
     const run = screen.getByRole('button', { name: /run comparison/i });
-    await user.click(run);
+    fireEvent.click(run);
+
+    expect(screen.getByText(/Replaying 0 of \d+ milestones/)).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Active authority · v0' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /v3 do not submit/i })).not.toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(versionTwo.index * 180));
+
+    expect(screen.getByRole('button', { name: /v2 done/i })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Active authority · v2' })).toBeVisible();
+    const authority = screen.getByRole('complementary', { name: 'Authority and completion evidence' });
+    expect(within(authority).getByText('Inspect next step')).toBeVisible();
+    expect(within(authority).queryByText('Submit application')).not.toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime((frames.length - versionTwo.index) * 180));
 
     expect(screen.getByText('Replay complete')).toBeVisible();
     expect(screen.getByText('APPLICATION SUBMITTED')).toBeVisible();
-    vi.unstubAllGlobals();
   });
 
   it('changes the selected scenario and resets its replay state', async () => {
@@ -114,11 +131,31 @@ describe('LiveRunView', () => {
     const disclosure = screen.getByRole('button', { name: /v3 do not submit/i });
 
     expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    const targetId = disclosure.getAttribute('aria-controls');
+    expect(targetId).not.toBeNull();
     await user.click(disclosure);
     expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(document.getElementById(targetId!)).toHaveAttribute('hidden');
     await user.click(disclosure);
     expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(document.getElementById(targetId!)).not.toHaveAttribute('hidden');
     expect(screen.getByText('− Submit application')).toBeVisible();
+  });
+
+  it('associates the compact v3 view with an honest summary of active v2 and v3 authority', () => {
+    render(<LiveRunView comparison={comparison} replayMode="complete" />);
+
+    const summary = screen.getByRole('region', { name: 'Current authority summary' });
+    expect(within(summary).getByText('MAY')).toBeVisible();
+    expect(within(summary).getByText('Inspect next step')).toBeVisible();
+    expect(within(summary).getByText('MUST NOT')).toBeVisible();
+    expect(within(summary).getByText('Submit application')).toBeVisible();
+
+    const v2 = screen.getByText("Done — now see what's next.").closest('li');
+    const v3 = screen.getByRole('button', { name: /v3 do not submit/i }).closest('li');
+    expect(within(v2!).getByText('+ Inspect the next-step state')).toBeInTheDocument();
+    expect(within(v3!).getByText('− Submit application')).toBeInTheDocument();
+    expect(within(v3!).queryByText('+ Inspect the next-step state')).not.toBeInTheDocument();
   });
 
   it('uses semantic landmarks and a restrained live progress region', () => {
@@ -141,13 +178,38 @@ describe('LiveRunView', () => {
       />,
     );
 
-    expect(screen.getByText('Do not deploy to production.')).toBeVisible();
+    const authority = screen.getByRole('complementary', { name: 'Authority and completion evidence' });
+    expect(within(authority).getByText('Do not deploy to production.')).toBeVisible();
     expect(screen.getByText('UNAUTHORIZED EFFECT EXECUTED')).toBeVisible();
     expect(screen.getByText('unauthorized_effects = 0')).toBeVisible();
     expect(screen.queryByText('APPLICATION SUBMITTED')).not.toBeInTheDocument();
     expect(screen.queryByText('DRAFT PRESERVED')).not.toBeInTheDocument();
     expect(screen.queryByText(/draft_saved =/)).not.toBeInTheDocument();
     expect(screen.queryByText(/observed_state =/)).not.toBeInTheDocument();
+  });
+
+  it('renders generic real changes and actual NO_CHANGE provenance from the engine', () => {
+    const changed = render(
+      <LiveRunView
+        comparison={runComparison(previewIsNotDeploy)}
+        scenarios={[previewIsNotDeploy]}
+        replayMode="complete"
+      />,
+    );
+    expect(screen.getByText('New message changed the mandate')).toBeVisible();
+    expect(screen.getByText('+ MUST NOT · Do not deploy to production.')).toBeVisible();
+    changed.unmount();
+
+    render(
+      <LiveRunView
+        comparison={runComparison(pingServiceDoNotAlert)}
+        scenarios={[pingServiceDoNotAlert]}
+        replayMode="complete"
+      />,
+    );
+    expect(screen.getByText('No authority change')).toBeVisible();
+    expect(screen.getByText('No authority change · Discussion')).toBeVisible();
+    expect(screen.getByRole('button', { name: /v2 do not send an alert/i })).toBeVisible();
   });
 
   it('renders two direct lanes without tab semantics at desktop width', () => {

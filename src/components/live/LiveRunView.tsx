@@ -33,7 +33,7 @@ export function LiveRunView({
   const completedTrace = frame.complete ? frame.mandate : undefined;
   const flagship = comparison.scenarioId === draftIsNotSubmit.id;
   const progress = replay.status === 'running'
-    ? `Replaying ${frame.eventCount} of ${frames.at(-1)!.eventCount} events`
+    ? `Replaying ${frame.index} of ${frames.at(-1)!.index} milestones`
     : replay.status === 'complete' ? 'Replay complete' : 'Replay ready';
 
   const changeScenario = (scenarioId: string): void => {
@@ -52,12 +52,17 @@ export function LiveRunView({
       />
       <p className="replay-progress" role="status" aria-live="polite">{progress}</p>
       <main id="live-workspace" className="live-workspace" aria-label="Mandate workspace">
-        <MandateHistory versions={comparison.mandate.contractVersions} flagship={flagship} />
+        <MandateHistory
+          versions={frame.contractVersions}
+          changes={frame.authorityChanges}
+          activeClauses={frame.activeClauses}
+          flagship={flagship}
+        />
         <ComparisonPanel frame={frame} flagship={flagship} />
         <aside className="authority-rail" aria-label="Authority and completion evidence">
           <AuthorityMatrix
-            clauses={comparison.mandate.activeClauses}
-            version={comparison.mandate.contractVersions.at(-1)?.version ?? 0}
+            clauses={frame.activeClauses}
+            version={frame.contractVersions.at(-1)?.version ?? 0}
             flagship={flagship}
           />
           <CompletionReceipt trace={completedTrace} flagship={flagship} />

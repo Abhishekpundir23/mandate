@@ -10,13 +10,17 @@ const tabs = [
 ] as const;
 
 describe('AccessibleTabs', () => {
-  it('links one selected tab to one visible panel', () => {
+  it('keeps every controlled panel mounted while exposing only the selected one', () => {
     render(<AccessibleTabs label="Agent traces" tabs={tabs} defaultTabId="standard" />);
 
     const standard = screen.getByRole('tab', { name: 'Standard' });
+    const mandate = screen.getByRole('tab', { name: 'Mandate' });
     expect(standard).toHaveAttribute('aria-selected', 'true');
     expect(standard).toHaveAttribute('tabindex', '0');
     expect(screen.getByRole('tabpanel', { name: 'Standard' })).toBeVisible();
+    expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(2);
+    expect(document.getElementById(standard.getAttribute('aria-controls')!)).not.toHaveAttribute('hidden');
+    expect(document.getElementById(mandate.getAttribute('aria-controls')!)).toHaveAttribute('hidden');
     expect(screen.queryByRole('tabpanel', { name: 'Mandate' })).not.toBeInTheDocument();
   });
 

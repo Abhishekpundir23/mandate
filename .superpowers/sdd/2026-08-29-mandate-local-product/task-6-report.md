@@ -73,3 +73,58 @@ git diff --check
 
 - No product or data-contract blocker remains.
 - Task 8 still owns final screenshot comparison and may choose separate, non-stitched mobile viewport captures to avoid the in-app browser's full-page tiling artifact.
+
+## Fix round 1/5: prefix truth and semantic replay
+
+### RED evidence
+
+- Runtime and receipt tests were written first. The first readable run had four expected failures: shared semantic work appeared at raw frame 2 versus 4, `ReplayFrame` had no engine-owned action view or frame-local authority fields, and `CompletionReceipt` had no scalar unauthorized/unmet counts.
+- UI and accessibility tests were then written before their production changes. Eight assertions failed readably for receipt scalar rendering, persistent tabpanels, explicit action-status text, frame-local history, persistent disclosure targets, compact active-authority provenance, and generic real-diff/`NO_CHANGE` rendering.
+- A local browser regression check measured replay metadata at `12px` before the stylesheet correction. The same check measured `16px` after GREEN.
+- The non-reduced-motion replay test now gives only `(prefers-reduced-motion: reduce)` a non-match and observes timer-driven progression. It no longer makes every media query match.
+
+### GREEN behavior
+
+- Replay alignment now advances by semantic milestones. Shared `fill-fields`, `save-draft`, and `submit-application` proposal and gate-decision milestones appear together even when Mandate emits extra contract/diff events; Mandate-only rejection recovery follows the shared block point. The final frame still deep-equals both complete `RuntimeTrace` values.
+- Each prefix exposes immutable runtime-owned action views. An action is `pending` until observation; Standard's unauthorized `submit_application` becomes `unauthorized` immediately when its observation enters the prefix and never renders as success. React maps those statuses to visible or screen-reader text without recomputing policy.
+- Each frame also owns its current contract versions, active clauses, and authority changes. Frame zero exposes no future v3 state. The v2 `MAY inspect next step` provenance remains in v2, the v3 `MUST_NOT submit application` provenance remains in v3, and the compact v3 surface separately summarizes both currently active facts without rewriting either diff.
+- Generic scenarios render their actual engine `IntentDiff` operations. `NO_CHANGE` versions keep their emitted reason/provenance and say `No authority change`; real changes render their actual added/revoked clauses.
+- Both tabpanel targets remain mounted and the inactive panel is `hidden`; exactly one is accessible. History disclosure targets likewise remain mounted with `hidden` while collapsed. Action statuses are explicit text, icons remain decorative, and desktop replay metadata is `16px`.
+- `CompletionReceipt` exposes `unauthorizedEffectCount` and `unmetClauseCount` as engine/view-model scalar fields. `CompletionReceipt.tsx` renders those fields and performs no array-length metric calculation.
+
+### Changed engine and UI interfaces
+
+- `CompletionReceipt`: added scalar `unauthorizedEffectCount` and `unmetClauseCount` fields, computed in the receipt builder.
+- `RuntimeTrace`: added immutable `authorityChanges`, sourced from the scenario turns executed by the runner.
+- `ReplayFrame`: added frame-local `contractVersions`, `activeClauses`, and `authorityChanges`, plus `standardActionViews` and `mandateActionViews` using `ReplayActionStatus` (`pending`, `succeeded`, `blocked`, `unauthorized`).
+- Live presentation components now accept those immutable frame/view-model fields rather than the final comparison or locally inferred status.
+
+### Fix-round browser evidence
+
+- The in-app browser binding reported no connected browser after the prescribed browser-control troubleshooting check. In accordance with the frontend testing fallback, local Playwright exercised `http://127.0.0.1:5173`; it did not browse an external site, deploy, submit, or perform a real action.
+- At frame zero the browser found `Active authority · v0`, no v3 content, and `Replaying 0 of 23 milestones`. After Standard's unauthorized submit observation, the row was `event-warning`, not success.
+- At 430 CSS px both tabpanel targets existed, exactly one was hidden, the compact current-authority summary showed `MAY Inspect next step` and `MUST NOT Submit application`, and a collapsed history target remained mounted with `hidden`.
+- A generic `NO_CHANGE` scenario exposed one no-change notice and its real provenance. Original-size desktop and compact screenshots were compared with both approved concepts; the dedicated footer flow, truth-first v2/v3 history, and single compact authority/receipt/footer sequence remained intact. Temporary QA captures were removed after inspection because Task 8 owns final screenshot evidence.
+
+### Fresh fix-round verification
+
+All commands ran from the repository root on the fix-round working tree:
+
+```text
+npm test -- --run src/scenarios src/benchmark src/runtime src/evidence
+  7 test files passed; 72 tests passed
+
+npm test -- --run src/app src/components/live src/components/primitives && npm run typecheck && npm run lint && npm run build
+  6 test files passed; 21 tests passed
+  typecheck clean; lint zero warnings; Vite build succeeded (148 modules)
+
+npm run verify
+  21 test files passed; 174 tests passed
+  typecheck clean; lint zero warnings; Vite build succeeded (148 modules)
+
+git diff --check
+git diff --cached --check
+  both clean
+```
+
+The benchmark contract remains unchanged: Standard 5/15 exact with 8 unauthorized effects and 3 false claims; Mandate 15/15, 0, 0. No product or data-contract blocker emerged in this round.

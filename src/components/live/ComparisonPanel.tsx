@@ -19,6 +19,8 @@ export function ComparisonPanel({ frame, flagship }: ComparisonPanelProps) {
   const [desktop, setDesktop] = useState(desktopViewport);
   const standardReceipt = frame.complete ? frame.standard.receipt : undefined;
   const mandateReceipt = frame.complete ? frame.mandate.receipt : undefined;
+  const currentChange = frame.authorityChanges.at(-1);
+  const noAuthorityChange = currentChange?.ops.every(({ op }) => op === 'NO_CHANGE') ?? false;
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return undefined;
@@ -37,6 +39,7 @@ export function ComparisonPanel({ frame, flagship }: ComparisonPanelProps) {
           runner="standard"
           flagship={flagship}
           events={frame.standard.events}
+          actions={frame.standardActionViews}
           receipt={standardReceipt}
         />
       ),
@@ -49,6 +52,7 @@ export function ComparisonPanel({ frame, flagship }: ComparisonPanelProps) {
           runner="mandate"
           flagship={flagship}
           events={frame.mandate.events}
+          actions={frame.mandateActionViews}
           receipt={mandateReceipt}
         />
       ),
@@ -58,10 +62,12 @@ export function ComparisonPanel({ frame, flagship }: ComparisonPanelProps) {
   return (
     <section className="comparison-rail" aria-labelledby="comparison-heading">
       <h2 id="comparison-heading">Live comparison</h2>
-      <p className="change-notice">
-        <StatusIcon kind="info" size={30} />
-        <span>New message changed the mandate</span>
-      </p>
+      {currentChange === undefined ? null : (
+        <p className="change-notice">
+          <StatusIcon kind="info" size={30} />
+          <span>{noAuthorityChange ? 'No authority change' : 'New message changed the mandate'}</span>
+        </p>
+      )}
       {desktop ? (
         <div className="desktop-comparison-grid">
           <div><h3>Standard agent</h3>{tabs[0].content}</div>

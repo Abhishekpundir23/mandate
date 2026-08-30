@@ -7,6 +7,7 @@ import type {
   ConfirmationStore,
   ContractVersion,
   GateDecision,
+  IntentDiff,
   JsonValue,
   Predicate,
   Proposal,
@@ -57,6 +58,7 @@ export interface RuntimeTrace extends Omit<RunTrace, 'events'> {
   readonly world: Readonly<Record<string, JsonValue>>;
   readonly contractVersions: readonly ContractVersion[];
   readonly activeClauses: readonly Clause[];
+  readonly authorityChanges: readonly IntentDiff[];
 }
 
 export interface ComparisonRun {
@@ -239,6 +241,7 @@ export function runScenario(
     world,
     contractVersions: versions,
     activeClauses: finalActiveClauses,
+    authorityChanges: scenario.turns.map(({ canonicalDiff }) => structuredClone(canonicalDiff)),
   }) as RuntimeTrace;
 }
 

@@ -70,14 +70,21 @@ export function AccessibleTabs({
           );
         })}
       </div>
-      <div
-        id={`${prefix}-${selected.id}-panel`}
-        role="tabpanel"
-        aria-labelledby={`${prefix}-${selected.id}-tab`}
-        tabIndex={0}
-      >
-        {selected.content}
-      </div>
+      {tabs.map((tab) => {
+        const isSelected = tab.id === selected.id;
+        return (
+          <div
+            key={tab.id}
+            id={`${prefix}-${tab.id}-panel`}
+            role="tabpanel"
+            aria-labelledby={`${prefix}-${tab.id}-tab`}
+            tabIndex={isSelected ? 0 : -1}
+            hidden={!isSelected}
+          >
+            {tab.content}
+          </div>
+        );
+      })}
     </div>
   );
 }

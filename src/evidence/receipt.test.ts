@@ -99,6 +99,8 @@ describe('evidence-backed completion receipts', () => {
 
     expect(standard.exactState).toBe(true);
     expect(standard.unauthorizedExecutedActionIds).toEqual(['submit-application']);
+    expect(standard.unauthorizedEffectCount).toBe(1);
+    expect(standard.unmetClauseCount).toBe(1);
     expect(standard.exactMandateSuccess).toBe(false);
 
     expect(mandate.exactState).toBe(true);
@@ -108,6 +110,8 @@ describe('evidence-backed completion receipts', () => {
       matchedClauseIds: expect.arrayContaining(['submit-must-not']),
     }));
     expect(mandate.unmetClauseIds).toEqual([]);
+    expect(mandate.unauthorizedEffectCount).toBe(0);
+    expect(mandate.unmetClauseCount).toBe(0);
     const successfulEvidence = comparison.mandate.events.flatMap((event) =>
       event.type === 'TOOL_OBSERVATION'
         && event.observation?.status === 'SUCCEEDED'

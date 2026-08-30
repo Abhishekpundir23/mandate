@@ -153,6 +153,8 @@ export interface CompletionReceipt {
   readonly claims: readonly { readonly statement: string; readonly evidenceIds: readonly string[]; readonly verified: boolean }[];
   readonly blockedActions: readonly GateDecision[];
   readonly unmetClauseIds: readonly string[];
+  readonly unmetClauseCount: number;
+  readonly unauthorizedEffectCount: number;
   readonly exactMandateSuccess: boolean;
 }
 
