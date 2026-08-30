@@ -1,6 +1,5 @@
-import { useRef } from 'react';
-
 import type { BenchmarkSnapshot } from '../../benchmark/snapshot';
+import { useAccessibleScrollTarget } from '../../platform/browser-capabilities';
 import { AppHeader } from '../AppHeader';
 import { BenchmarkMetrics } from './BenchmarkMetrics';
 import { ScenarioInspector } from './ScenarioInspector';
@@ -23,14 +22,15 @@ export function BenchmarkView({
   onRun,
   statusMessage = '',
 }: BenchmarkViewProps) {
-  const inspectorRef = useRef<HTMLElement>(null);
+  const {
+    targetRef: inspectorRef,
+    scrollOnCompactViewport,
+  } = useAccessibleScrollTarget();
   const selected = snapshot.rows.find(({ id }) => id === selectedScenarioId) ?? snapshot.rows[0]!;
 
   const activate = (scenarioId: string): void => {
     onSelectScenario(scenarioId);
-    if (globalThis.matchMedia?.('(max-width: 899px)').matches) {
-      inspectorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    scrollOnCompactViewport();
   };
 
   return (

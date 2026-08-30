@@ -22,8 +22,9 @@ const sourceFiles = (await filesUnder(sourceRoot)).filter((file) =>
   ['.ts', '.tsx'].includes(extname(file))
     && !file.includes('.test.')
     && !file.startsWith(join(sourceRoot, 'test')));
-await scanSourceFiles(sourceFiles, sourceRoot, resolve('tsconfig.app.json'));
+const sourceResult = await scanSourceFiles(sourceFiles, sourceRoot, resolve('tsconfig.app.json'));
 const assetCounts = await scanBuiltAssets(distRoot, filesUnder);
 
-console.log(`Structural security gate passed: ${sourceFiles.length} production TS/TSX files, symbol-aware closed capability/reflection policy.`);
+console.log(`Structural security gate passed: ${sourceResult.sourceFileCount} production TS/TSX files, closed-world origin/effect policy.`);
+console.log(`Host effect report: ${sourceResult.effectReport}`);
 console.log(`Built asset gate passed: ${JSON.stringify(assetCounts)}, strict CSP/local references/zero network primitives, documented React and Zod vendor allowlists.`);

@@ -1,4 +1,6 @@
-import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useId, useState, type KeyboardEvent, type ReactNode } from 'react';
+
+import { useAccessibleFocusRegistry } from '../../platform/browser-capabilities';
 
 export interface AccessibleTab {
   readonly id: string;
@@ -21,14 +23,14 @@ export function AccessibleTabs({
 }: AccessibleTabsProps) {
   const prefix = useId();
   const [selectedId, setSelectedId] = useState(defaultTabId);
-  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const tabFocus = useAccessibleFocusRegistry();
   const selected = tabs.find(({ id }) => id === selectedId) ?? tabs[0];
 
   const selectAt = (index: number): void => {
     const next = tabs[index];
     if (next === undefined) return;
     setSelectedId(next.id);
-    tabRefs.current.get(next.id)?.focus();
+    tabFocus.focus(next.id);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
@@ -52,10 +54,7 @@ export function AccessibleTabs({
           return (
             <button
               key={tab.id}
-              ref={(node) => {
-                if (node === null) tabRefs.current.delete(tab.id);
-                else tabRefs.current.set(tab.id, node);
-              }}
+              ref={tabFocus.refFor(tab.id)}
               id={`${prefix}-${tab.id}-tab`}
               type="button"
               role="tab"

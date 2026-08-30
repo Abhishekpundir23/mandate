@@ -2,208 +2,216 @@ import { relative, resolve } from 'node:path';
 
 import ts from 'typescript';
 
+import { normalizeProgram } from './security-assignment-analysis.mjs';
 import {
-  inspectAssignmentPattern,
-  isAssignmentOperator,
-  isDynamicWriteTarget,
-} from './security-assignment-analysis.mjs';
-
-import {
-  ambientRoots,
+  approvedMediaQueries,
   assertSourceImport,
+  browserFacadePath,
+  effectIsBudgeted,
   forbiddenGlobalIdentifiers,
-  forbiddenProperties,
+  forbiddenHostEffects,
+  hostEffects,
   privilegedTags,
-  receiverIndependentSinks,
-  safeAmbientIdentifiers,
-  safeAmbientPaths,
-  safeReflectionSites,
 } from './security-source-policy.mjs';
 import {
-  dynamicElementAccessIsUnsafe,
+  createOriginAnalysis,
+  describeOrigin,
+  expressionTypeIsUncertain,
   isActualGlobal,
-  isProvenSafeLocalData,
-  resolvedSymbol,
-  staticString,
+  isProvenMutableLocal,
 } from './security-type-analysis.mjs';
 
-function propertyName(node, constants, checker) {
-  if (ts.isPropertyAccessExpression(node)) return node.name.text;
-  return ts.isElementAccessExpression(node) && node.argumentExpression !== undefined
-    ? staticString(node.argumentExpression, constants, checker)
-    : undefined;
+const dangerousProjectionNames = new Set([
+  '__proto__',
+  'constructor',
+  'getOwnPropertyDescriptor',
+  'getOwnPropertyDescriptors',
+  'getPrototypeOf',
+  'prototype',
+]);
+
+const ambientNames = new Set([
+  'window',
+  'globalThis',
+  'self',
+  'document',
+  'navigator',
+  'location',
+  'history',
+]);
+
+function nodeLocation(node) {
+  const file = node.getSourceFile();
+  const point = file.getLineAndCharacterOfPosition(node.getStart(file));
+  return {
+    file: relative('.', file.fileName),
+    line: point.line + 1,
+    column: point.character + 1,
+  };
 }
 
-function bindingPropertyName(node, constants, checker) {
-  if (!ts.isObjectBindingPattern(node.parent)) return undefined;
-  const property = node.propertyName;
-  if (property === undefined) return ts.isIdentifier(node.name) ? node.name.text : undefined;
-  if (ts.isIdentifier(property) || ts.isStringLiteralLike(property) || ts.isNumericLiteral(property)) {
-    return property.text;
-  }
-  return ts.isComputedPropertyName(property)
-    ? staticString(property.expression, constants, checker)
-    : undefined;
+function diagnostic(node, code, message, provenance) {
+  const location = nodeLocation(node);
+  return {
+    ...location,
+    code,
+    message,
+    provenance: provenance ?? 'syntax-derived closed-world policy',
+  };
 }
 
-function ambientPath(node, constants, checker) {
-  if (ts.isIdentifier(node) && ambientRoots.has(node.text) && isActualGlobal(node, checker)) return [node.text];
-  if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-    const base = ambientPath(node.expression, constants, checker);
-    const property = propertyName(node, constants, checker);
-    return base === undefined || property === undefined ? undefined : [...base, property];
-  }
-  return undefined;
+function formatDiagnostic(item) {
+  return `${item.file}:${item.line}:${item.column} [${item.code}] ${item.message}; provenance: ${item.provenance}`;
 }
 
-function outermostAccess(node) {
+function isPropertyNameIdentifier(node) {
+  const parent = node.parent;
+  return (ts.isPropertyAccessExpression(parent) && parent.name === node)
+    || (ts.isPropertyAssignment(parent) && parent.name === node)
+    || (ts.isShorthandPropertyAssignment(parent) && parent.name === node)
+    || (ts.isMethodDeclaration(parent) && parent.name === node)
+    || (ts.isPropertyDeclaration(parent) && parent.name === node)
+    || (ts.isPropertySignature(parent) && parent.name === node)
+    || (ts.isBindingElement(parent) && parent.propertyName === node)
+    || (ts.isImportSpecifier(parent) && parent.propertyName === node);
+}
+
+function outerAccess(node) {
   let current = node;
   while ((ts.isPropertyAccessExpression(current.parent) || ts.isElementAccessExpression(current.parent))
     && current.parent.expression === current) current = current.parent;
   return current;
 }
 
-function isNestedAccess(node) {
-  return (ts.isPropertyAccessExpression(node.parent) || ts.isElementAccessExpression(node.parent))
-    && node.parent.expression === node;
+function containingCallee(node) {
+  const access = outerAccess(node);
+  const parent = access.parent;
+  return (ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === access
+    ? parent
+    : undefined;
 }
 
-function containsAmbientRoot(node, checker) {
-  let found = false;
-  const inspect = (candidate) => {
-    if (ts.isFunctionLike(candidate)) return;
-    if (ts.isIdentifier(candidate) && ambientRoots.has(candidate.text)
-      && isActualGlobal(candidate, checker)) found = true;
-    if (!found) ts.forEachChild(candidate, inspect);
-  };
-  inspect(node);
-  return found;
+function jsxTag(node) {
+  return node.tagName.getText(node.getSourceFile()).toLowerCase();
 }
 
-function identifierIsPropertyName(node) {
-  return (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)
-    || (ts.isPropertyAssignment(node.parent) && node.parent.name === node)
-    || (ts.isMethodDeclaration(node.parent) && node.parent.name === node)
-    || (ts.isPropertyDeclaration(node.parent) && node.parent.name === node)
-    || (ts.isPropertySignature(node.parent) && node.parent.name === node);
+function targetKey(write, analysis) {
+  if (write.literalKey !== undefined) return write.literalKey;
+  if (write.keyNode !== undefined) return analysis.staticKey(write.keyNode);
+  return undefined;
 }
 
-function enclosingFunctionName(node) {
-  let current = node.parent;
-  while (current !== undefined) {
-    if (ts.isFunctionDeclaration(current) && current.name !== undefined) return current.name.text;
-    current = current.parent;
+function mutationEffect(receiver) {
+  return receiver.tags.has('UiCell') ? 'HOST_UI_STATE' : 'HOST_LOCAL_MUTATION';
+}
+
+function getterFreeObject(node) {
+  let current = node;
+  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)
+    || ts.isTypeAssertionExpression(current) || ts.isSatisfiesExpression(current)) {
+    current = current.expression;
+  }
+  return ts.isObjectLiteralExpression(current) && current.properties.every((property) => {
+    if (ts.isSpreadAssignment(property) || ts.isGetAccessor(property) || ts.isSetAccessor(property)) return false;
+    if (ts.isPropertyAssignment(property)) {
+      const name = property.name.getText().replace(/^['"]|['"]$/gu, '');
+      return name !== '__proto__' && name !== 'get' && name !== 'set';
+    }
+    return ts.isShorthandPropertyAssignment(property);
+  });
+}
+
+function descriptorIsDataOnly(node) {
+  let current = node;
+  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)
+    || ts.isTypeAssertionExpression(current) || ts.isSatisfiesExpression(current)) {
+    current = current.expression;
+  }
+  if (!ts.isObjectLiteralExpression(current)) return false;
+  return current.properties.every((property) => {
+    if (ts.isSpreadAssignment(property) || ts.isGetAccessor(property) || ts.isSetAccessor(property)) return false;
+    const name = property.name?.getText().replace(/^['"]|['"]$/gu, '');
+    return name !== 'get' && name !== 'set' && name !== '__proto__';
+  });
+}
+
+function descriptorMapIsDataOnly(node) {
+  let current = node;
+  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)
+    || ts.isTypeAssertionExpression(current) || ts.isSatisfiesExpression(current)) {
+    current = current.expression;
+  }
+  return ts.isObjectLiteralExpression(current) && current.properties.every((property) =>
+    ts.isPropertyAssignment(property) && descriptorIsDataOnly(property.initializer));
+}
+
+function callName(node, analysis) {
+  const callee = ts.isTaggedTemplateExpression(node) ? node.tag : node.expression;
+  if (ts.isIdentifier(callee)) return callee.text;
+  if (ts.isPropertyAccessExpression(callee)) return callee.name.text;
+  if (ts.isElementAccessExpression(callee) && callee.argumentExpression !== undefined) {
+    return analysis.staticString(callee.argumentExpression);
   }
   return undefined;
 }
 
-function isSafeReflection(node, property, file, checker) {
-  if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return false;
-  if (!ts.isIdentifier(node.expression)
-    || !['Object', 'Array'].includes(node.expression.text)
-    || !isActualGlobal(node.expression, checker)) return false;
-  const functionName = enclosingFunctionName(node);
-  return functionName !== undefined
-    && safeReflectionSites.has(`${relative('.', file)}#${functionName}#${property}`);
+function callArguments(node) {
+  return ts.isTaggedTemplateExpression(node) ? [] : [...(node.arguments ?? [])];
 }
 
-function collectConstants(tree, checker) {
-  const constants = new Map();
-  const visit = (node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)
-      && node.initializer !== undefined && (node.parent.flags & ts.NodeFlags.Const) !== 0) {
-      const symbol = resolvedSymbol(node.name, checker);
-      const value = staticString(node.initializer, constants, checker);
-      if (symbol !== undefined && value !== undefined) constants.set(symbol, value);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(tree);
-  return constants;
-}
-
-async function scanSource(file, tree, checker, sourceRoot) {
-  const constants = collectConstants(tree, checker);
+function importedSpecifiers(tree) {
   const imports = [];
-  const violations = [];
-  const visit = (node) => {
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) imports.push(node.moduleSpecifier.text);
-    if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined
-      && ts.isStringLiteral(node.moduleSpecifier)) imports.push(node.moduleSpecifier.text);
-    if (ts.isImportEqualsDeclaration(node)) {
-      if (ts.isExternalModuleReference(node.moduleReference)
-        && node.moduleReference.expression !== undefined
-        && ts.isStringLiteral(node.moduleReference.expression)) imports.push(node.moduleReference.expression.text);
-      else violations.push('TypeScript import alias');
+  for (const statement of tree.statements) {
+    if ((ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement))
+      && statement.moduleSpecifier !== undefined && ts.isStringLiteral(statement.moduleSpecifier)) {
+      imports.push({ node: statement.moduleSpecifier, specifier: statement.moduleSpecifier.text });
     }
-    if (ts.isCallExpression(node)) {
-      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) violations.push('dynamic import');
-      if (ts.isIdentifier(node.expression) && node.expression.text === 'require'
-        && isActualGlobal(node.expression, checker)) violations.push('require');
-      const callPath = ambientPath(node.expression, constants, checker)?.join('.');
-      const safeCall = callPath !== undefined && safeAmbientPaths.has(callPath);
-      if (!safeCall && !safeAmbientIdentifiers.has(node.expression.getText(tree))
-        && node.arguments.some((argument) => containsAmbientRoot(argument, checker))) {
-        violations.push('ambient authority passed to unknown call');
-      }
-      if ((ts.isPropertyAccessExpression(node.expression) || ts.isElementAccessExpression(node.expression))
-        && propertyName(node.expression, constants, checker) === 'createElement') {
-        const tag = node.arguments[0] === undefined ? undefined : staticString(node.arguments[0], constants, checker);
-        if (tag === undefined || privilegedTags.has(tag.toLowerCase())) violations.push('privileged element creation');
-      }
+    if (ts.isImportEqualsDeclaration(statement)) {
+      const expression = ts.isExternalModuleReference(statement.moduleReference)
+        ? statement.moduleReference.expression
+        : undefined;
+      imports.push({
+        node: statement,
+        specifier: expression !== undefined && ts.isStringLiteral(expression)
+          ? expression.text
+          : '<TypeScript import alias>',
+        importEquals: true,
+      });
     }
-    if (ts.isIdentifier(node) && !identifierIsPropertyName(node) && isActualGlobal(node, checker)) {
-      if (forbiddenGlobalIdentifiers.has(node.text)) violations.push(`forbidden global identifier ${node.text}`);
-      if (ambientRoots.has(node.text)) {
-        const path = ambientPath(outermostAccess(node), constants, checker);
-        if (path === undefined || !safeAmbientPaths.has(path.join('.'))) violations.push(`ambient authority ${node.text}`);
-      }
-    }
-    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-      const path = ambientPath(node, constants, checker);
-      const name = propertyName(node, constants, checker);
-      if (dynamicElementAccessIsUnsafe(node, name, checker)) violations.push('forbidden dynamic capability access');
-      if (ts.isElementAccessExpression(node) && name === undefined && isDynamicWriteTarget(node)
-        && !isProvenSafeLocalData(node.expression, checker)) {
-        violations.push('dynamic write receiver is not proven safe local data');
-      }
-      if (name === undefined && ambientPath(node.expression, constants, checker) !== undefined) violations.push('unknown computed ambient property');
-      if (name !== undefined && forbiddenProperties.has(name)
-        && (receiverIndependentSinks.has(name) || path !== undefined)
-        && !isSafeReflection(node, name, file, checker)) violations.push(`forbidden property ${name}`);
-      if (!isNestedAccess(node) && path !== undefined && !safeAmbientPaths.has(path.join('.'))) violations.push(`ambient authority ${path.join('.')}`);
-    }
-    if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
-      const name = bindingPropertyName(node, constants, checker);
-      if (name === undefined && ts.isComputedPropertyName(node.propertyName)) {
-        violations.push('unknown computed binding property');
-      } else if (name !== undefined
-        && (receiverIndependentSinks.has(name) || ['Reflect', 'Proxy'].includes(name))) {
-        violations.push(`forbidden binding property ${name}`);
-      }
-    }
-    if (ts.isVariableDeclaration(node) && node.initializer !== undefined
-      && ambientPath(node.initializer, constants, checker) !== undefined) violations.push('ambient authority alias/destructure');
-    if (ts.isBinaryExpression(node)
-      && isAssignmentOperator(node.operatorToken.kind)) {
-      if (ambientPath(node.right, constants, checker) !== undefined) violations.push('ambient authority assignment');
-      if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-        inspectAssignmentPattern(node.left, node.right, constants, checker, violations);
-      }
-    }
-    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
-      const tag = node.tagName.getText(tree).toLowerCase();
-      if (privilegedTags.has(tag)) violations.push(`privileged JSX ${tag}`);
-      for (const property of node.attributes.properties) {
-        if (ts.isJsxAttribute(property) && property.name.getText(tree) === 'dangerouslySetInnerHTML') violations.push('unsafe JSX HTML');
-      }
-    }
-    if (ts.isStringLiteralLike(node) && /(?:https?:)?\/\//u.test(node.text)) violations.push('source endpoint literal');
-    ts.forEachChild(node, visit);
-  };
-  visit(tree);
-  if (violations.length > 0) throw new Error(`${relative('.', file)} violates structural security policy: ${[...new Set(violations)].join(', ')}.`);
-  await Promise.all(imports.map((specifier) => assertSourceImport(file, specifier, sourceRoot)));
+  }
+  return imports;
+}
+
+function rawAmbientEffect(node) {
+  const text = outerAccess(node).getText();
+  if (/matchMedia/u.test(text)) return 'HOST_VIEWPORT_READ';
+  if (/setInterval|clearInterval/u.test(text)) return 'HOST_TIMER';
+  if (/getElementById/u.test(text)) return 'HOST_DOM_MOUNT';
+  if (/location|history/u.test(text)) return 'HOST_NAVIGATION';
+  if (/navigator/u.test(text)) return 'HOST_NETWORK';
+  return 'HOST_UNKNOWN';
+}
+
+function addEffect(report, file, effect) {
+  report.totals.set(effect, (report.totals.get(effect) ?? 0) + 1);
+  if (!report.modules.has(file)) report.modules.set(file, new Map());
+  const module = report.modules.get(file);
+  module.set(effect, (module.get(effect) ?? 0) + 1);
+}
+
+function formatEffectReport(report) {
+  const effects = hostEffects.map((effect) => `${effect}=${report.totals.get(effect) ?? 0}`).join(', ');
+  const forbidden = [...forbiddenHostEffects]
+    .reduce((total, effect) => total + (report.totals.get(effect) ?? 0), 0);
+  const unknown = report.totals.get('HOST_UNKNOWN') ?? 0;
+  const modules = [...report.modules.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([file, values]) => `${file}[${[...values.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([effect, count]) => `${effect}:${count}`)
+      .join('|')}]`)
+    .join(', ');
+  return `${effects}; forbidden=${forbidden}; unknown=${unknown}; modules=${modules}`;
 }
 
 export async function scanSourceFiles(sourceFiles, sourceRoot, configPath) {
@@ -213,10 +221,208 @@ export async function scanSourceFiles(sourceFiles, sourceRoot, configPath) {
   if (parsed.errors.length > 0) throw new Error('Security gate found TypeScript configuration diagnostics.');
   const program = ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options });
   const checker = program.getTypeChecker();
-  await Promise.all(sourceFiles.map(async (file) => {
+  const trees = [];
+  const diagnostics = [];
+
+  for (const file of [...sourceFiles].sort()) {
     const tree = program.getSourceFile(resolve(file));
     if (tree === undefined) throw new Error(`${relative('.', file)} is absent from parsed tsconfig.app.json.`);
     if (program.getSyntacticDiagnostics(tree).length > 0) throw new Error(`${relative('.', file)} has TypeScript parse diagnostics.`);
-    await scanSource(file, tree, checker, sourceRoot);
-  }));
+    trees.push(tree);
+    for (const item of importedSpecifiers(tree)) {
+      if (item.importEquals === true) {
+        diagnostics.push(diagnostic(item.node, 'IMPORT_ALIAS', 'TypeScript import aliases are outside the production subset'));
+        continue;
+      }
+      try {
+        await assertSourceImport(file, item.specifier, sourceRoot);
+      } catch (error) {
+        diagnostics.push(diagnostic(item.node, 'IMPORT_BOUNDARY', error instanceof Error ? error.message : String(error)));
+      }
+    }
+  }
+
+  const ir = normalizeProgram(trees);
+  const analysis = createOriginAnalysis({ checker, sourceFiles: trees, ir });
+  const report = { totals: new Map(), modules: new Map() };
+  const hasSourceDeclaration = (node) => {
+    const symbol = checker.getSymbolAtLocation(node);
+    return symbol?.declarations?.some((declaration) => {
+      const file = resolve(declaration.getSourceFile().fileName);
+      return file === sourceRoot || file.startsWith(`${sourceRoot}/`);
+    }) ?? false;
+  };
+
+  const recordEffect = (node, effect, message, provenance) => {
+    const file = relative('.', node.getSourceFile().fileName);
+    addEffect(report, file, effect);
+    if (forbiddenHostEffects.has(effect) || !effectIsBudgeted(node.getSourceFile().fileName, effect)) {
+      diagnostics.push(diagnostic(
+        node,
+        forbiddenHostEffects.has(effect) ? 'FORBIDDEN_EFFECT' : 'MODULE_EFFECT_BUDGET',
+        `${message} emits ${effect}, which is ${forbiddenHostEffects.has(effect) ? 'forbidden' : 'outside this module effect budget'}`,
+        provenance,
+      ));
+    }
+  };
+
+  for (const unsupported of ir.unsupported) {
+    diagnostics.push(diagnostic(unsupported.node, 'UNSUPPORTED_TARGET', `unsupported ${unsupported.channel} target is outside the closed production subset`));
+  }
+
+  for (const write of ir.writes) {
+    const receiver = analysis.originOf(write.receiver);
+    const key = targetKey(write, analysis);
+    if (!isProvenMutableLocal(receiver)) {
+      diagnostics.push(diagnostic(
+        write.node,
+        'UNPROVEN_WRITE_RECEIVER',
+        `${write.channel} write to ${write.receiver.getText()} is not a proven fresh local allocation or UI cell (${describeOrigin(receiver)})`,
+        `${write.receiver.getText()} -> ${describeOrigin(receiver)}`,
+      ));
+      continue;
+    }
+    if (key === '__proto__') {
+      diagnostics.push(diagnostic(write.node, 'PROTOTYPE_WRITE', 'writes to __proto__ are forbidden'));
+      continue;
+    }
+    if (key === undefined && !receiver.nullPrototype) {
+      diagnostics.push(diagnostic(
+        write.node,
+        'UNKNOWN_PROTOTYPE_KEY',
+        'prototype-bearing local object writes require a finite safe key; unknown keys are limited to owned null-prototype dictionaries',
+        describeOrigin(receiver),
+      ));
+      continue;
+    }
+    recordEffect(write.node, mutationEffect(receiver), `${write.channel} local write`, describeOrigin(receiver));
+  }
+
+  for (const call of ir.calls) {
+    const resolution = analysis.resolveCall(call.node);
+    const name = callName(call.node, analysis);
+    const args = callArguments(call.node);
+    for (const effect of resolution.effects) {
+      recordEffect(call.node, effect, `${call.kind.toLowerCase()} ${call.node.getText().slice(0, 120)}`, `${resolution.description}; ${describeOrigin(resolution.callee)}`);
+    }
+    for (const mutation of resolution.mutationReceivers) {
+      if (!isProvenMutableLocal(mutation.receiver)) {
+        diagnostics.push(diagnostic(
+          call.node,
+          'UNPROVEN_MUTATION_RECEIVER',
+          `${mutation.label} is not a proven fresh local allocation or UI cell (${describeOrigin(mutation.receiver)})`,
+          `${call.node.getText().slice(0, 120)} -> ${mutation.label} -> ${describeOrigin(mutation.receiver)}`,
+        ));
+      }
+    }
+    if (resolution.description.includes('Object.assign')) {
+      for (const source of args.slice(1)) {
+        if (!getterFreeObject(source)) diagnostics.push(diagnostic(source, 'UNPROVEN_ASSIGN_SOURCE', 'Object.assign sources must be direct owned getter-free object literals'));
+      }
+    }
+    const defineProperty = name === 'defineProperty' || resolution.description.includes('defineProperty');
+    const defineProperties = name === 'defineProperties' || resolution.description.includes('defineProperties');
+    if (defineProperty || defineProperties) {
+      const descriptor = defineProperties ? args[1] : args[2];
+      const safe = descriptor !== undefined && (defineProperties
+        ? descriptorMapIsDataOnly(descriptor)
+        : descriptorIsDataOnly(descriptor));
+      if (!safe) {
+        diagnostics.push(diagnostic(call.node, 'ACCESSOR_DESCRIPTOR', 'only direct data-only descriptors are supported; accessors and unresolved descriptor maps are forbidden'));
+      }
+    }
+    if (['call', 'apply', 'bind'].includes(name ?? '')) {
+      const callee = ts.isCallExpression(call.node) || ts.isNewExpression(call.node) ? call.node.expression : call.node.tag;
+      const receiver = (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) ? analysis.originOf(callee.expression) : undefined;
+      if (receiver === undefined || receiver.callables.some((entry) => !['function', 'react'].includes(entry.kind))) {
+        diagnostics.push(diagnostic(call.node, 'UNRESOLVED_META_CALL', `${name} is allowed only on a directly analyzed local callable`, receiver === undefined ? undefined : describeOrigin(receiver)));
+      }
+    }
+    if (name === 'matchMedia') {
+      const query = args[0] === undefined ? undefined : analysis.staticString(args[0]);
+      if (query === undefined || !approvedMediaQueries.has(query)) diagnostics.push(diagnostic(call.node, 'UNAPPROVED_MEDIA_QUERY', 'matchMedia requires an approved finite query'));
+    }
+    if (name === 'getElementById') {
+      const id = args[0] === undefined ? undefined : analysis.staticString(args[0]);
+      if (id !== 'root') diagnostics.push(diagnostic(call.node, 'UNAPPROVED_DOM_MOUNT', 'the browser facade may mount only into hard-coded #root'));
+    }
+  }
+
+  for (const binding of ir.bindings) {
+    for (const step of binding.projection) {
+      const key = typeof step === 'object' ? step.property ?? (step.keyNode === undefined ? undefined : analysis.staticString(step.keyNode)) : undefined;
+      if (key !== undefined && dangerousProjectionNames.has(String(key))) {
+        diagnostics.push(diagnostic(binding.node, 'DANGEROUS_BINDING_PROJECTION', `binding projection ${String(key)} is outside the closed callable subset`));
+      }
+    }
+  }
+
+  for (const tree of trees) {
+    const isFacade = relative('.', tree.fileName) === browserFacadePath;
+    const visit = (node) => {
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) diagnostics.push(diagnostic(node, 'DYNAMIC_IMPORT', 'dynamic import is forbidden'));
+      if (ts.isIdentifier(node) && !isPropertyNameIdentifier(node)
+        && (isActualGlobal(node, checker) || !hasSourceDeclaration(node))) {
+        if (forbiddenGlobalIdentifiers.has(node.text)) {
+          const effect = node.text === 'eval' || node.text === 'Function' || node.text === 'Proxy'
+            ? 'HOST_DYNAMIC_CODE'
+            : ['localStorage', 'sessionStorage', 'indexedDB', 'caches'].includes(node.text)
+              ? 'HOST_STORAGE'
+              : ['location', 'history'].includes(node.text)
+                ? 'HOST_NAVIGATION'
+                : ['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'navigator'].includes(node.text)
+                  ? 'HOST_NETWORK'
+                  : 'HOST_UNKNOWN';
+          recordEffect(node, effect, `raw forbidden global ${node.text}`, `actual global symbol ${node.text}`);
+        } else if (ambientNames.has(node.text) && containingCallee(node) === undefined) {
+          recordEffect(node, rawAmbientEffect(node), `raw ambient authority ${outerAccess(node).getText()}`, `actual ambient global ${node.text}`);
+        }
+      }
+      if (ts.isElementAccessExpression(node)) {
+        const key = node.argumentExpression === undefined ? undefined : analysis.staticKey(node.argumentExpression);
+        const receiver = analysis.originOf(node.expression);
+        const result = analysis.originOf(node);
+        if (key === undefined && (receiver.tags.has('Ambient') || result.tags.has('Callable')
+          || expressionTypeIsUncertain(node, checker)
+          || (ts.isReturnStatement(node.parent) && !isProvenMutableLocal(receiver)))) {
+          diagnostics.push(diagnostic(node, 'UNKNOWN_COMPUTED_ACCESS', 'computed access must resolve to a finite key or proven local inert data', `${describeOrigin(receiver)} -> ${describeOrigin(result)}`));
+        }
+        if (key === 'constructor' && (result.tags.has('Callable') || result.tags.has('Unknown'))) diagnostics.push(diagnostic(node, 'DYNAMIC_CONSTRUCTOR_ACCESS', 'dynamic constructor access is forbidden', describeOrigin(result)));
+      }
+      if (ts.isPropertyAccessExpression(node) && node.name.text === 'constructor') {
+        const receiver = analysis.originOf(node.expression);
+        if (receiver.tags.has('Callable') || receiver.tags.has('Unknown') || receiver.tags.has('Ambient')) diagnostics.push(diagnostic(node, 'CONSTRUCTOR_ACCESS', 'callable or authority constructor access is forbidden', describeOrigin(receiver)));
+      }
+      if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+        const tag = jsxTag(node);
+        if (privilegedTags.has(tag)) diagnostics.push(diagnostic(node, 'PRIVILEGED_JSX', `privileged JSX element ${tag} is forbidden`));
+        for (const property of node.attributes.properties) {
+          if (ts.isJsxAttribute(property) && property.name.getText() === 'dangerouslySetInnerHTML') diagnostics.push(diagnostic(property, 'UNSAFE_JSX_HTML', 'dangerouslySetInnerHTML is forbidden'));
+        }
+      }
+      if (ts.isStringLiteralLike(node) && /(?:https?:|wss?:)?\/\//u.test(node.text)) diagnostics.push(diagnostic(node, 'ENDPOINT_LITERAL', 'product source endpoint literals are forbidden'));
+      if (isFacade && ts.isVariableStatement(node) && node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+        for (const declaration of node.declarationList.declarations) {
+          if (declaration.initializer !== undefined) {
+            const value = analysis.originOf(declaration.initializer);
+            if (value.tags.has('Ambient') || value.tags.has('OpaqueCapability')) diagnostics.push(diagnostic(declaration, 'FACADE_CAPABILITY_ESCAPE', 'browser facade cannot export raw or opaque host values', describeOrigin(value)));
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(tree);
+  }
+
+  const unique = new Map();
+  for (const item of diagnostics) unique.set(`${item.file}:${item.line}:${item.column}:${item.code}:${item.message}`, item);
+  const sorted = [...unique.values()].sort((left, right) => left.file.localeCompare(right.file)
+    || left.line - right.line || left.column - right.column || left.code.localeCompare(right.code)
+    || left.message.localeCompare(right.message));
+  if (sorted.length > 0) throw new Error(`Closed-world source security gate found ${sorted.length} violation(s):\n${sorted.map(formatDiagnostic).join('\n')}`);
+  return {
+    sourceFileCount: trees.length,
+    effectReport: formatEffectReport(report),
+    effectTotals: Object.fromEntries(hostEffects.map((effect) => [effect, report.totals.get(effect) ?? 0])),
+  };
 }

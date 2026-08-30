@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { mediaQueryMatches, subscribeMediaQuery } from '../../platform/browser-capabilities';
 import type { ReplayFrame } from '../../runtime/replay';
 import { AccessibleTabs } from '../primitives/AccessibleTabs';
 import { StatusIcon } from '../primitives/StatusIcon';
@@ -11,8 +12,7 @@ interface ComparisonPanelProps {
 }
 
 function desktopViewport(): boolean {
-  return typeof window.matchMedia === 'function'
-    && window.matchMedia('(min-width: 1200px)').matches;
+  return mediaQueryMatches('(min-width: 1200px)');
 }
 
 export function ComparisonPanel({ frame, flagship }: ComparisonPanelProps) {
@@ -23,11 +23,7 @@ export function ComparisonPanel({ frame, flagship }: ComparisonPanelProps) {
   const noAuthorityChange = currentChange?.ops.every(({ op }) => op === 'NO_CHANGE') ?? false;
 
   useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return undefined;
-    const query = window.matchMedia('(min-width: 1200px)');
-    const update = (): void => setDesktop(query.matches);
-    query.addEventListener('change', update);
-    return () => query.removeEventListener('change', update);
+    return subscribeMediaQuery('(min-width: 1200px)', setDesktop);
   }, []);
 
   const tabs = [

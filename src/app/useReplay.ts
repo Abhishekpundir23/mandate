@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 
+import {
+  cancelReplayTimer,
+  mediaQueryMatches,
+  scheduleReplayTick,
+} from '../platform/browser-capabilities';
 import type { ReplayFrame } from '../runtime/replay';
 
 export type ReplayStatus = 'idle' | 'running' | 'complete';
@@ -30,8 +35,7 @@ function replayReducer(state: ReplayState, action: ReplayAction): ReplayState {
 }
 
 function prefersReducedMotion(): boolean {
-  return typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return mediaQueryMatches('(prefers-reduced-motion: reduce)');
 }
 
 export interface ReplayController {
@@ -62,10 +66,10 @@ export function useReplay(frames: readonly ReplayFrame[]): ReplayController {
 
   useEffect(() => {
     if (state.status !== 'running') return undefined;
-    const timer = window.setInterval(() => {
+    const timer = scheduleReplayTick(() => {
       dispatch({ type: 'ADVANCE', finalStep });
-    }, 180);
-    return () => window.clearInterval(timer);
+    });
+    return () => cancelReplayTimer(timer);
   }, [finalStep, state.status]);
 
   const run = useCallback(() => {
