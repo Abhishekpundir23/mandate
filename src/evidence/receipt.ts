@@ -1,6 +1,7 @@
 import { canonicalize } from '../domain/canonical';
 import { evaluatePredicate } from '../domain/predicates';
 import type {
+  ActionProposal,
   ActionSelector,
   Clause,
   CompletionReceipt,
@@ -13,6 +14,13 @@ import type {
 } from '../domain/types';
 import { activeClauses } from '../mandate/ledger';
 import type { RuntimeEvent } from '../runtime/runner';
+import {
+  emittedAuthorityMatchesFixture,
+  fixtureActionForEvent,
+  fixtureVersionForAction,
+  rebuildFixtureAuthority,
+  type FixtureAuthority,
+} from './authority';
 
 export interface EvidenceCompletionReceipt extends CompletionReceipt {
   readonly evidenceIds: readonly string[];
@@ -20,6 +28,7 @@ export interface EvidenceCompletionReceipt extends CompletionReceipt {
   readonly mustPredicatesSatisfied: boolean;
   readonly evidencePredicatesSatisfied: boolean;
   readonly exactState: boolean;
+  readonly authorityIntegrity: boolean;
 }
 export interface ReceiptTraceInput {
   readonly runner: 'standard' | 'mandate';
@@ -32,6 +41,8 @@ export interface ReceiptTraceInput {
 interface SuccessfulExecution {
   readonly event: RuntimeEvent;
   readonly observation: ToolObservation;
+  readonly action: ActionProposal;
+  readonly version: ContractVersion;
 }
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): Readonly<T> {
@@ -50,41 +61,52 @@ function deepFreeze<T>(value: T, seen = new WeakSet<object>()): Readonly<T> {
   return Object.freeze(value);
 }
 
-function selectorMatches(event: RuntimeEvent, selector: ActionSelector | undefined): boolean {
+function selectorMatches(action: ActionProposal, selector: ActionSelector | undefined): boolean {
   return selector !== undefined
-    && (selector.tool === undefined || event.tool === selector.tool)
-    && (selector.operation === undefined || event.operation === selector.operation)
-    && (selector.resource === undefined || event.resource === selector.resource)
-    && (selector.effect === undefined || event.effect === selector.effect);
+    && (selector.tool === undefined || action.tool === selector.tool)
+    && (selector.operation === undefined || action.operation === selector.operation)
+    && (selector.resource === undefined || action.resource === selector.resource)
+    && (selector.effect === undefined || action.effect === selector.effect);
 }
 
 function denialMatches(
-  event: RuntimeEvent,
+  action: ActionProposal,
   denial: Clause,
   version: ContractVersion,
 ): boolean {
   if (denial.kind === 'MUST_NOT') {
-    return selectorMatches(event, denial.selector);
+    return selectorMatches(action, denial.selector);
   }
   if (denial.kind !== 'REVOKED') {
     return false;
   }
-  if (selectorMatches(event, denial.revokedSelector)) {
+  if (selectorMatches(action, denial.revokedSelector)) {
     return true;
   }
   const targetIds = new Set(denial.targetClauseIds ?? []);
   return version.clauses.some((clause) =>
-    targetIds.has(clause.id) && selectorMatches(event, clause.selector));
+    targetIds.has(clause.id) && selectorMatches(action, clause.selector));
 }
 
-function successfulExecutions(events: readonly RuntimeEvent[]): readonly SuccessfulExecution[] {
+function successfulExecutions(
+  events: readonly RuntimeEvent[],
+  scenario: ScenarioDefinition,
+  authority: FixtureAuthority,
+): readonly SuccessfulExecution[] {
   return events.flatMap((event) => {
     if (event.type !== 'TOOL_OBSERVATION'
       || event.observation === undefined
       || event.observation.status !== 'SUCCEEDED') {
       return [];
     }
-    return [{ event, observation: event.observation }];
+    const action = fixtureActionForEvent(event, scenario);
+    const version = versionForEvent(event, scenario, authority);
+    if (action === undefined
+      || version === undefined
+      || event.observation.actionId !== action.id) {
+      return [];
+    }
+    return [{ event, observation: event.observation, action, version }];
   });
 }
 
@@ -115,23 +137,20 @@ function supportingEvidence(
 
 function versionForEvent(
   event: RuntimeEvent,
-  versions: readonly ContractVersion[],
+  scenario: ScenarioDefinition,
+  authority: FixtureAuthority,
 ): ContractVersion | undefined {
-  return versions.find(({ version }) => version === event.contractVersion);
+  return fixtureVersionForAction(event, scenario, authority);
 }
 
 function actionClauseSatisfied(
   clause: Clause,
   executions: readonly SuccessfulExecution[],
-  versions: readonly ContractVersion[],
 ): boolean {
-  return executions.some(({ event }) => {
-    const version = versionForEvent(event, versions);
-    return version !== undefined
-      && version.version >= clause.introducedIn
+  return executions.some(({ action, version }) =>
+    version.version >= clause.introducedIn
       && activeClauses(version).some(({ id }) => id === clause.id)
-      && selectorMatches(event, clause.selector);
-  });
+      && selectorMatches(action, clause.selector));
 }
 
 function evidenceClauseSatisfied(
@@ -156,7 +175,9 @@ export function buildCompletionReceipt(
   trace: ReceiptTraceInput,
   scenario: ScenarioDefinition,
 ): EvidenceCompletionReceipt {
-  const executions = successfulExecutions(trace.events);
+  const authority = rebuildFixtureAuthority(scenario);
+  const authorityIntegrity = emittedAuthorityMatchesFixture(trace, scenario, authority);
+  const executions = successfulExecutions(trace.events, scenario, authority);
   const claims = trace.events
     .filter((event) => event.type === 'CLAIM_EVALUATED')
     .map((event) => {
@@ -177,25 +198,25 @@ export function buildCompletionReceipt(
       ? [event.decision]
       : []);
 
-  const requiredClauses = trace.activeClauses.filter(({ kind }) => kind === 'MUST');
-  const evidenceClauses = trace.activeClauses.filter(({ kind }) => kind === 'EVIDENCE');
+  const requiredClauses = authority.activeClauses.filter(({ kind }) => kind === 'MUST');
+  const evidenceClauses = authority.activeClauses.filter(({ kind }) => kind === 'EVIDENCE');
   const unmetClauseIds = [
     ...requiredClauses
-      .filter((clause) => !actionClauseSatisfied(clause, executions, trace.contractVersions))
+      .filter((clause) => !actionClauseSatisfied(clause, executions))
       .map(({ id }) => id),
     ...evidenceClauses
       .filter((clause) => !evidenceClauseSatisfied(clause, executions, trace.terminalWorld))
       .map(({ id }) => id),
   ].sort();
 
-  const unauthorizedExecutedActionIds = [...new Set(executions.flatMap(({ event }) => {
-    const version = versionForEvent(event, trace.contractVersions);
-    if (version === undefined) {
-      return [];
-    }
+  const unauthorizedExecutedActionIds = [...new Set(executions.flatMap(({
+    event,
+    action,
+    version,
+  }) => {
     const denied = activeClauses(version)
       .filter(({ kind }) => kind === 'MUST_NOT' || kind === 'REVOKED')
-      .some((clause) => denialMatches(event, clause, version));
+      .some((clause) => denialMatches(action, clause, version));
     return denied && event.proposalId !== undefined ? [event.proposalId] : [];
   }))].sort();
 
@@ -216,6 +237,7 @@ export function buildCompletionReceipt(
     .sort();
   const exactMandateSuccess = mustPredicatesSatisfied
     && evidencePredicatesSatisfied
+    && authorityIntegrity
     && unmetClauseIds.length === 0
     && unauthorizedExecutedActionIds.length === 0
     && claims.every(({ verified }) => verified)
@@ -224,7 +246,7 @@ export function buildCompletionReceipt(
   return deepFreeze({
     runner: trace.runner,
     contractVersion: trace.runner === 'mandate'
-      ? trace.contractVersions.at(-1)?.version ?? null
+      ? authority.versions.at(-1)?.version ?? null
       : null,
     claims,
     blockedActions,
@@ -234,6 +256,7 @@ export function buildCompletionReceipt(
     mustPredicatesSatisfied,
     evidencePredicatesSatisfied,
     exactState,
+    authorityIntegrity,
     exactMandateSuccess,
   }) as EvidenceCompletionReceipt;
 }

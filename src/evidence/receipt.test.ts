@@ -109,10 +109,76 @@ describe('evidence-backed completion receipts', () => {
     }));
     expect(mandate.unmetClauseIds).toEqual([]);
     expect(mandate.evidenceIds).toEqual(expect.arrayContaining([
-      'evidence-001',
-      'evidence-002',
-      'evidence-003',
+      'evidence-006',
+      'evidence-009',
+      'evidence-015',
     ]));
     expect(mandate.exactMandateSuccess).toBe(true);
+  });
+
+  it('rejects emitted contract history that omits a fixture MUST clause', () => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const contractVersions = trace.contractVersions.map((version) => ({
+      ...version,
+      clauses: version.clauses.filter(({ id }) => id !== 'fill-fields-must'),
+    }));
+
+    const receipt = buildCompletionReceipt({ ...trace, contractVersions }, draftIsNotSubmit);
+
+    expect(receipt.authorityIntegrity).toBe(false);
+    expect(receipt.exactMandateSuccess).toBe(false);
+  });
+
+  it('uses the fixture denial when emitted contract history mutates it', () => {
+    const trace = runComparison(draftIsNotSubmit).standard;
+    const contractVersions = trace.contractVersions.map((version) => ({
+      ...version,
+      clauses: version.clauses.map((clause) => clause.id === 'submit-must-not'
+        ? {
+            ...clause,
+            selector: { ...clause.selector, operation: 'inspectNextStep' },
+          }
+        : clause),
+    }));
+
+    const receipt = buildCompletionReceipt({ ...trace, contractVersions }, draftIsNotSubmit);
+
+    expect(receipt.authorityIntegrity).toBe(false);
+    expect(receipt.unauthorizedExecutedActionIds).toEqual(['submit-application']);
+    expect(receipt.exactMandateSuccess).toBe(false);
+  });
+
+  it('rejects an emitted active-clause set that omits fixture authority', () => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const activeClauses = trace.activeClauses.filter(({ id }) => id !== 'draft-evidence');
+
+    const receipt = buildCompletionReceipt({ ...trace, activeClauses }, draftIsNotSubmit);
+
+    expect(receipt.authorityIntegrity).toBe(false);
+    expect(receipt.exactMandateSuccess).toBe(false);
+  });
+
+  it('rejects emitted contract history with its final fixture version missing', () => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const contractVersions = trace.contractVersions.slice(0, -1);
+
+    const receipt = buildCompletionReceipt({ ...trace, contractVersions }, draftIsNotSubmit);
+
+    expect(receipt.authorityIntegrity).toBe(false);
+    expect(receipt.exactMandateSuccess).toBe(false);
+  });
+
+  it('uses the fixture action when emitted execution metadata is corrupted', () => {
+    const trace = runComparison(draftIsNotSubmit).standard;
+    const events = trace.events.map((event) =>
+      event.type === 'TOOL_OBSERVATION' && event.proposalId === 'submit-application'
+        ? { ...event, operation: 'inspectNextStep' }
+        : event);
+
+    const receipt = buildCompletionReceipt({ ...trace, events }, draftIsNotSubmit);
+
+    expect(receipt.authorityIntegrity).toBe(false);
+    expect(receipt.unauthorizedExecutedActionIds).toEqual(['submit-application']);
+    expect(receipt.exactMandateSuccess).toBe(false);
   });
 });

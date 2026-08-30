@@ -12,6 +12,10 @@ export interface ExecutionObservation extends ToolObservation {
   readonly afterChecksum: string;
   readonly logicalEventId: string;
 }
+export interface ExecutionIdentity {
+  readonly logicalStep: number;
+  readonly logicalEventId: string;
+}
 export interface ExecutionResult {
   readonly world: SandboxWorld;
   readonly observation: ExecutionObservation;
@@ -33,15 +37,25 @@ function deepFreeze<T>(value: T, seen = new WeakSet<object>()): Readonly<T> {
   return Object.freeze(value);
 }
 
-function eventSuffix(proposal: ActionProposal): string {
-  const numericSuffix = /(?<suffix>\d+)$/u.exec(proposal.stepId)?.groups?.suffix;
-  return numericSuffix ?? checksum({ id: proposal.id, stepId: proposal.stepId }).slice(0, 6);
+export function executionIdentityFor(logicalStep: number): ExecutionIdentity {
+  if (!Number.isSafeInteger(logicalStep) || logicalStep < 1) {
+    throw new TypeError('Execution logicalStep must be a positive safe integer.');
+  }
+  return Object.freeze({
+    logicalStep,
+    logicalEventId: `event-${String(logicalStep).padStart(3, '0')}`,
+  });
 }
 
 export function executeCapability(
   world: Readonly<Record<string, JsonValue>>,
   proposal: ActionProposal,
+  identity: ExecutionIdentity,
 ): ExecutionResult {
+  const expectedIdentity = executionIdentityFor(identity.logicalStep);
+  if (identity.logicalEventId !== expectedIdentity.logicalEventId) {
+    throw new TypeError('Execution logicalEventId must match its logicalStep.');
+  }
   const normalized = normalizeActionPayload(proposal);
   const capability = getCapability(normalized.tool, normalized.operation);
   if (capability === undefined) {
@@ -62,16 +76,15 @@ export function executeCapability(
   const before = structuredClone(world) as Record<string, JsonValue>;
   const nextWorld = capability.reduce(before, parsed.data);
   const facts = capability.facts(nextWorld) as Readonly<Record<string, JsonPrimitive>>;
-  const suffix = eventSuffix(proposal);
   const frozenWorld = deepFreeze(structuredClone(nextWorld)) as SandboxWorld;
   const observation = deepFreeze({
     actionId: proposal.id,
     status: 'SUCCEEDED' as const,
     facts: structuredClone(facts),
-    evidenceId: `evidence-${suffix}`,
+    evidenceId: `evidence-${String(identity.logicalStep).padStart(3, '0')}`,
     beforeChecksum: checksum(world),
     afterChecksum: checksum(frozenWorld),
-    logicalEventId: `event-${suffix}`,
+    logicalEventId: identity.logicalEventId,
   }) as ExecutionObservation;
 
   return Object.freeze({ world: frozenWorld, observation });

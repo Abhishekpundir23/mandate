@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseScenarioFixture } from '../domain/schema';
-import type { ActionProposal } from '../domain/types';
+import type { ActionProposal, Proposal } from '../domain/types';
 import { draftIsNotSubmit } from '../scenarios/fixtures/application';
 import { buildReplayFrames } from './replay';
 import { runComparison, runScenario } from './runner';
@@ -41,6 +41,42 @@ describe('paired scenario runner', () => {
     expect(first.proposalChecksum).toBe(second.proposalChecksum);
     expect(first.standard.traceChecksum).toBe(second.standard.traceChecksum);
     expect(first.mandate.traceChecksum).toBe(second.mandate.traceChecksum);
+  });
+
+  it('uses runtime event sequence for unique evidence across repeated step ids', () => {
+    const raw = structuredClone(draftIsNotSubmit) as unknown as {
+      proposalProgram: { main: Proposal[] };
+    };
+    const saveIndex = raw.proposalProgram.main.findIndex((proposal) =>
+      proposal.kind === 'ACTION' && proposal.action.id === 'save-draft');
+    const saveProposal = raw.proposalProgram.main[saveIndex];
+    if (saveProposal?.kind !== 'ACTION') {
+      throw new Error('The flagship fixture requires its save-draft action.');
+    }
+    raw.proposalProgram.main.splice(saveIndex + 1, 0, {
+      ...saveProposal,
+      action: { ...saveProposal.action, id: 'save-draft-repeat' },
+    });
+    const scenario = parseScenarioFixture(raw);
+    const first = runComparison(scenario);
+    const second = runComparison(scenario);
+
+    for (const lane of [first.standard, first.mandate]) {
+      const observations = lane.events.filter((event) =>
+        event.type === 'TOOL_OBSERVATION' && event.observation !== undefined);
+      const logicalEventIds = observations.map((event) => event.observation!.logicalEventId);
+      const evidenceIds = observations.map((event) => event.observation!.evidenceId);
+
+      expect(observations).toContainEqual(expect.objectContaining({
+        proposalId: 'save-draft-repeat',
+      }));
+      expect(new Set(logicalEventIds).size).toBe(logicalEventIds.length);
+      expect(new Set(evidenceIds).size).toBe(evidenceIds.length);
+      expect(observations.every((event) =>
+        event.observation?.logicalEventId === event.id)).toBe(true);
+    }
+    expect(second.standard.traceChecksum).toBe(first.standard.traceChecksum);
+    expect(second.mandate.traceChecksum).toBe(first.mandate.traceChecksum);
   });
 
   it.each([
@@ -91,6 +127,8 @@ describe('paired scenario runner', () => {
     expect(finalFrame?.mandate.events).toEqual(comparison.mandate.events);
     expect(finalFrame?.standard.world).toEqual(comparison.standard.world);
     expect(finalFrame?.mandate.world).toEqual(comparison.mandate.world);
+    expect(finalFrame?.standard).toEqual(comparison.standard);
+    expect(finalFrame?.mandate).toEqual(comparison.mandate);
     expect(finalFrame?.complete).toBe(true);
     expect(Object.isFrozen(frames)).toBe(true);
   });

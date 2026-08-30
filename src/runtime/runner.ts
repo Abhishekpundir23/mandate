@@ -13,7 +13,6 @@ import type {
   RunEvent,
   RunTrace,
   ScenarioDefinition,
-  ToolObservation,
 } from '../domain/types';
 import {
   buildCompletionReceipt,
@@ -23,7 +22,11 @@ import { emptyConfirmationStore } from '../mandate/confirmation';
 import { evaluateAction } from '../mandate/gate';
 import { activeClauses } from '../mandate/ledger';
 import { validateCapability } from '../sandbox/capabilities';
-import { executeCapability, type ExecutionObservation } from '../sandbox/execute';
+import {
+  executeCapability,
+  executionIdentityFor,
+  type ExecutionObservation,
+} from '../sandbox/execute';
 import {
   appendCanonicalTurn,
   asJsonValue,
@@ -39,7 +42,7 @@ export interface RuntimeEvent extends RunEvent {
   readonly resource?: string;
   readonly contractVersion?: number;
   readonly decision?: GateDecision;
-  readonly observation?: ExecutionObservation | ToolObservation;
+  readonly observation?: ExecutionObservation;
   readonly statement?: string;
   readonly asserts?: readonly Predicate[];
   readonly verified?: boolean;
@@ -78,11 +81,11 @@ export function runScenario(
   const appendEvent = (
     event: Omit<RuntimeEvent, 'id' | 'logicalStep' | 'world'>,
   ): RuntimeEvent => {
-    const logicalStep = events.length + 1;
+    const identity = executionIdentityFor(events.length + 1);
     const next = deepFreeze({
       ...event,
-      id: `event-${String(logicalStep).padStart(3, '0')}`,
-      logicalStep,
+      id: identity.logicalEventId,
+      logicalStep: identity.logicalStep,
       world: structuredClone(world),
     }) as RuntimeEvent;
     events = Object.freeze([...events, next]);
@@ -135,14 +138,21 @@ export function runScenario(
       }
 
       if (allowed) {
-        const execution = executeCapability(world, proposal.action);
+        const execution = executeCapability(
+          world,
+          proposal.action,
+          executionIdentityFor(events.length + 1),
+        );
         world = execution.world;
-        appendEvent({
+        const observationEvent = appendEvent({
           type: 'TOOL_OBSERVATION',
           ...metadata,
           observation: execution.observation,
           facts: execution.observation.facts,
         });
+        if (observationEvent.id !== execution.observation.logicalEventId) {
+          throw new Error('Execution observation identity diverged from runtime sequence.');
+        }
       } else {
         for (const recovery of scenario.proposalProgram.onRejected?.[proposal.action.id] ?? []) {
           processProposal(recovery);

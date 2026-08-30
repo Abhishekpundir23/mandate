@@ -44,7 +44,10 @@ describe('application capability sandbox', () => {
   });
 
   it('applies only the save-draft effect to a cloned world', () => {
-    const result = executeCapability(applicationWorld, saveDraftProposal);
+    const result = executeCapability(applicationWorld, saveDraftProposal, {
+      logicalStep: 4,
+      logicalEventId: 'event-004',
+    });
 
     expect(result.world).toEqual({
       fieldsFilled: false,
@@ -59,7 +62,8 @@ describe('application capability sandbox', () => {
       actionId: 'save-draft',
       status: 'SUCCEEDED',
       facts: { draftSaved: true },
-      logicalEventId: 'event-001',
+      evidenceId: 'evidence-004',
+      logicalEventId: 'event-004',
     });
     expect(result.observation.beforeChecksum).not.toBe(result.observation.afterChecksum);
   });
@@ -70,7 +74,10 @@ describe('application capability sandbox', () => {
       args: { applicationId: 'application:1', unexpected: true },
     };
 
-    expect(() => executeCapability(applicationWorld, malformedProposal))
+    expect(() => executeCapability(applicationWorld, malformedProposal, {
+      logicalStep: 4,
+      logicalEventId: 'event-004',
+    }))
       .toThrow(/invalid arguments/i);
     expect(applicationWorld).toEqual({
       fieldsFilled: false,

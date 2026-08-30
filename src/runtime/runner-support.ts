@@ -6,7 +6,6 @@ import type {
   Predicate,
   Proposal,
   ScenarioDefinition,
-  ToolObservation,
 } from '../domain/types';
 import { appendVersion } from '../mandate/ledger';
 import { validateCapability } from '../sandbox/capabilities';
@@ -66,7 +65,7 @@ export function claimEvidence(
   const observations = events
     .filter((event) => event.type === 'TOOL_OBSERVATION')
     .map((event) => event.observation)
-    .filter((observation): observation is ExecutionObservation | ToolObservation =>
+    .filter((observation): observation is ExecutionObservation =>
       observation !== undefined && observation.status === 'SUCCEEDED');
   const supportingIds = new Set<string>();
 

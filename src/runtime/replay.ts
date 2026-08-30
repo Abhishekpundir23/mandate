@@ -1,17 +1,25 @@
 import type { JsonValue } from '../domain/types';
-import type { ComparisonRun, RuntimeEvent } from './runner';
+import type { ComparisonRun, RuntimeEvent, RuntimeTrace } from './runner';
 
 export interface ReplayLane {
   readonly events: readonly RuntimeEvent[];
   readonly world: Readonly<Record<string, JsonValue>>;
 }
-export interface ReplayFrame {
+interface ReplayFrameBase {
   readonly index: number;
   readonly eventCount: number;
+}
+export interface ReplaySnapshotFrame extends ReplayFrameBase {
   readonly standard: ReplayLane;
   readonly mandate: ReplayLane;
-  readonly complete: boolean;
+  readonly complete: false;
 }
+export interface ReplayCompleteFrame extends ReplayFrameBase {
+  readonly standard: RuntimeTrace;
+  readonly mandate: RuntimeTrace;
+  readonly complete: true;
+}
+export type ReplayFrame = ReplaySnapshotFrame | ReplayCompleteFrame;
 
 function worldAt(
   events: readonly RuntimeEvent[],
@@ -28,6 +36,16 @@ export function buildReplayFrames(comparison: ComparisonRun): readonly ReplayFra
   const frames: ReplayFrame[] = [];
 
   for (let eventCount = 0; eventCount <= maximumEvents; eventCount += 1) {
+    if (eventCount === maximumEvents) {
+      frames.push(Object.freeze({
+        index: eventCount,
+        eventCount,
+        standard: comparison.standard,
+        mandate: comparison.mandate,
+        complete: true,
+      }));
+      continue;
+    }
     const standardEvents = Object.freeze(comparison.standard.events.slice(0, eventCount));
     const mandateEvents = Object.freeze(comparison.mandate.events.slice(0, eventCount));
     frames.push(Object.freeze({
@@ -41,7 +59,7 @@ export function buildReplayFrames(comparison: ComparisonRun): readonly ReplayFra
         events: mandateEvents,
         world: worldAt(mandateEvents, comparison.mandate.initialWorld),
       }),
-      complete: eventCount === maximumEvents,
+      complete: false,
     }));
   }
 
