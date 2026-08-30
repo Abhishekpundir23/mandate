@@ -692,3 +692,50 @@ git commit -m "test: verify the complete mandate experience"
 ```
 
 Do not deploy, publish, upload, register a submission, or press any hackathon final-submit control.
+
+### Task 9: Closed-world host capability and effect gate
+
+**Files:**
+- Modify: `scripts/security-source-scan.mjs`
+- Replace or modify: `scripts/security-type-analysis.mjs`
+- Replace or modify: `scripts/security-assignment-analysis.mjs`
+- Modify: `scripts/security-source-policy.mjs`
+- Create: `scripts/security-call-summaries.mjs`
+- Modify: `scripts/security-gate.test.ts`
+- Create or modify: `src/platform/browser-capabilities.tsx`
+- Modify: direct ambient consumers under `src/`
+- Modify: `docs/architecture.md`
+- Modify: `.superpowers/sdd/2026-08-29-mandate-local-product/task-8-report.md`
+- Create: `.superpowers/sdd/2026-08-29-mandate-local-product/task-9-report.md`
+
+**Interfaces:**
+- Consumes: the complete 51-file production TypeScript program, TypeScript symbol identity, a declarative module-effect budget, standard-library/framework call summaries, and the existing CSP/build/runtime defenses.
+- Produces: one deterministic closed-world capability/effect report with normalized value-transfer and write operations, conservative origin provenance, interprocedural call summaries, exact module budgets, and fail-closed diagnostics for unsupported effects.
+
+- [ ] **Step 1: Freeze the adversarial and positive-control corpus**
+
+Write strict-TypeScript tests that reproduce every open false green: destructuring member targets, loop/factory reassignment, aliased `Object.assign`, generic/indexed helper laundering, unsafe descriptor setters, computed constructor calls, and dynamic DOM writes. Add paired safe local Record/object/array writes, nested/rest assignments, finite computed keys, local `Object.assign`, and shadowed-name controls. Observe the required RED state on `ae43163`.
+
+- [ ] **Step 2: Normalize every value-transfer and mutation channel**
+
+Lower declarations, parameters, object/array declarations and assignments, nested/default/rest patterns, direct/compound assignments, updates, delete, for-in/of, catch, member writes, `Object.assign`/descriptor/Reflect operations, collection mutators, and React ref writes into one binding/write/call IR. Pattern leaves that are member expressions must become ordinary writes; no syntax-specific policy decision may bypass the normalizer.
+
+- [ ] **Step 3: Solve a conservative origin and effect graph**
+
+Track constant, owned-and-unescaped local allocation, borrowed data, ambient host authority, approved opaque capability, summarized callable, and unknown origins. Casts, assertions, aliases, generics, loops, containers, closure capture, returns, arguments, and reassignment never erase origin. Only fresh unescaped local allocations or explicitly summarized UI cells may be mutated; ambient, DOM-derived, borrowed, escaped, and unknown receivers fail closed at effect boundaries.
+
+- [ ] **Step 4: Add declarative call summaries and module budgets**
+
+Resolve every call/constructor/tagged template/optional call through an analyzed local summary, approved standard/framework summary, or narrow platform capability. Unknown callees fail closed. Model mutating APIs semantically, including aliases. Allow only the exact UI/platform host effects required by the product; forbid network, storage, navigation, form submission, unsafe DOM mutation, dynamic code, and unknown host effects everywhere.
+
+- [ ] **Step 5: Concentrate ambient access behind a narrow browser facade**
+
+Move the current ten direct ambient references into a small typed facade exposing only hard-coded React mount, approved media-query subscription, replay timer, and accessible focus/scroll operations. The facade must not expose raw DOM objects or generic property/call access. All other production modules receive an ambient-free budget.
+
+- [ ] **Step 6: Verify the closed world and layered defenses**
+
+Require: all hostile programs rejected; all paired safe programs accepted; a metamorphic receiver × write-channel matrix; alias/closure/return/argument/generic/conditional/container/loop/cast laundering tests; all 51 production files covered without source-location exceptions; an exact host-effect report; absent-dist standalone security; fresh build/CSP/asset/runtime interception; full `npm run verify`; every required coverage directory above 90%; unchanged approved screenshot geometry and hashes; `git diff --check`; clean worktree.
+
+- [ ] **Step 7: Document and commit the bounded guarantee**
+
+State explicitly that this is a closed-world production subset with fail-closed unsupported effects and layered runtime controls, not a proof over arbitrary JavaScript. Commit the architecture replacement separately. Do not deploy, push, publish, upload, or submit.
