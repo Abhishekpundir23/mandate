@@ -2487,6 +2487,56 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         }
         return false;
       };
+      const refreshBindingsDeclaredAfter = (position) => {
+        const laterBindings = bindings
+          .filter((binding) => !isParameterChannel(binding.channel)
+            && ts.isIdentifier(binding.target)
+            && binding.node.pos > position)
+          .sort((left, right) => left.node.pos - right.node.pos);
+        if (laterBindings.length === 0) return true;
+        const refreshBudget = Math.max(4, laterBindings.length + 1);
+        for (let iteration = 0; iteration < refreshBudget; iteration += 1) {
+          const beforeIteration = structuralDigest(laterBindings.map((binding) => {
+            const symbol = resolvedSymbol(binding.target, checker);
+            return symbol === undefined
+              ? '<unresolved>'
+              : `${stableSymbolKey(symbol)}=${originSignature(overrides.get(symbol) ?? emptyOrigin())}`;
+          }));
+          for (const binding of laterBindings) {
+            const symbol = resolvedSymbol(binding.target, checker);
+            if (symbol === undefined) continue;
+            const source = binding.source === undefined
+              ? binding.channel === 'catch'
+                ? origin(ORIGIN.UNKNOWN, `unknown thrown value bound to ${binding.target.text}`)
+                : constantOrigin(undefined, `uninitialised local ${binding.target.text}`)
+              : project(
+                evaluate(binding.source, overrides, depth + 1),
+                binding.projection,
+                binding.target,
+                overrides,
+                depth + 1,
+              );
+            const previous = overrides.get(symbol);
+            const refreshesLexicalClosure = binding.channel === 'declaration'
+              && source.callables.length > 0;
+            const merged = previous === undefined || refreshesLexicalClosure
+              ? source
+              : joinOrigins(previous, source);
+            overrides.set(symbol, previous !== undefined
+              && originSignature(previous) === originSignature(merged)
+              ? previous
+              : merged);
+          }
+          const afterIteration = structuralDigest(laterBindings.map((binding) => {
+            const symbol = resolvedSymbol(binding.target, checker);
+            return symbol === undefined
+              ? '<unresolved>'
+              : `${stableSymbolKey(symbol)}=${originSignature(overrides.get(symbol) ?? emptyOrigin())}`;
+          }));
+          if (beforeIteration === afterIteration) return true;
+        }
+        return false;
+      };
       if (!convergeBindings()) {
         const widened = origin(ORIGIN.UNKNOWN, `function fixed point exceeded for ${entry.name}`);
         recordObservedOverrides();
@@ -2609,7 +2659,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
             'Object.defineProperty',
             'Object.defineProperties',
             'Reflect.defineProperty',
-          ].includes(mutation.api ?? '')) && !convergeBindings()) {
+          ].includes(mutation.api ?? '')) && !refreshBindingsDeclaredAfter(call.node.pos)) {
             orderedDescriptorRefreshFailed = true;
             break;
           }
