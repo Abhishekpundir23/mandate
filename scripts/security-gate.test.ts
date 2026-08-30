@@ -2220,13 +2220,26 @@ describe('Task 9 review fix round 3 spread and argument canonicalization', () =>
   it('rejects a spread key made non-enumerable by a data descriptor', async () => {
     const result = await runGate(`export function update(proto: object): void {
       const source = { marker: 'present' };
-      Object.defineProperty(source, 'marker', { value: 'hidden', writable: true });
+      Object.defineProperty(source, 'marker', {
+        value: 'hidden', writable: true, enumerable: false,
+      });
       const target = { __proto__: proto, ...source };
       Reflect.set(target, 'marker', 'changed');
     }`);
 
     expect(result.status, result.output).not.toBe(0);
     expect(result.output).toMatch(/UNPROVEN_REFLECT_SET_TARGET|security/i);
+  });
+
+  it('accepts an existing enumerable key when a descriptor omits enumerable', async () => {
+    const result = await runGate(`export function update(proto: object): void {
+      const source = { marker: 'present' };
+      Object.defineProperty(source, 'marker', { value: 'updated', writable: true });
+      const target = { __proto__: proto, ...source };
+      Reflect.set(target, 'marker', 'changed');
+    }`);
+
+    expect(result.status, result.output).toBe(0);
   });
 
   it.each([
