@@ -9,10 +9,10 @@ MANDATE is a local-only paired fixture comparison between a fixture bypass contr
 ```sh
 npm ci
 npm run verify
-npm run dev
+npm run preview
 ```
 
-Open the local URL printed by Vite. The verification command is intentionally complete and non-recursive: typecheck, zero-warning lint, unit tests, coverage, production build, browser journeys, accessibility, offline interception, and the static egress gate.
+`npm run verify` creates the production build, and `npm run preview` serves that validated build. Open the local URL printed by Vite. The verification command is intentionally complete and non-recursive: typecheck, zero-warning lint, unit tests, coverage, production build, browser journeys, accessibility, offline interception, and the static egress gate.
 
 ## Flagship story
 

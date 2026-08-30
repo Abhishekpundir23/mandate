@@ -11,6 +11,19 @@ function count(rate: number, total: number): number {
 }
 
 describe('judge-facing benchmark documentation', () => {
+  it('publishes only the validated production-preview Quick start path', () => {
+    const readme = readFileSync('README.md', 'utf8');
+    const quickStart = /^## Quick start\s+```sh\n([\s\S]*?)\n```/m.exec(readme)?.[1];
+
+    expect(quickStart?.trim().split('\n')).toEqual([
+      'npm ci',
+      'npm run verify',
+      'npm run preview',
+    ]);
+    expect(quickStart).not.toContain('npm run dev');
+    expect(readme).toContain('`npm run verify` creates the production build');
+  });
+
   it('locks the headline to imported evaluator output rather than handwritten counts', () => {
     const report = runBenchmark(scenarioCatalog);
     const total = scenarioCatalog.length;
