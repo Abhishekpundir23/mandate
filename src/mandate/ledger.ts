@@ -140,7 +140,9 @@ export function isTombstoneRetirement(
   tombstone: Clause,
   version: ContractVersion,
 ): boolean {
-  if (tombstone.kind !== 'REVOKED' || tombstone.targetClauseIds?.length === 0) {
+  if (tombstone.kind !== 'REVOKED'
+    || tombstone.revokedSelector !== undefined
+    || tombstone.targetClauseIds?.length === 0) {
     return false;
   }
   const targets = tombstone.targetClauseIds ?? [];
