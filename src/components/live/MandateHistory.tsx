@@ -46,8 +46,12 @@ function genericDiff(change: IntentDiff): readonly DiffLine[] {
       };
     }
     if (operation.op === 'REVOKE') {
+      const targets = operation.tombstone.targetClauseIds;
+      const targetText = targets !== undefined && targets.length > 0
+        ? `targets: ${targets.join(', ')}`
+        : 'targets unavailable';
       return {
-        text: `− REVOKED · ${operation.tombstone.id} · ${operation.tombstone.statement}`,
+        text: `− REVOKE · ${targetText} · tombstone: ${operation.tombstone.id} · ${operation.tombstone.kind.replace('_', ' ')} · ${operation.tombstone.statement}`,
         kind: 'denied',
       };
     }

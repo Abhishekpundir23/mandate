@@ -175,3 +175,42 @@ git diff --cached --check
 ```
 
 The benchmark contract remains Standard 5/15 exact, 8 unauthorized effects, and 3 false claims versus Mandate 15/15, 0, and 0. No runner, policy, truth-first v2/v3 provenance, or external boundary changed.
+
+## Fix round 3/5: distinguish revoked targets from tombstone metadata
+
+### RED evidence
+
+- Replaced the masking REVOKE fixture before production edits. The tombstone now mirrors compiler output with a new id (`turn-2:deploy-production-may:revoke`) distinct from two original target ids (`deploy-production-may`, `deploy-staging-may`).
+- Added a schema-permitted empty-target case. `Clause.targetClauseIds` is optional and the current schema does not require a non-empty array, so the presentation must report unavailable targets rather than implying that the tombstone was the original grant.
+- Focused RED: `MandateHistory.test.tsx` failed exactly two tests. Existing output was `− REVOKED · <tombstone id> · <statement>` in both cases, proving that every original target and the missing-target condition were omitted. The visible-status suite and existing REPLACE test remained green.
+
+### GREEN behavior
+
+- Generic REVOKE now separates the engine fields explicitly: `− REVOKE · targets: <all target ids> · tombstone: <new tombstone id> · <tombstone kind> · <tombstone statement>`.
+- Target ids retain the deterministic engine-supplied order. The renderer does not sort, infer, or replace them with the tombstone id.
+- When target ids are absent or empty, the same audit line states `targets unavailable` before the tombstone metadata. It does not fabricate an original grant or silently collapse the provenance distinction.
+- The visible action statuses and generic REPLACE format from fix round 2 are unchanged. No runner, policy, benchmark, layout, truth-first v2/v3 provenance, or external boundary changed.
+
+### Fresh fix-round verification
+
+```text
+npm test -- --run src/components/live/MandateHistory.test.tsx src/components/live/ReplayPresentation.test.tsx
+  2 test files passed; 5 tests passed
+
+npm test -- --run src/components/live/MandateHistory.test.tsx src/components/live/ReplayPresentation.test.tsx src/mandate/compiler.test.ts src/mandate/ledger.test.ts && npm run typecheck && npm run lint
+  4 test files passed; 39 tests passed
+  typecheck clean; lint zero warnings
+
+npm test -- --run src/scenarios src/benchmark src/runtime src/evidence src/mandate
+  11 test files passed; 138 tests passed
+
+npm run verify
+  22 test files passed; 177 tests passed
+  typecheck clean; lint zero warnings; Vite build succeeded (148 modules)
+
+git diff --check
+git diff --cached --check
+  both clean
+```
+
+The benchmark contract remains Standard 5/15 exact, 8 unauthorized effects, and 3 false claims versus Mandate 15/15, 0, and 0. No product or data-contract blocker emerged.

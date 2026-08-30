@@ -25,7 +25,7 @@ function renderChange(change: IntentDiff): void {
 }
 
 describe('generic mandate history provenance', () => {
-  it('identifies the revoked clause and its tombstoned statement', () => {
+  it('distinguishes every revoked target from the new tombstone metadata', () => {
     renderChange({
       baseVersion: 1,
       turnId: 'turn-2',
@@ -33,18 +33,40 @@ describe('generic mandate history provenance', () => {
       ops: [{
         op: 'REVOKE',
         tombstone: {
-          id: 'deploy-production-may',
+          id: 'turn-2:deploy-production-may:revoke',
           kind: 'REVOKED',
-          statement: 'Deploy the preview to production.',
+          statement: 'Revoked: Deploy the preview to production.',
           selector: { operation: 'deploy', resource: 'production', effect: 'PUBLISH' },
           source: version.source,
-          targetClauseIds: ['deploy-production-may'],
+          targetClauseIds: ['deploy-production-may', 'deploy-staging-may'],
         },
       }],
     });
 
     expect(screen.getByText(
-      '− REVOKED · deploy-production-may · Deploy the preview to production.',
+      '− REVOKE · targets: deploy-production-may, deploy-staging-may · tombstone: turn-2:deploy-production-may:revoke · REVOKED · Revoked: Deploy the preview to production.',
+    )).toBeVisible();
+  });
+
+  it('reports unavailable revoked targets instead of implying the tombstone was the grant', () => {
+    renderChange({
+      baseVersion: 1,
+      turnId: 'turn-2',
+      source: version.source,
+      ops: [{
+        op: 'REVOKE',
+        tombstone: {
+          id: 'turn-2:unknown:revoke',
+          kind: 'REVOKED',
+          statement: 'Revoked: Unknown grant.',
+          source: version.source,
+          targetClauseIds: [],
+        },
+      }],
+    });
+
+    expect(screen.getByText(
+      '− REVOKE · targets unavailable · tombstone: turn-2:unknown:revoke · REVOKED · Revoked: Unknown grant.',
     )).toBeVisible();
   });
 
