@@ -16,6 +16,7 @@ const purchaseMay: Clause = {
 const revokePurchaseDiff: IntentDiff = {
   baseVersion: 1,
   turnId: 't2',
+  source: { turnId: 't2', quote: 'Do not buy the item.' },
   ops: [{
     op: 'REVOKE',
     tombstone: {
@@ -41,6 +42,7 @@ const draftMust: Clause = {
 const discussionDiff: IntentDiff = {
   baseVersion: 1,
   turnId: 'draft-2',
+  source: { turnId: 'draft-2', quote: 'Looks good.' },
   ops: [{ op: 'NO_CHANGE', reason: 'DISCUSSION' }],
 };
 
@@ -53,6 +55,10 @@ describe('append-only authority ledger', () => {
     expect(canonicalize(after[0] as unknown as JsonValue)).toBe(snapshot);
     expect(after).toHaveLength(2);
     expect(activeClauses(after[1]!)).not.toContainEqual(expect.objectContaining({ id: purchaseMay.id }));
+    expect(activeClauses(after[1]!)).toContainEqual(expect.objectContaining({
+      id: 'purchase-revoked',
+      kind: 'REVOKED',
+    }));
     expect(after[1]?.clauses).toContainEqual(expect.objectContaining({ id: 'purchase-revoked', kind: 'REVOKED' }));
   });
 
@@ -61,6 +67,18 @@ describe('append-only authority ledger', () => {
 
     expect(versions[1]?.clauses).toEqual(versions[0]?.clauses);
     expect(versions[1]?.hash).not.toBe(versions[0]?.hash);
+  });
+
+  it('records and hashes the exact source quote for NO_CHANGE', () => {
+    const before = createLedger([draftMust], 'draft-1');
+    const looksGood = appendVersion(before, discussionDiff);
+    const looksBad = appendVersion(before, {
+      ...discussionDiff,
+      source: { turnId: 'draft-2', quote: 'Looks bad.' },
+    });
+
+    expect(looksGood[1]?.source).toEqual({ turnId: 'draft-2', quote: 'Looks good.' });
+    expect(looksGood[1]?.hash).not.toBe(looksBad[1]?.hash);
   });
 
   it('tombstones every REPLACE target and adds one replacement', () => {
@@ -73,6 +91,7 @@ describe('append-only authority ledger', () => {
     const replaceDiff: IntentDiff = {
       baseVersion: 1,
       turnId: 't2',
+      source: { turnId: 't2', quote: 'Buy only the item for Bob instead.' },
       ops: [{
         op: 'REPLACE',
         targetClauseIds: [purchaseMay.id, secondGrant.id],
@@ -101,6 +120,7 @@ describe('append-only authority ledger', () => {
     const addDiff: IntentDiff = {
       baseVersion: 1,
       turnId: 'draft-2',
+      source: { turnId: 'draft-2', quote: 'Do not submit.' },
       ops: [{
         op: 'ADD',
         clause: {
@@ -133,6 +153,7 @@ describe('append-only authority ledger', () => {
     const duplicateTurnDiff: IntentDiff = {
       baseVersion: 1,
       turnId: 'draft-1',
+      source: { turnId: 'draft-1', quote: 'Looks good.' },
       ops: [{ op: 'NO_CHANGE', reason: 'DISCUSSION' }],
     };
 
@@ -175,6 +196,7 @@ describe('append-only authority ledger', () => {
     const selectorRevocation: IntentDiff = {
       baseVersion: 1,
       turnId: 't2',
+      source: { turnId: 't2', quote: 'Do not buy anything.' },
       ops: [{
         op: 'REVOKE',
         tombstone: {
@@ -192,4 +214,38 @@ describe('append-only authority ledger', () => {
     expect(activeClauses(versions[1]!).map((clause) => clause.id))
       .not.toContain(purchaseMay.id);
   });
+
+  it.each(['MUST_NOT', 'NEEDS_CONFIRMATION'] as const)(
+    'rejects REPLACE against a protected %s clause',
+    (kind) => {
+      const protectedClause: Clause = {
+        id: `protected-${kind.toLowerCase()}`,
+        kind,
+        statement: 'Protected authority',
+        selector: { tool: 'email', operation: 'send', effect: 'EXTERNAL_TRANSMIT' },
+        introducedIn: 1,
+        source: { turnId: 't1', quote: 'Protect this action.' },
+        ...(kind === 'NEEDS_CONFIRMATION' ? { afterConfirmation: 'MAY' as const } : {}),
+      };
+      const replaceProtected: IntentDiff = {
+        baseVersion: 1,
+        turnId: 't2',
+        source: { turnId: 't2', quote: 'Replace it.' },
+        ops: [{
+          op: 'REPLACE',
+          targetClauseIds: [protectedClause.id],
+          replacement: {
+            id: 'unsafe-may',
+            kind: 'MAY',
+            statement: 'Unsafe replacement',
+            selector: protectedClause.selector!,
+            source: { turnId: 't2', quote: 'Replace it.' },
+          },
+        }],
+      };
+
+      expect(() => appendVersion(createLedger([protectedClause], 't1'), replaceProtected))
+        .toThrow(new RegExp(`cannot replace.*${kind}`, 'i'));
+    },
+  );
 });

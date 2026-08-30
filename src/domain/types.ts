@@ -50,6 +50,7 @@ export type IntentDiffOp =
 export interface IntentDiff {
   readonly baseVersion: number;
   readonly turnId: string;
+  readonly source: SourceRef;
   readonly ops: readonly IntentDiffOp[];
 }
 
@@ -57,6 +58,7 @@ export interface ContractVersion {
   readonly version: number;
   readonly parentVersion: number | null;
   readonly turnId: string;
+  readonly source: SourceRef;
   readonly clauses: readonly Clause[];
   readonly hash: string;
 }

@@ -1,5 +1,5 @@
 import { checksum } from '../domain/canonical';
-import type { ActionSelector, Clause, ContractVersion, IntentDiff, JsonValue } from '../domain/types';
+import type { ActionSelector, Clause, ContractVersion, IntentDiff, JsonValue, SourceRef } from '../domain/types';
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): Readonly<T> {
   if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
@@ -24,9 +24,10 @@ function makeVersion(
   version: number,
   parentVersion: number | null,
   turnId: string,
+  source: SourceRef,
   clauses: readonly Clause[],
 ): ContractVersion {
-  const payload = { version, parentVersion, turnId, clauses };
+  const payload = { version, parentVersion, turnId, source, clauses };
   return deepFreeze({ ...payload, hash: checksum(payload as unknown as JsonValue) }) as ContractVersion;
 }
 
@@ -40,7 +41,9 @@ function selectorMatches(candidate: ActionSelector | undefined, pattern: ActionS
 
 export function createLedger(initialClauses: readonly Clause[], turnId: string): readonly ContractVersion[] {
   const clauses = structuredClone(initialClauses) as Clause[];
-  return deepFreeze([makeVersion(1, null, turnId, clauses)]);
+  const source = clauses.find((clause) => clause.source.turnId === turnId)?.source
+    ?? { turnId, quote: '' };
+  return deepFreeze([makeVersion(1, null, turnId, source, clauses)]);
 }
 
 export function appendVersion(
@@ -57,6 +60,9 @@ export function appendVersion(
   if (versions.some((version) => version.turnId === diff.turnId)) {
     throw new Error(`Duplicate source turn: ${diff.turnId}.`);
   }
+  if (diff.source.turnId !== diff.turnId) {
+    throw new Error(`Diff source turn ${diff.source.turnId} does not match ${diff.turnId}.`);
+  }
 
   const existingClauseIds = new Set(latest.clauses.map((clause) => clause.id));
   for (const operation of diff.ops) {
@@ -68,6 +74,12 @@ export function appendVersion(
     for (const targetId of targetIds) {
       if (!existingClauseIds.has(targetId)) {
         throw new Error(`Target clause ${targetId} does not exist in version ${latest.version}.`);
+      }
+      if (operation.op === 'REPLACE') {
+        const target = latest.clauses.find((clause) => clause.id === targetId)!;
+        if (target.kind !== 'MAY' && target.kind !== 'MUST') {
+          throw new Error(`Cannot replace protected ${target.kind} clause ${targetId}.`);
+        }
       }
     }
   }
@@ -105,7 +117,7 @@ export function appendVersion(
 
   return deepFreeze([
     ...versions,
-    makeVersion(version, latest.version, diff.turnId, clauses),
+    makeVersion(version, latest.version, diff.turnId, structuredClone(diff.source), clauses),
   ]);
 }
 

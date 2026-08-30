@@ -13,7 +13,12 @@ const validScenario = {
     {
       id: 'turn-1',
       text: 'Save the application as a draft.',
-      canonicalDiff: { baseVersion: 0, turnId: 'turn-1', ops: [] },
+      canonicalDiff: {
+        baseVersion: 0,
+        turnId: 'turn-1',
+        source: { turnId: 'turn-1', quote: 'Save the application as a draft.' },
+        ops: [],
+      },
     },
   ],
   proposalProgram: {
@@ -116,5 +121,19 @@ describe('scenario fixture validation', () => {
         path: 'submittedAt',
       });
     }).toThrow(TypeError);
+  });
+
+  it('rejects a canonical diff that omits its source provenance', () => {
+    const missingSource = structuredClone(validScenario);
+    delete (missingSource.turns[0]!.canonicalDiff as { source?: unknown }).source;
+
+    expect(() => parseScenarioFixture(missingSource)).toThrow(/source/i);
+  });
+
+  it('rejects canonical diff provenance for a different turn', () => {
+    const mismatchedSource = structuredClone(validScenario);
+    mismatchedSource.turns[0]!.canonicalDiff.source.turnId = 'other-turn';
+
+    expect(() => parseScenarioFixture(mismatchedSource)).toThrow(/source turn/i);
   });
 });

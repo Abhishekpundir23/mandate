@@ -41,6 +41,7 @@ const clauseSchema = z.object({
 const intentDiffSchema = z.object({
   baseVersion: z.number().int().nonnegative(),
   turnId: z.string().min(1),
+  source: sourceRefSchema,
   ops: z.array(z.discriminatedUnion('op', [
     z.object({ op: z.literal('ADD'), clause: clauseSchema }),
     z.object({ op: z.literal('REVOKE'), tombstone: clauseSchema }),
@@ -91,6 +92,11 @@ export const scenarioDefinitionSchema = z.object({
   const turnIds = scenario.turns.map((turn) => turn.id);
   if (new Set(turnIds).size !== turnIds.length) {
     context.addIssue({ code: 'custom', message: 'Duplicate turn id.' });
+  }
+  if (scenario.turns.some((turn) =>
+    turn.canonicalDiff.turnId !== turn.id
+    || turn.canonicalDiff.source.turnId !== turn.id)) {
+    context.addIssue({ code: 'custom', message: 'Canonical diff source turn must match its scenario turn.' });
   }
 
   const proposalIds = [
