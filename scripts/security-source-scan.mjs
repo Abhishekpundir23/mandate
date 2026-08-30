@@ -3,6 +3,12 @@ import { relative, resolve } from 'node:path';
 import ts from 'typescript';
 
 import {
+  inspectAssignmentPattern,
+  isAssignmentOperator,
+  isDynamicWriteTarget,
+} from './security-assignment-analysis.mjs';
+
+import {
   ambientRoots,
   assertSourceImport,
   forbiddenGlobalIdentifiers,
@@ -16,6 +22,7 @@ import {
 import {
   dynamicElementAccessIsUnsafe,
   isActualGlobal,
+  isProvenSafeLocalData,
   resolvedSymbol,
   staticString,
 } from './security-type-analysis.mjs';
@@ -156,6 +163,10 @@ async function scanSource(file, tree, checker, sourceRoot) {
       const path = ambientPath(node, constants, checker);
       const name = propertyName(node, constants, checker);
       if (dynamicElementAccessIsUnsafe(node, name, checker)) violations.push('forbidden dynamic capability access');
+      if (ts.isElementAccessExpression(node) && name === undefined && isDynamicWriteTarget(node)
+        && !isProvenSafeLocalData(node.expression, checker)) {
+        violations.push('dynamic write receiver is not proven safe local data');
+      }
       if (name === undefined && ambientPath(node.expression, constants, checker) !== undefined) violations.push('unknown computed ambient property');
       if (name !== undefined && forbiddenProperties.has(name)
         && (receiverIndependentSinks.has(name) || path !== undefined)
@@ -174,9 +185,12 @@ async function scanSource(file, tree, checker, sourceRoot) {
     if (ts.isVariableDeclaration(node) && node.initializer !== undefined
       && ambientPath(node.initializer, constants, checker) !== undefined) violations.push('ambient authority alias/destructure');
     if (ts.isBinaryExpression(node)
-      && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
-      && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-      && ambientPath(node.right, constants, checker) !== undefined) violations.push('ambient authority assignment');
+      && isAssignmentOperator(node.operatorToken.kind)) {
+      if (ambientPath(node.right, constants, checker) !== undefined) violations.push('ambient authority assignment');
+      if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        inspectAssignmentPattern(node.left, node.right, constants, checker, violations);
+      }
+    }
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tag = node.tagName.getText(tree).toLowerCase();
       if (privilegedTags.has(tag)) violations.push(`privileged JSX ${tag}`);

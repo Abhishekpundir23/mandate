@@ -17,6 +17,7 @@ async function runGate(source: string) {
   await writeFile(join(root, 'src', 'fixture.tsx'), source);
   await cp('tsconfig.app.json', join(root, 'tsconfig.app.json'));
   await cp('scripts/security-gate.mjs', join(root, 'scripts', 'security-gate.mjs'));
+  await cp('scripts/security-assignment-analysis.mjs', join(root, 'scripts', 'security-assignment-analysis.mjs'));
   await cp('scripts/security-built-policy.mjs', join(root, 'scripts', 'security-built-policy.mjs'));
   await cp('scripts/security-source-policy.mjs', join(root, 'scripts', 'security-source-policy.mjs'));
   await cp('scripts/security-source-scan.mjs', join(root, 'scripts', 'security-source-scan.mjs'));
@@ -155,6 +156,80 @@ describe('structural security gate', () => {
       const { [key]: build } = source;
       void build;
     `],
+    ['generic indexed constructor helper', `
+      function element<T, K extends keyof T>(source: T, key: K): T[K] { return source[key]; }
+      type Callable = { (): void; constructor: (...args: string[]) => () => unknown };
+      const source = (() => undefined) as unknown as Callable;
+      const key = 'constructor'.slice(0) as keyof Callable;
+      const execute = element(source, key);
+      execute('return 1')();
+    `],
+    ['generic indexed Object descriptor helpers', `
+      function element<T, K extends keyof T>(source: T, key: K): T[K] { return source[key]; }
+      const prototypeKey = 'getPrototypeOf'.slice(0) as keyof ObjectConstructor;
+      const descriptorKey = 'getOwnPropertyDescriptor'.slice(0) as keyof ObjectConstructor;
+      const prototypeOf = element(Object, prototypeKey) as typeof Object.getPrototypeOf;
+      const describe = element(Object, descriptorKey) as typeof Object.getOwnPropertyDescriptor;
+      const root = { label: 'local' };
+      describe(prototypeOf(root), 'inner' + 'HTML')?.set?.call({}, '<img>');
+    `],
+    ['static destructuring assignment aliases', `
+      let prototypeOf: typeof Object.getPrototypeOf;
+      let describe: typeof Object.getOwnPropertyDescriptor;
+      ({ getPrototypeOf: prototypeOf, getOwnPropertyDescriptor: describe } = Object);
+      describe(prototypeOf({ label: 'local' }), 'inner' + 'HTML')?.set?.call({}, '<img>');
+    `],
+    ['computed destructuring assignment aliases', `
+      let prototypeOf: typeof Object.getPrototypeOf;
+      let describe: typeof Object.getOwnPropertyDescriptor;
+      const prototypeKey = 'getPrototypeOf'.slice(0);
+      const descriptorKey = 'getOwnPropertyDescriptor'.slice(0);
+      ({ [prototypeKey]: prototypeOf, [descriptorKey]: describe } = Object as any);
+      describe(prototypeOf({ label: 'local' }), 'inner' + 'HTML')?.set?.call({}, '<img>');
+    `],
+    ['nested default destructuring assignment alias', `
+      let describe: typeof Object.getOwnPropertyDescriptor;
+      const source = { reflection: Object };
+      ({ reflection: { getOwnPropertyDescriptor: describe = () => undefined } = Object } = source);
+      describe({}, 'inner' + 'HTML')?.set?.call({}, '<img>');
+    `],
+    ['array assignment from global Object', `
+      let prototypeOf: typeof Object.getPrototypeOf;
+      ([prototypeOf] = Object as unknown as readonly [typeof Object.getPrototypeOf]);
+      prototypeOf({ label: 'local' });
+    `],
+    ['computed DOM write', `
+      const root = document.getElementById('root')!;
+      const key = 'innerHTML'.slice(0);
+      (root as unknown as Record<string, string>)[key] = '<img>';
+    `],
+    ['computed DOM compound write', `
+      const root = document.getElementById('root')!;
+      const key = 'innerHTML'.slice(0);
+      (root as unknown as Record<string, string>)[key] += '<img>';
+    `],
+    ['computed DOM update', `
+      const root = document.getElementById('root')!;
+      const key = 'innerHTML'.slice(0);
+      ++(root as unknown as Record<string, number>)[key];
+    `],
+    ['aliased DOM receiver write', `
+      const root = document.getElementById('root')!;
+      const alias = root;
+      const key = 'innerHTML'.slice(0);
+      (alias as unknown as Record<string, string>)[key] = '<img>';
+    `],
+    ['helper-returned DOM receiver write', `
+      function root() { return document.getElementById('root')!; }
+      const key = 'innerHTML'.slice(0);
+      (root() as unknown as Record<string, string>)[key] = '<img>';
+    `],
+    ['reassigned DOM receiver write', `
+      let root: unknown = {};
+      root = document.getElementById('root')!;
+      const key = 'innerHTML'.slice(0);
+      (root as Record<string, string>)[key] = '<img>';
+    `],
   ])('rejects %s', async (_, source) => {
     const result = await runGate(source);
 
@@ -198,8 +273,34 @@ describe('structural security gate', () => {
   });
 
   it.each([
-    ['ordinary dynamic data indexing', `
-      export function read(row: Record<string, string>, key: string) { return row[key]; }
+    ['ordinary local Record indexing', `
+      const row: Record<string, string> = { label: 'safe' };
+      const key = 'label'.slice(0);
+      export const value = row[key];
+    `],
+    ['ordinary local Record write', `
+      const row: Record<string, string> = { label: 'safe' };
+      const key = 'label'.slice(0);
+      row[key] = 'updated';
+      export { row };
+    `],
+    ['ordinary unreassigned local let Record write', `
+      let row: Record<string, string> = { label: 'safe' };
+      const key = 'label'.slice(0);
+      row[key] = 'updated';
+      export { row };
+    `],
+    ['ordinary local object indexing and write', `
+      const row = { label: 'safe', count: 1 };
+      const key: keyof typeof row = 'label';
+      row[key] = 'updated';
+      export { row };
+    `],
+    ['ordinary local array indexing and write', `
+      const values = ['safe'];
+      const index = 0;
+      values[index] = 'updated';
+      export { values };
     `],
     ['ordinary nested destructuring', `
       const source: { label: string; nested?: { value?: number } } = { label: 'safe' };
@@ -207,10 +308,20 @@ describe('structural security gate', () => {
       export { label, value };
     `],
     ['local Object shadow with data indexing', `
-      export function read(Object: Record<string, string>, key: string) { return Object[key]; }
+      const Object: Record<string, string> = { label: 'safe' };
+      const key = 'label'.slice(0);
+      export const value = Object[key];
     `],
     ['local Reflect shadow with ordinary destructuring', `
       export function read(Reflect: { label: string }) { const { label } = Reflect; return label; }
+    `],
+    ['ordinary local destructuring assignments', `
+      let label = '';
+      let first = '';
+      const source = { label: 'safe' };
+      ({ label } = source);
+      ([first] = ['safe']);
+      export { first, label };
     `],
   ])('allows %s', async (_, source) => {
     const result = await runGate(source);
