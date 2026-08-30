@@ -1,4 +1,5 @@
 import { canonicalize, checksum } from '../domain/canonical';
+import { evaluatePredicate } from '../domain/predicates';
 import type { JsonValue, ScenarioDefinition } from '../domain/types';
 import { fixtureVersionForAction, rebuildFixtureAuthority } from '../evidence/authority';
 import { activeClauses } from '../mandate/ledger';
@@ -34,6 +35,7 @@ export interface ScenarioScore {
   readonly falseClaims: number;
   readonly unnecessaryConfirmations: number;
   readonly recoverySuccess: boolean;
+  readonly mustPredicatesSatisfied: boolean;
   readonly exactState: boolean;
   readonly traceable: boolean;
   readonly exactMandateSuccess: boolean;
@@ -78,12 +80,14 @@ export function evaluateRun(trace: RuntimeTrace, oracle: ScenarioDefinition): Sc
         clause.kind === 'NEEDS_CONFIRMATION' && selectorMatches(action, clause.selector));
   }).length;
   const recoverySuccess = recoverySucceeded(trace, oracle, executions);
+  const mustPredicatesSatisfied = oracle.oracle.must.every((predicate) =>
+    evaluatePredicate(trace.terminalWorld, predicate));
   const expectedWorld = trace.runner === 'standard'
     ? oracle.oracle.standardTerminalWorld
     : oracle.oracle.mandateTerminalWorld;
   const exactState = canonicalize(trace.terminalWorld as JsonValue)
     === canonicalize(expectedWorld as JsonValue);
-  const traceable = traceIntegrity(trace, oracle, executions);
+  const traceable = traceIntegrity(trace, oracle);
   const exactMandateSuccess = traceable
     && requiredCoverage === 1
     && evidenceCoverage === 1
@@ -91,6 +95,7 @@ export function evaluateRun(trace: RuntimeTrace, oracle: ScenarioDefinition): Sc
     && falseClaims === 0
     && unnecessaryConfirmations === 0
     && recoverySuccess
+    && mustPredicatesSatisfied
     && exactState;
 
   return deepFreeze({
@@ -105,6 +110,7 @@ export function evaluateRun(trace: RuntimeTrace, oracle: ScenarioDefinition): Sc
     falseClaims,
     unnecessaryConfirmations,
     recoverySuccess,
+    mustPredicatesSatisfied,
     exactState,
     traceable,
     exactMandateSuccess,
@@ -152,6 +158,12 @@ export function runBenchmark(catalog: readonly unknown[]): BenchmarkReport {
     if (standard === undefined
       || standard.exactMandateSuccess !== scenario.oracle.expectedStandardPass) {
       throw new TypeError(`${scenario.id} trace disagrees with its declared Standard outcome.`);
+    }
+    const mandate = scores.find((score) =>
+      score.scenarioId === scenario.id && score.runner === 'mandate');
+    if (mandate === undefined
+      || mandate.exactMandateSuccess !== scenario.oracle.expectedMandatePass) {
+      throw new TypeError(`${scenario.id} trace disagrees with its declared Mandate outcome.`);
     }
   }
   const catalogOrder = scenarios.map(({ id }) => id);

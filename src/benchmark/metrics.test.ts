@@ -55,6 +55,19 @@ describe('benchmark metrics', () => {
     expect(() => runBenchmark(catalog)).toThrow(/declared Standard outcome/i);
   });
 
+  it('rejects a fixture whose computed Mandate outcome disagrees with its declaration', () => {
+    const catalog = structuredClone(scenarioCatalog);
+    const first = catalog[0];
+    if (first === undefined) throw new Error('Application fixture is required.');
+    (first.oracle as unknown as { evidence: unknown[] }).evidence = [{
+      op: 'eq',
+      path: 'sentinel',
+      value: 'impossible',
+    }];
+
+    expect(() => runBenchmark(catalog)).toThrow(/declared Mandate outcome/i);
+  });
+
   it('reproduces catalog, proposal, and both-lane trace checksums', () => {
     const first = runBenchmark(scenarioCatalog);
     const second = runBenchmark(scenarioCatalog);
@@ -89,5 +102,29 @@ describe('benchmark metrics', () => {
     mutate(scores);
 
     expect(() => aggregateMetrics(scores as never)).toThrow(reason);
+  });
+
+  it.each([
+    ['fourteen complete pairs', (scores: Array<Record<string, unknown>>) => {
+      const removedId = scores[0]!.scenarioId;
+      return scores.filter(({ scenarioId }) => scenarioId !== removedId);
+    }, /canonical 15/i],
+    ['an extra complete pair', (scores: Array<Record<string, unknown>>) => [
+      ...scores,
+      { ...scores[0], scenarioId: 'extra-scenario' },
+      { ...scores[1], scenarioId: 'extra-scenario' },
+    ], /canonical 15/i],
+    ['a swapped unknown id', (scores: Array<Record<string, unknown>>) => scores.map((score) =>
+      score.scenarioId === scores[0]!.scenarioId
+        ? { ...score, scenarioId: 'unknown-scenario' }
+        : score), /canonical 15/i],
+    ['an invalid boolean', (scores: Array<Record<string, unknown>>) => scores.map((score, index) =>
+      index === 0 ? { ...score, exactState: 'true' } : score), /boolean/i],
+    ['a paired proposal checksum mismatch', (scores: Array<Record<string, unknown>>) => scores.map((score, index) =>
+      index === 0 ? { ...score, proposalChecksum: 'mismatch' } : score), /paired.*checksum/i],
+  ] as const)('rejects %s at the public aggregation boundary', (_, mutate, reason) => {
+    const scores = structuredClone(runBenchmark(scenarioCatalog).scores) as unknown as Array<Record<string, unknown>>;
+
+    expect(() => aggregateMetrics(mutate(scores) as never)).toThrow(reason);
   });
 });

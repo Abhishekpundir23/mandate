@@ -1,4 +1,5 @@
 import type { ScenarioScore } from './evaluate';
+import { benchmarkScenarioIds } from '../scenarios/catalog';
 
 export interface LaneMetrics {
   readonly exactMandateSuccessRate: number;
@@ -15,6 +16,29 @@ export interface BenchmarkMetrics {
 }
 
 function assertFiniteScore(score: ScenarioScore): void {
+  if (score === null || typeof score !== 'object') {
+    throw new TypeError('Benchmark scores must be objects.');
+  }
+  if (typeof score.scenarioId !== 'string' || score.scenarioId.trim().length === 0
+    || (score.runner !== 'standard' && score.runner !== 'mandate')) {
+    throw new TypeError('Benchmark score identity is invalid.');
+  }
+  for (const field of ['scenarioChecksum', 'proposalChecksum', 'traceChecksum'] as const) {
+    if (typeof score[field] !== 'string' || score[field].trim().length === 0) {
+      throw new TypeError(`Scenario ${score.scenarioId} requires a nonempty ${field}.`);
+    }
+  }
+  for (const field of [
+    'recoverySuccess',
+    'mustPredicatesSatisfied',
+    'exactState',
+    'traceable',
+    'exactMandateSuccess',
+  ] as const) {
+    if (typeof score[field] !== 'boolean') {
+      throw new TypeError(`Scenario ${score.scenarioId} field ${field} must be boolean.`);
+    }
+  }
   const ratios = [score.requiredCoverage, score.evidenceCoverage];
   const counts = [score.unauthorizedEffects, score.falseClaims, score.unnecessaryConfirmations];
   if (ratios.some((value) => !Number.isFinite(value) || value < 0 || value > 1)
@@ -41,18 +65,33 @@ export function aggregateMetrics(scores: readonly ScenarioScore[]): BenchmarkMet
   if (scores.length === 0) throw new TypeError('Cannot aggregate an empty benchmark.');
   scores.forEach(assertFiniteScore);
 
-  const lanes = new Map<string, Set<string>>();
+  const lanes = new Map<string, ScenarioScore[]>();
   for (const score of scores) {
-    const runners = lanes.get(score.scenarioId) ?? new Set<string>();
-    if (runners.has(score.runner)) {
+    const pair = lanes.get(score.scenarioId) ?? [];
+    if (pair.some(({ runner }) => runner === score.runner)) {
       throw new TypeError(`Duplicate ${score.runner} lane for ${score.scenarioId}.`);
     }
-    runners.add(score.runner);
-    lanes.set(score.scenarioId, runners);
+    pair.push(score);
+    lanes.set(score.scenarioId, pair);
   }
-  if ([...lanes.values()].some((runners) =>
-    runners.size !== 2 || !runners.has('standard') || !runners.has('mandate'))) {
+  const canonicalIds = new Set<string>(benchmarkScenarioIds);
+  const receivedIds = new Set(lanes.keys());
+  if (scores.length !== benchmarkScenarioIds.length * 2
+    || receivedIds.size !== canonicalIds.size
+    || [...receivedIds].some((id) => !canonicalIds.has(id))) {
+    throw new TypeError('Scores must contain the canonical 15 scenario ids with exactly two lanes each.');
+  }
+  if ([...lanes.values()].some((pair) =>
+    pair.length !== 2
+      || !pair.some(({ runner }) => runner === 'standard')
+      || !pair.some(({ runner }) => runner === 'mandate'))) {
     throw new TypeError('Every scenario requires one Standard lane and one Mandate lane.');
+  }
+  for (const [scenarioId, pair] of lanes) {
+    if (new Set(pair.map(({ scenarioChecksum }) => scenarioChecksum)).size !== 1
+      || new Set(pair.map(({ proposalChecksum }) => proposalChecksum)).size !== 1) {
+      throw new TypeError(`Paired scenario/proposal checksum mismatch for ${scenarioId}.`);
+    }
   }
 
   const ordered = [...scores].sort((left, right) =>

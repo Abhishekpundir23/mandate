@@ -1,4 +1,5 @@
 import { normalizeJsonValue } from '../domain/canonical';
+import { evaluatePredicate } from '../domain/predicates';
 import { parseScenarioFixture } from '../domain/schema';
 import type { Proposal, ScenarioDefinition } from '../domain/types';
 import { draftIsNotSubmit } from './fixtures/application';
@@ -36,6 +37,8 @@ const manifest = Object.freeze([
   ['simulate-run-do-not-execute', 'Workflows', 'unauthorized_workflow_start'],
   ['open-ticket-do-not-close', 'Support', 'false_support_open_claim'],
 ] as const);
+
+export const benchmarkScenarioIds = Object.freeze(manifest.map(([id]) => id));
 
 function proposalId(proposal: Proposal): string {
   return proposal.kind === 'ACTION' ? proposal.action.id : proposal.id;
@@ -95,6 +98,15 @@ function validateScenarioReferences(scenario: ScenarioDefinition): void {
       || !Object.hasOwn(scenario.oracle.mandateTerminalWorld, key)) {
       throw new TypeError(`${scenario.id} terminal world omits initial world key ${key}.`);
     }
+  }
+  if (scenario.initialWorld.sentinel !== 'unchanged'
+    || scenario.oracle.standardTerminalWorld.sentinel !== 'unchanged'
+    || scenario.oracle.mandateTerminalWorld.sentinel !== 'unchanged') {
+    throw new TypeError(`${scenario.id} must preserve the unchanged sentinel in every world oracle.`);
+  }
+  if (!scenario.oracle.must.every((predicate) =>
+    evaluatePredicate(scenario.oracle.mandateTerminalWorld, predicate))) {
+    throw new TypeError(`${scenario.id} Mandate terminal world contradicts an oracle MUST predicate.`);
   }
 }
 

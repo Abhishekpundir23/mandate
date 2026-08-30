@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { checksum } from '../domain/canonical';
 import type { JsonValue } from '../domain/types';
 import { runComparison, type RuntimeTrace } from '../runtime/runner';
+import { executeCapability } from '../sandbox/execute';
 import { draftIsNotSubmit } from '../scenarios/fixtures/application';
+import { previewIsNotDeploy } from '../scenarios/fixtures/release';
 import { evaluateComparison, evaluateRun } from './evaluate';
 
 function withTraceChecksum(trace: RuntimeTrace): RuntimeTrace {
@@ -19,6 +21,14 @@ function withTraceChecksum(trace: RuntimeTrace): RuntimeTrace {
       receipt: trace.receipt,
     } as unknown as JsonValue),
   };
+}
+
+function reindexEvents(events: RuntimeTrace['events']): RuntimeTrace['events'] {
+  return events.map((event, index) => ({
+    ...event,
+    id: `event-${String(index + 1).padStart(3, '0')}`,
+    logicalStep: index + 1,
+  }));
 }
 
 describe('independent benchmark evaluator', () => {
@@ -169,5 +179,130 @@ describe('independent benchmark evaluator', () => {
     const duplicated = withTraceChecksum({ ...trace, events });
 
     expect(evaluateRun(duplicated, draftIsNotSubmit).traceable).toBe(false);
+  });
+
+  it('rejects the forged claim-world exploit after checksum recomputation', () => {
+    const trace = runComparison(previewIsNotDeploy).standard;
+    const events = trace.events.map((event) => event.type === 'CLAIM_EVALUATED'
+      ? { ...event, world: { ...event.world, release_live: true } }
+      : event);
+    const score = evaluateRun(withTraceChecksum({ ...trace, events }), previewIsNotDeploy);
+
+    expect(score.falseClaims).toBe(0);
+    expect(score.traceable).toBe(false);
+    expect(score.exactMandateSuccess).toBe(false);
+  });
+
+  it('requires trace initialWorld to equal the fixture initial world exactly', () => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const initialWorld = { ...trace.initialWorld, sentinel: 'forged' };
+
+    expect(evaluateRun({ ...trace, initialWorld }, draftIsNotSubmit).traceable).toBe(false);
+  });
+
+  it.each([
+    ['missing', (trace: RuntimeTrace) => {
+      const lastDiff = trace.events.map(({ type }) => type).lastIndexOf('DIFF_COMPILED');
+      return reindexEvents(trace.events.filter((_, index) => index !== lastDiff));
+    }],
+    ['extra', (trace: RuntimeTrace) => reindexEvents([
+      ...trace.events,
+      {
+        id: 'event-temporary',
+        logicalStep: 0,
+        type: 'DIFF_COMPILED' as const,
+        contractVersion: 3,
+        facts: { turnId: 'turn-3' },
+        world: trace.world,
+      },
+    ])],
+    ['reordered', (trace: RuntimeTrace) => {
+      const events = [...trace.events];
+      const lastDiff = events.map(({ type }) => type).lastIndexOf('DIFF_COMPILED');
+      const next = events[lastDiff + 1];
+      if (lastDiff < 0 || next?.type !== 'CONTRACT_VERSION_APPENDED') {
+        throw new Error('Final authority lifecycle pair is required.');
+      }
+      [events[lastDiff], events[lastDiff + 1]] = [next, events[lastDiff]!];
+      return reindexEvents(events);
+    }],
+  ] as const)('rejects a %s lifecycle event after valid reindexing', (_, mutate) => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const score = evaluateRun(withTraceChecksum({ ...trace, events: mutate(trace) }), draftIsNotSubmit);
+
+    expect(score.traceable).toBe(false);
+  });
+
+  it('rejects fabricated authority timing payloads', () => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const events = trace.events.map((event) =>
+      event.type === 'CONTRACT_VERSION_APPENDED' && event.contractVersion === 2
+        ? { ...event, contractVersion: 1, facts: { versionHash: 'fabricated' } }
+        : event);
+
+    expect(evaluateRun(withTraceChecksum({ ...trace, events }), draftIsNotSubmit).traceable)
+      .toBe(false);
+  });
+
+  it('rejects a duplicated but reducer-valid tool observation', () => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const proposal = draftIsNotSubmit.proposalProgram.main.find((candidate) =>
+      candidate.kind === 'ACTION' && candidate.action.id === 'save-draft');
+    if (proposal?.kind !== 'ACTION') throw new Error('Save-draft proposal is required.');
+    const logicalStep = trace.events.length + 1;
+    const identity = {
+      logicalStep,
+      logicalEventId: `event-${String(logicalStep).padStart(3, '0')}`,
+    };
+    const duplicated = executeCapability(trace.world, proposal.action, identity);
+    const events = [
+      ...trace.events,
+      {
+        id: identity.logicalEventId,
+        logicalStep,
+        type: 'TOOL_OBSERVATION' as const,
+        proposalId: proposal.action.id,
+        tool: proposal.action.tool,
+        operation: proposal.action.operation,
+        effect: proposal.action.effect,
+        resource: proposal.action.resource,
+        contractVersion: 1,
+        observation: duplicated.observation,
+        facts: duplicated.observation.facts,
+        world: duplicated.world,
+      },
+    ];
+    const traceWithDuplicate = withTraceChecksum({ ...trace, events });
+
+    expect(evaluateRun(traceWithDuplicate, draftIsNotSubmit).traceable).toBe(false);
+  });
+
+  it('rejects a non-tool event that mutates the intermediate world', () => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const events = trace.events.map((event) => event.type === 'FINISH_EVALUATED'
+      ? { ...event, world: { ...event.world, sentinel: 'intermediate-forgery' } }
+      : event);
+
+    expect(evaluateRun(withTraceChecksum({ ...trace, events }), draftIsNotSubmit).traceable)
+      .toBe(false);
+  });
+
+  it('independently requires every fixture oracle MUST predicate', () => {
+    const scenario = structuredClone(draftIsNotSubmit);
+    (scenario.oracle as unknown as { must: unknown[] }).must = [{
+      op: 'eq',
+      path: 'sentinel',
+      value: 'impossible',
+    }];
+    const original = runComparison(draftIsNotSubmit).mandate;
+    const trace = withTraceChecksum({
+      ...original,
+      scenarioChecksum: checksum(scenario as unknown as JsonValue),
+    });
+    const score = evaluateRun(trace, scenario);
+
+    expect(score.traceable).toBe(true);
+    expect(score.mustPredicatesSatisfied).toBe(false);
+    expect(score.exactMandateSuccess).toBe(false);
   });
 });

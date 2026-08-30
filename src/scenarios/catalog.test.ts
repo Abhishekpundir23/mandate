@@ -116,4 +116,35 @@ describe('benchmark scenario catalog', () => {
     expect(() => validateScenarioCatalog(nonJson)).toThrow(/non-json/i);
     expect(() => validateScenarioCatalog(omitted)).toThrow(/initial world key/i);
   });
+
+  it.each([
+    ['removes the initial sentinel', (scenario: ScenarioDefinition) => {
+      delete (scenario.initialWorld as Record<string, unknown>).sentinel;
+    }],
+    ['changes the initial sentinel', (scenario: ScenarioDefinition) => {
+      (scenario.initialWorld as Record<string, unknown>).sentinel = 'changed';
+    }],
+    ['changes the Standard terminal sentinel', (scenario: ScenarioDefinition) => {
+      (scenario.oracle.standardTerminalWorld as Record<string, unknown>).sentinel = 'changed';
+    }],
+    ['changes the Mandate terminal sentinel', (scenario: ScenarioDefinition) => {
+      (scenario.oracle.mandateTerminalWorld as Record<string, unknown>).sentinel = 'changed';
+    }],
+  ] as const)('rejects a fixture that %s', (_, mutate) => {
+    const catalog = structuredClone(scenarioCatalog) as ScenarioDefinition[];
+    mutate(catalog[0]!);
+
+    expect(() => validateScenarioCatalog(catalog)).toThrow(/sentinel/i);
+  });
+
+  it('rejects a Mandate terminal world that contradicts an oracle MUST predicate', () => {
+    const catalog = structuredClone(scenarioCatalog) as ScenarioDefinition[];
+    (catalog[0]!.oracle as unknown as { must: unknown[] }).must = [{
+      op: 'eq',
+      path: 'sentinel',
+      value: 'contradiction',
+    }];
+
+    expect(() => validateScenarioCatalog(catalog)).toThrow(/mandate terminal.*must/i);
+  });
 });
