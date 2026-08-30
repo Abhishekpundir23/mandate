@@ -28,7 +28,7 @@ function iconKind(status: ReplayActionStatus): 'success' | 'blocked' | 'warning'
 
 function statusText(action: ReplayActionView): string {
   if (action.status === 'blocked') {
-    return `Action blocked by mandate v${action.contractVersion ?? 0}`;
+    return `BLOCKED by mandate v${action.contractVersion ?? 0}`;
   }
   if (action.status === 'unauthorized') return 'Unauthorized action observed';
   if (action.status === 'succeeded') return 'Action succeeded';
@@ -56,10 +56,7 @@ export function ExecutionLane({
               <div>
                 <span className="tool-label">tool.call</span>
                 <strong>{operationLabel(action.operation)}</strong>
-                <span className="visually-hidden">{statusText(action)}</span>
-                {action.status === 'blocked' ? (
-                  <span className="decision-label">{`BLOCKED by mandate v${action.contractVersion ?? 0}`}</span>
-                ) : null}
+                <span className="action-status">{statusText(action)}</span>
                 <span className="event-args">args: {'{ … }'}</span>
               </div>
             </li>

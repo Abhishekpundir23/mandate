@@ -26,6 +26,13 @@ function frameWithStatus(
     action.proposalId === proposalId && action.status === status));
 }
 
+function expectVisibleStatus(row: HTMLElement, label: string): void {
+  const status = within(row).getByText(label);
+  expect(status).toBeVisible();
+  expect(status).not.toHaveClass('visually-hidden');
+  expect(status.closest('.event-row')).toBe(row);
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe('engine-owned replay presentation', () => {
@@ -41,14 +48,15 @@ describe('engine-owned replay presentation', () => {
     let standardLane = screen.getByRole('region', { name: 'Standard execution' });
     let submitRow = within(standardLane).getByText('submit_application').closest('li');
     expect(submitRow).toHaveClass('event-info');
-    expect(within(submitRow!).getByText('Pending observation')).toBeInTheDocument();
+    expectVisibleStatus(submitRow!, 'Pending observation');
 
     view.rerender(<ComparisonPanel frame={unauthorized} flagship />);
     standardLane = screen.getByRole('region', { name: 'Standard execution' });
     submitRow = within(standardLane).getByText('submit_application').closest('li');
     expect(submitRow).toHaveClass('event-warning');
     expect(submitRow).not.toHaveClass('event-success');
-    expect(within(submitRow!).getByText('Unauthorized action observed')).toBeInTheDocument();
+    expectVisibleStatus(submitRow!, 'Unauthorized action observed');
+    expect(within(submitRow!).queryByText('Action succeeded')).not.toBeInTheDocument();
   });
 
   it('provides explicit succeeded and blocked action status text', () => {
@@ -61,7 +69,8 @@ describe('engine-owned replay presentation', () => {
     const saveRow = within(standardLane).getByText('save_draft').closest('li');
     const submitRow = within(mandateLane).getByText('submit_application').closest('li');
 
-    expect(within(saveRow!).getByText('Action succeeded')).toBeInTheDocument();
-    expect(within(submitRow!).getByText('Action blocked by mandate v3')).toBeInTheDocument();
+    expectVisibleStatus(saveRow!, 'Action succeeded');
+    expectVisibleStatus(submitRow!, 'BLOCKED by mandate v3');
+    expect(within(submitRow!).getAllByText('BLOCKED by mandate v3')).toHaveLength(1);
   });
 });

@@ -128,3 +128,50 @@ git diff --cached --check
 ```
 
 The benchmark contract remains unchanged: Standard 5/15 exact with 8 unauthorized effects and 3 false claims; Mandate 15/15, 0, 0. No product or data-contract blocker emerged in this round.
+
+## Fix round 2/5: visible action status and complete generic provenance
+
+### RED evidence
+
+- Extended the real `ComparisonPanel` presentation tests before production edits. The first focused run failed both action-status tests because `Pending observation` and `Action succeeded` were still rendered inside `.visually-hidden`; the blocked assertion also expected one visible canonical label rather than a hidden/visible duplicate pair.
+- Added direct `MandateHistory` rendering tests with complete hand-authored `IntentDiff` values. The same RED run failed because REVOKE rendered only `− REVOKED · Deploy the preview to production.` and omitted `deploy-production-may`, while REPLACE rendered only `± MAY · Buy the item for Bob.` and omitted both target ids and the replacement id.
+- RED command: `npm test -- --run src/components/live/ReplayPresentation.test.tsx src/components/live/MandateHistory.test.tsx` — 2 files failed, 4 tests failed for the intended missing presentation behavior.
+
+### GREEN behavior
+
+- Every action row now contains one visible `.action-status` node. Pending, succeeded, blocked, and unauthorized statuses remain engine-owned `ReplayActionStatus` values; React only maps the supplied value to text. Blocked uses its existing `BLOCKED by mandate vN` label once, avoiding duplicate announced text.
+- Standard `submit_application` visibly renders `Unauthorized action observed`, remains `event-warning`, and contains no `Action succeeded` label after its unauthorized observation.
+- Generic REVOKE now presents the engine tombstone id and statement: `− REVOKED · <id> · <statement>`.
+- Generic REPLACE preserves every engine-supplied target id in source order and shows the replacement id, kind, and statement: `± REPLACE · <target ids> → <replacement id> · <kind> · <statement>`. No active state, source statement, or friendly authority is inferred.
+
+### Fix-round visual QA
+
+- The in-app browser runtime again reported no connected browser after its prescribed troubleshooting check, so local Playwright rendered the local-only app. No external site, deployment, submission, or real action was used.
+- Compared fresh 1586×992 desktop and 430×1200 compact captures at original size with `design/concepts/live-desktop.png` and `design/concepts/live-mobile.png` in one inspection pass.
+- Desktop comparison preserved the 88px header, 26/49/25 ruled rails, dedicated footer, local mono typography, semantic red/green/cobalt palette, and existing authority/receipt placement. The required 14px status line fits under each operation without adding a card, badge, pill, gradient, or new icon.
+- Compact comparison preserved the v3 truth-first diff and current-authority summary, two mounted tabpanels with one hidden, single selected Standard trace, red unauthorized row, authority continuation, and normal document flow. The status text remained `display: block` at both widths.
+- Above-the-fold copy changed only by making the already-defined action statuses visible. The critical Standard text is `Unauthorized action observed`; pending/success labels are `Pending observation` and `Action succeeded`; blocked remains `BLOCKED by mandate v3`. Temporary QA captures were removed after inspection because Task 8 owns final screenshot artifacts.
+
+### Fresh fix-round verification
+
+```text
+npm test -- --run src/components/live/ReplayPresentation.test.tsx src/components/live/MandateHistory.test.tsx
+  2 test files passed; 4 tests passed
+
+npm test -- --run src/components/live src/components/primitives src/runtime/replay.test.ts src/app/useReplay.test.tsx && npm run typecheck && npm run lint
+  7 test files passed; 25 tests passed
+  typecheck clean; lint zero warnings
+
+npm test -- --run src/scenarios src/benchmark src/runtime src/evidence
+  7 test files passed; 72 tests passed
+
+npm run verify
+  22 test files passed; 176 tests passed
+  typecheck clean; lint zero warnings; Vite build succeeded (148 modules)
+
+git diff --check
+git diff --cached --check
+  both clean
+```
+
+The benchmark contract remains Standard 5/15 exact, 8 unauthorized effects, and 3 false claims versus Mandate 15/15, 0, and 0. No runner, policy, truth-first v2/v3 provenance, or external boundary changed.

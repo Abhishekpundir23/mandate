@@ -46,10 +46,14 @@ function genericDiff(change: IntentDiff): readonly DiffLine[] {
       };
     }
     if (operation.op === 'REVOKE') {
-      return { text: `− REVOKED · ${operation.tombstone.statement}`, kind: 'denied' };
+      return {
+        text: `− REVOKED · ${operation.tombstone.id} · ${operation.tombstone.statement}`,
+        kind: 'denied',
+      };
     }
+    const targets = operation.targetClauseIds.join(', ');
     return {
-      text: `± ${operation.replacement.kind.replace('_', ' ')} · ${operation.replacement.statement}`,
+      text: `± REPLACE · ${targets} → ${operation.replacement.id} · ${operation.replacement.kind.replace('_', ' ')} · ${operation.replacement.statement}`,
       kind: 'allowed',
     };
   });
