@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ActionProposal, Clause, ContractVersion } from '../domain/types';
+import type {
+  ActionProposal,
+  CapabilityValidationPort,
+  Clause,
+  ConfirmationStore,
+  ConfirmationToken,
+  ContractVersion,
+  JsonValue,
+} from '../domain/types';
 import {
   consumeConfirmation,
   emptyConfirmationStore,
@@ -24,6 +32,25 @@ const sendToBob: ActionProposal = {
 const sendToAlice: ActionProposal = {
   ...sendToBob,
   args: { ...sendToBob.args, recipient: 'alice@example.test' },
+  resource: 'recipient:alice',
+};
+
+const validateEmailCapability: CapabilityValidationPort = (proposal) => {
+  if (proposal.tool !== 'email') {
+    return { ok: false, reason: 'Unknown tool' };
+  }
+  if (proposal.operation !== 'send') {
+    return { ok: false, reason: 'Unknown operation' };
+  }
+  const recipient = proposal.args.recipient as JsonValue | undefined;
+  if (typeof recipient !== 'string' || recipient.length === 0) {
+    return { ok: false, reason: 'Invalid capability arguments' };
+  }
+  return {
+    ok: true,
+    effects: ['EXTERNAL_TRANSMIT'],
+    resource: `recipient:${recipient.split('@')[0]}`,
+  };
 };
 
 function version(versionNumber: number, clauses: readonly Clause[] = []): ContractVersion {
@@ -52,84 +79,94 @@ const confirmationClause: Clause = {
   afterConfirmation: 'MAY',
 };
 
+function gate(
+  contract: ContractVersion,
+  proposal: ActionProposal,
+  confirmationStore: ConfirmationStore,
+  confirmation?: ConfirmationToken,
+) {
+  return evaluateAction({
+    version: contract,
+    proposal,
+    validateCapability: validateEmailCapability,
+    confirmationStore,
+    ...(confirmation === undefined ? {} : { confirmation }),
+  });
+}
+
 describe('scoped single-use confirmations', () => {
   it('invalidates confirmation after the contract changes', () => {
     const v2 = version(2, [confirmationClause]);
     const v3 = version(3, [confirmationClause]);
-    const token = issueConfirmation(v2, sendToBob);
+    const issued = issueConfirmation(emptyConfirmationStore, v2, sendToBob, 4);
 
-    expect(consumeConfirmation(emptyConfirmationStore, token, v3, sendToBob).ok).toBe(false);
+    expect(consumeConfirmation(issued.store, issued.token, v3, sendToBob).ok).toBe(false);
   });
 
   it('rejects replay and argument mutation', () => {
     const v2 = version(2, [confirmationClause]);
-    const token = issueConfirmation(v2, sendToBob);
+    const issued = issueConfirmation(emptyConfirmationStore, v2, sendToBob, 4);
 
-    expect(consumeConfirmation(emptyConfirmationStore, token, v2, sendToAlice).ok).toBe(false);
-    const first = consumeConfirmation(emptyConfirmationStore, token, v2, sendToBob);
+    expect(consumeConfirmation(issued.store, issued.token, v2, sendToAlice).ok).toBe(false);
+    const first = consumeConfirmation(issued.store, issued.token, v2, sendToBob);
     expect(first.ok).toBe(true);
-    expect(consumeConfirmation(first.store, token, v2, sendToBob).ok).toBe(false);
+    expect(consumeConfirmation(first.store, issued.token, v2, sendToBob).ok).toBe(false);
   });
 
-  it('rejects replay through a cloned token with an altered id', () => {
+  it('rejects a checksum-consistent token that is absent from the issued registry', () => {
     const v2 = version(2, [confirmationClause]);
-    const token = issueConfirmation(v2, sendToBob);
-    const first = consumeConfirmation(emptyConfirmationStore, token, v2, sendToBob);
-    const alteredId = { ...token, id: `${token.id}-copy` };
+    const issued = issueConfirmation(emptyConfirmationStore, v2, sendToBob, 4);
 
-    expect(first.ok).toBe(true);
-    expect(consumeConfirmation(first.store, alteredId, v2, sendToBob).ok).toBe(false);
-    expect(evaluateAction(v2, sendToBob, alteredId).outcome).toBe('CONFIRM');
+    const result = gate(v2, sendToBob, emptyConfirmationStore, issued.token);
+
+    expect(result.decision.outcome).toBe('CONFIRM');
+    expect(result.confirmationStore).toBe(emptyConfirmationStore);
   });
 
-  it('issues only the immutable scoped token fields', () => {
-    const token = issueConfirmation(version(2, [confirmationClause]), sendToBob);
+  it('issues only immutable scoped token fields and registers the token in a new store', () => {
+    const issued = issueConfirmation(
+      emptyConfirmationStore,
+      version(2, [confirmationClause]),
+      sendToBob,
+      4,
+    );
 
-    expect(Object.keys(token).sort()).toEqual([
+    expect(Object.keys(issued.token).sort()).toEqual([
       'actionFingerprint',
       'contractVersion',
       'id',
       'issuedAtLogicalStep',
     ]);
-    expect(token.contractVersion).toBe(2);
-    expect(token.issuedAtLogicalStep).toBe('step-4');
-    expect(Object.isFrozen(token)).toBe(true);
+    expect(issued.token.contractVersion).toBe(2);
+    expect(issued.token.issuedAtLogicalStep).toBe(4);
+    expect(issued.store).not.toBe(emptyConfirmationStore);
+    expect(issued.store.issuedTokens).toEqual([issued.token]);
+    expect(emptyConfirmationStore.issuedTokens).toEqual([]);
+    expect(Object.isFrozen(issued.token)).toBe(true);
+    expect(Object.isFrozen(issued.store)).toBe(true);
+    expect(Object.isFrozen(issued.store.issuedTokens)).toBe(true);
   });
 
-  it('returns a new frozen store without mutating the token or prior store', () => {
+  it('atomically consumes a registered token at the gate boundary', () => {
     const v2 = version(2, [confirmationClause]);
-    const token = issueConfirmation(v2, sendToBob);
-    const tokenSnapshot = structuredClone(token);
-    const priorIds = emptyConfirmationStore.consumedTokenIds;
+    const issued = issueConfirmation(emptyConfirmationStore, v2, sendToBob, 4);
 
-    const consumed = consumeConfirmation(emptyConfirmationStore, token, v2, sendToBob);
+    const first = gate(v2, sendToBob, issued.store, issued.token);
+    const replay = gate(v2, sendToBob, first.confirmationStore, issued.token);
 
-    expect(consumed.ok).toBe(true);
-    expect(consumed.store).not.toBe(emptyConfirmationStore);
-    expect(emptyConfirmationStore.consumedTokenIds).toBe(priorIds);
-    expect(emptyConfirmationStore.consumedTokenIds).toEqual([]);
-    expect(consumed.store.consumedTokenIds).toEqual([token.id]);
-    expect(token).toEqual(tokenSnapshot);
-    expect(Object.isFrozen(consumed.store)).toBe(true);
-    expect(Object.isFrozen(consumed.store.consumedTokenIds)).toBe(true);
-  });
-
-  it('allows a matching conditional grant only with its action-bound token', () => {
-    const v2 = version(2, [confirmationClause]);
-    const token = issueConfirmation(v2, sendToBob);
-    const sameActionAtAnotherStep = { ...sendToBob, stepId: 'step-5' };
-
-    expect(evaluateAction(v2, sendToBob).outcome).toBe('CONFIRM');
-    expect(evaluateAction(v2, sendToBob, token).outcome).toBe('ALLOW');
-    expect(evaluateAction(v2, sendToAlice, token).outcome).toBe('CONFIRM');
-    expect(evaluateAction(v2, sameActionAtAnotherStep, token).outcome).toBe('CONFIRM');
+    expect(first.decision.outcome).toBe('ALLOW');
+    expect(first.confirmationStore).not.toBe(issued.store);
+    expect(first.confirmationStore.consumedTokenIds).toEqual([issued.token.id]);
+    expect(issued.store.consumedTokenIds).toEqual([]);
+    expect(replay.decision.outcome).toBe('CONFIRM');
+    expect(replay.confirmationStore).toBe(first.confirmationStore);
   });
 
   it.each(['MUST_NOT', 'REVOKED'] as const)(
     'does not let confirmation override an active %s denial',
     (kind) => {
       const v2 = version(2, [confirmationClause]);
-      const token = issueConfirmation(v2, sendToBob);
+      const issued = issueConfirmation(emptyConfirmationStore, v2, sendToBob, 4);
       const denial: Clause = kind === 'MUST_NOT'
         ? {
             id: 'deny-send',
@@ -149,7 +186,11 @@ describe('scoped single-use confirmations', () => {
           };
       const deniedVersion = version(2, [confirmationClause, denial]);
 
-      expect(evaluateAction(deniedVersion, sendToBob, token).outcome).toBe('BLOCK');
+      const result = gate(deniedVersion, sendToBob, issued.store, issued.token);
+
+      expect(result.decision.outcome).toBe('BLOCK');
+      expect(result.confirmationStore).toBe(issued.store);
+      expect(result.confirmationStore.consumedTokenIds).toEqual([]);
     },
   );
 });

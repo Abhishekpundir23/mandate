@@ -1,41 +1,71 @@
-import { checksum } from '../domain/canonical';
+import { checksum, fingerprintAction } from '../domain/canonical';
 import type {
   ActionProposal,
   ConfirmationStore,
   ConfirmationToken,
   ContractVersion,
 } from '../domain/types';
-import { fingerprintAction } from './gate';
 
-function freezeStore(consumedTokenIds: readonly string[]): ConfirmationStore {
-  const uniqueIds = Object.freeze([...new Set(consumedTokenIds)].sort());
-  return Object.freeze({ consumedTokenIds: uniqueIds });
-}
-
-function tokenIdFor(contractVersion: number, actionFingerprint: string, issuedAtLogicalStep: string): string {
+function tokenIdFor(
+  contractVersion: number,
+  actionFingerprint: string,
+  issuedAtLogicalStep: number,
+): string {
   return `confirmation-${checksum({ contractVersion, actionFingerprint, issuedAtLogicalStep })}`;
 }
 
-export const emptyConfirmationStore: ConfirmationStore = freezeStore([]);
+function tokensEqual(left: ConfirmationToken, right: ConfirmationToken): boolean {
+  return left.id === right.id
+    && left.contractVersion === right.contractVersion
+    && left.actionFingerprint === right.actionFingerprint
+    && left.issuedAtLogicalStep === right.issuedAtLogicalStep;
+}
+
+function freezeToken(token: ConfirmationToken): ConfirmationToken {
+  return Object.freeze({ ...token });
+}
+
+function freezeStore(
+  issuedTokens: readonly ConfirmationToken[],
+  consumedTokenIds: readonly string[],
+): ConfirmationStore {
+  const uniqueTokens = new Map<string, ConfirmationToken>();
+  for (const token of issuedTokens) {
+    uniqueTokens.set(token.id, freezeToken(token));
+  }
+  const frozenTokens = Object.freeze(
+    [...uniqueTokens.values()].sort((left, right) => left.id.localeCompare(right.id)),
+  );
+  const frozenConsumedIds = Object.freeze([...new Set(consumedTokenIds)].sort());
+  return Object.freeze({
+    issuedTokens: frozenTokens,
+    consumedTokenIds: frozenConsumedIds,
+  });
+}
+
+export const emptyConfirmationStore: ConfirmationStore = freezeStore([], []);
 
 export function issueConfirmation(
+  store: ConfirmationStore,
   version: ContractVersion,
   proposal: ActionProposal,
-): ConfirmationToken {
-  const actionFingerprint = fingerprintAction(proposal);
-  const issuedAtLogicalStep = proposal.stepId.normalize('NFC').trim();
-  if (issuedAtLogicalStep.length === 0) {
-    throw new TypeError('stepId must not be empty.');
+  issuedAtLogicalStep: number,
+): { readonly token: ConfirmationToken; readonly store: ConfirmationStore } {
+  if (!Number.isSafeInteger(issuedAtLogicalStep) || issuedAtLogicalStep < 0) {
+    throw new TypeError('issuedAtLogicalStep must be a non-negative safe integer.');
   }
 
-  const id = tokenIdFor(version.version, actionFingerprint, issuedAtLogicalStep);
-
-  return Object.freeze({
-    id,
+  const actionFingerprint = fingerprintAction(proposal);
+  const token = freezeToken({
+    id: tokenIdFor(version.version, actionFingerprint, issuedAtLogicalStep),
     contractVersion: version.version,
     actionFingerprint,
     issuedAtLogicalStep,
   });
+  const nextStore = freezeStore([...store.issuedTokens, token], store.consumedTokenIds);
+  const registeredToken = nextStore.issuedTokens.find(({ id }) => id === token.id)!;
+
+  return Object.freeze({ token: registeredToken, store: nextStore });
 }
 
 export function consumeConfirmation(
@@ -51,15 +81,17 @@ export function consumeConfirmation(
     return Object.freeze({ ok: false, store });
   }
 
-  const proposalStep = proposal.stepId.normalize('NFC').trim();
-  const isValid = token.id === tokenIdFor(
+  const expectedId = tokenIdFor(
     token.contractVersion,
     token.actionFingerprint,
     token.issuedAtLogicalStep,
-  )
+  );
+  const issuedToken = store.issuedTokens.find(({ id }) => id === token.id);
+  const isValid = token.id === expectedId
     && token.contractVersion === version.version
     && token.actionFingerprint === actionFingerprint
-    && token.issuedAtLogicalStep === proposalStep
+    && issuedToken !== undefined
+    && tokensEqual(issuedToken, token)
     && !store.consumedTokenIds.includes(token.id);
 
   if (!isValid) {
@@ -68,6 +100,6 @@ export function consumeConfirmation(
 
   return Object.freeze({
     ok: true,
-    store: freezeStore([...store.consumedTokenIds, token.id]),
+    store: freezeStore(store.issuedTokens, [...store.consumedTokenIds, token.id]),
   });
 }

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ActionProposal, Clause, ContractVersion } from '../domain/types';
+import type {
+  ActionProposal,
+  CapabilityValidationPort,
+  Clause,
+  ContractVersion,
+  Effect,
+  JsonValue,
+} from '../domain/types';
+import { emptyConfirmationStore } from './confirmation';
 import { evaluateAction, fingerprintAction } from './gate';
 
 const source = { turnId: 'turn-1', quote: 'Only submit this application.' } as const;
@@ -15,6 +23,48 @@ const submitProposal: ActionProposal = {
   resource: 'application:1',
   fingerprint: 'caller-supplied-value-is-not-trusted',
 };
+
+function stringArg(args: Readonly<Record<string, JsonValue>>, key: string): string | undefined {
+  const value = args[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+const validateCapability: CapabilityValidationPort = (proposal) => {
+  const knownTools = new Set(['application', 'email']);
+  if (!knownTools.has(proposal.tool)) {
+    return { ok: false, reason: 'Unknown tool' };
+  }
+
+  let effects: readonly Effect[];
+  let resource: string | undefined;
+  if (proposal.tool === 'application' && proposal.operation === 'submit') {
+    effects = ['EXTERNAL_TRANSMIT'];
+    resource = stringArg(proposal.args, 'applicationId');
+  } else if (proposal.tool === 'application' && proposal.operation === 'saveAndContinue') {
+    effects = ['DRAFT_WRITE', 'EXTERNAL_TRANSMIT'];
+    resource = stringArg(proposal.args, 'applicationId');
+  } else if (proposal.tool === 'email' && proposal.operation === 'send') {
+    effects = ['EXTERNAL_TRANSMIT'];
+    const recipient = stringArg(proposal.args, 'recipient');
+    resource = recipient === undefined ? undefined : `recipient:${recipient.split('@')[0]}`;
+  } else {
+    return { ok: false, reason: 'Unknown operation' };
+  }
+
+  if (resource === undefined) {
+    return { ok: false, reason: 'Invalid capability arguments' };
+  }
+  return { ok: true, effects, resource };
+};
+
+function gate(contract: ContractVersion, proposal: ActionProposal) {
+  return evaluateAction({
+    version: contract,
+    proposal,
+    validateCapability,
+    confirmationStore: emptyConfirmationStore,
+  }).decision;
+}
 
 function clause(id: string, kind: Clause['kind']): Clause {
   return {
@@ -65,11 +115,11 @@ describe('deterministic action gate', () => {
     ['matching MAY', versionWithMay, 'ALLOW'],
     ['no matching authority', emptyVersion, 'BLOCK'],
   ] as const)('%s yields %s', (_, contract, expected) => {
-    expect(evaluateAction(contract, submitProposal).outcome).toBe(expected);
+    expect(gate(contract, submitProposal).outcome).toBe(expected);
   });
 
   it('fails closed when MUST and MUST_NOT both match', () => {
-    const decision = evaluateAction(version([
+    const decision = gate(version([
       clause('required-submit', 'MUST'),
       clause('deny-submit', 'MUST_NOT'),
     ]), submitProposal);
@@ -108,9 +158,74 @@ describe('deterministic action gate', () => {
       },
     }]);
 
-    expect(evaluateAction(bobOnly, sendBob).outcome).toBe('ALLOW');
-    expect(evaluateAction(bobOnly, sendAlice).outcome).toBe('BLOCK');
-    expect(evaluateAction(bobOnly, readBob).outcome).toBe('BLOCK');
+    expect(gate(bobOnly, sendBob).outcome).toBe('ALLOW');
+    expect(gate(bobOnly, sendAlice).outcome).toBe('BLOCK');
+    expect(gate(bobOnly, readBob).outcome).toBe('BLOCK');
+  });
+
+  it.each([
+    ['tool', { ...submitProposal, tool: 'invented' }, 'Unknown tool'],
+    ['operation', { ...submitProposal, operation: 'invented' }, 'Unknown operation'],
+  ] as const)('blocks a well-formed but unknown %s before clause matching', (_, proposal, reason) => {
+    const permissiveVersion = version([{
+      ...clause('invented-grant', 'MAY'),
+      selector: {
+        tool: proposal.tool,
+        operation: proposal.operation,
+        resource: proposal.resource,
+        effect: proposal.effect,
+      },
+    }]);
+
+    const decision = gate(permissiveVersion, proposal);
+
+    expect(decision.outcome).toBe('BLOCK');
+    expect(decision.matchedClauseIds).toEqual([]);
+    expect(decision.reasons).toContain(reason);
+  });
+
+  it('fails closed when the capability validator returns a malformed rejection', () => {
+    const malformedValidator = (() => ({ ok: false, reason: '' })) as CapabilityValidationPort;
+
+    const result = evaluateAction({
+      version: version([clause('allow-submit', 'MAY')]),
+      proposal: submitProposal,
+      validateCapability: malformedValidator,
+      confirmationStore: emptyConfirmationStore,
+    });
+
+    expect(result.decision.outcome).toBe('BLOCK');
+    expect(result.decision.matchedClauseIds).toEqual([]);
+    expect(result.decision.reasons).toContain('Capability validation failed closed');
+  });
+
+  it('blocks when validated arguments derive a different resource', () => {
+    const sendBob = {
+      ...submitProposal,
+      tool: 'email',
+      operation: 'send',
+      args: { recipient: 'bob@example.test' },
+      resource: 'recipient:bob',
+    } satisfies ActionProposal;
+    const bobOnly = version([{
+      ...clause('allow-send-bob', 'MAY'),
+      selector: {
+        tool: 'email',
+        operation: 'send',
+        resource: 'recipient:bob',
+        effect: 'EXTERNAL_TRANSMIT',
+      },
+    }]);
+    const aliceArgsWithBobResource = {
+      ...sendBob,
+      args: { recipient: 'alice@example.test' },
+    } satisfies ActionProposal;
+
+    const decision = gate(bobOnly, aliceArgsWithBobResource);
+
+    expect(decision.outcome).toBe('BLOCK');
+    expect(decision.matchedClauseIds).toEqual([]);
+    expect(decision.reasons).toContain('Capability-derived resource does not match proposal resource');
   });
 
   it('rejects a compound operation before matching an otherwise permissive clause', () => {
@@ -129,7 +244,7 @@ describe('deterministic action gate', () => {
       },
     }]);
 
-    const decision = evaluateAction(permissiveVersion, compoundProposal);
+    const decision = gate(permissiveVersion, compoundProposal);
 
     expect(decision.outcome).toBe('BLOCK');
     expect(decision.matchedClauseIds).toEqual([]);
@@ -161,12 +276,58 @@ describe('deterministic action gate', () => {
       clause('a-allow', 'MAY'),
     ]);
 
-    const decision = evaluateAction(contract, callerProposal);
+    const decision = gate(contract, callerProposal);
 
     expect(decision.matchedClauseIds).toEqual(['a-allow', 'z-allow']);
     expect([...decision.reasons]).toEqual([...decision.reasons].sort());
     expect(Object.isFrozen(callerProposal)).toBe(false);
     expect(Object.isFrozen(mutableArgs)).toBe(false);
     expect(Object.isFrozen(decision)).toBe(true);
+  });
+
+  it('does not freeze or mutate caller-owned contract clauses and selectors', () => {
+    const selector = {
+      tool: 'application',
+      operation: 'submit',
+      resource: 'application:1',
+      effect: 'EXTERNAL_TRANSMIT' as const,
+    };
+    const callerClause: Clause = {
+      ...clause('caller-allow', 'MAY'),
+      selector,
+    };
+    const callerVersion = version([callerClause]);
+
+    const decision = gate(callerVersion, submitProposal);
+
+    expect(decision.outcome).toBe('ALLOW');
+    expect(Object.isFrozen(callerVersion)).toBe(false);
+    expect(Object.isFrozen(callerVersion.clauses)).toBe(false);
+    expect(Object.isFrozen(callerClause)).toBe(false);
+    expect(Object.isFrozen(selector)).toBe(false);
+    expect(selector).toEqual({
+      tool: 'application',
+      operation: 'submit',
+      resource: 'application:1',
+      effect: 'EXTERNAL_TRANSMIT',
+    });
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['malformed', 'ALLOW'],
+  ] as const)('blocks a confirmation clause with %s afterConfirmation', (_, afterConfirmation) => {
+    const malformedClause = {
+      ...clause('confirm-submit', 'NEEDS_CONFIRMATION'),
+      ...(afterConfirmation === undefined ? {} : { afterConfirmation }),
+    } as Clause;
+    if (afterConfirmation === undefined) {
+      delete (malformedClause as { afterConfirmation?: unknown }).afterConfirmation;
+    }
+
+    const decision = gate(version([malformedClause]), submitProposal);
+
+    expect(decision.outcome).toBe('BLOCK');
+    expect(decision.reasons).toContain('Malformed confirmation authority: blocked closed');
   });
 });

@@ -74,6 +74,30 @@ export interface ActionProposal {
   readonly fingerprint: string;
 }
 
+export interface CapabilityValidationProposal {
+  readonly tool: string;
+  readonly operation: string;
+  readonly args: Readonly<Record<string, JsonValue>>;
+  readonly effect: Effect;
+  readonly resource: string;
+}
+
+export type CapabilityValidationResult =
+  | {
+      readonly ok: true;
+      readonly effects: readonly Effect[];
+      readonly resource: string;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: string;
+    };
+
+/** Pure capability boundary; Task 4 supplies the concrete registry implementation. */
+export type CapabilityValidationPort = (
+  proposal: Readonly<CapabilityValidationProposal>,
+) => CapabilityValidationResult;
+
 export interface GateDecision {
   readonly outcome: 'ALLOW' | 'BLOCK' | 'CONFIRM';
   readonly contractVersion: number;
@@ -86,11 +110,25 @@ export interface ConfirmationToken {
   readonly id: string;
   readonly contractVersion: number;
   readonly actionFingerprint: string;
-  readonly issuedAtLogicalStep: string;
+  readonly issuedAtLogicalStep: number;
 }
 
 export interface ConfirmationStore {
+  readonly issuedTokens: readonly ConfirmationToken[];
   readonly consumedTokenIds: readonly string[];
+}
+
+export interface GateRequest {
+  readonly version: ContractVersion;
+  readonly proposal: ActionProposal;
+  readonly validateCapability: CapabilityValidationPort;
+  readonly confirmationStore: ConfirmationStore;
+  readonly confirmation?: ConfirmationToken;
+}
+
+export interface GateEvaluation {
+  readonly decision: GateDecision;
+  readonly confirmationStore: ConfirmationStore;
 }
 
 export interface ToolObservation {

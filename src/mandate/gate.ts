@@ -1,14 +1,20 @@
-import { checksum, normalizeJsonValue } from '../domain/canonical';
+import {
+  checksum,
+  fingerprintAction,
+  normalizeActionPayload,
+} from '../domain/canonical';
 import type {
   ActionProposal,
   ActionSelector,
+  CapabilityValidationProposal,
   Clause,
-  ConfirmationToken,
   ContractVersion,
   Effect,
   GateDecision,
-  JsonValue,
+  GateEvaluation,
+  GateRequest,
 } from '../domain/types';
+import { consumeConfirmation } from './confirmation';
 import { activeClauses } from './ledger';
 
 const effects = new Set<Effect>([
@@ -21,7 +27,6 @@ const effects = new Set<Effect>([
 ]);
 
 const identifierPattern = /^[\p{L}_][\p{L}\p{N}._:-]*$/u;
-const compoundOperationPattern = /(?:[\p{Ll}\p{N}](?:And|Then)[\p{Lu}\p{N}])|(?:^|[._:-])(?:and|then)(?:[._:-]|$)|[+&,;/]/u;
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): Readonly<T> {
   if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
@@ -63,41 +68,20 @@ function normalizeEffect(value: string): Effect {
   return normalized as Effect;
 }
 
-function actionPayload(proposal: ActionProposal): JsonValue {
-  const args = normalizeJsonValue(proposal.args);
-  if (args === null || typeof args !== 'object' || Array.isArray(args)) {
-    throw new TypeError('args must be a plain JSON object.');
-  }
+type NormalizedProposal = Readonly<ActionProposal> & CapabilityValidationProposal;
 
-  return {
-    tool: normalizeIdentifier(proposal.tool, 'tool'),
-    operation: normalizeIdentifier(proposal.operation, 'operation'),
-    args,
-    effect: normalizeEffect(proposal.effect),
-    resource: normalizeText(proposal.resource, 'resource'),
-  };
-}
-
-function normalizeProposal(proposal: ActionProposal): Readonly<ActionProposal> {
-  const payload = actionPayload(proposal) as {
-    readonly tool: string;
-    readonly operation: string;
-    readonly args: Readonly<Record<string, JsonValue>>;
-    readonly effect: Effect;
-    readonly resource: string;
-  };
+function normalizeProposal(proposal: ActionProposal): NormalizedProposal {
+  const payload = normalizeActionPayload(proposal);
   const normalized = {
     id: normalizeText(proposal.id, 'id'),
     stepId: normalizeText(proposal.stepId, 'stepId'),
     ...payload,
     fingerprint: checksum(payload),
   } satisfies ActionProposal;
-  return deepFreeze(normalized) as Readonly<ActionProposal>;
+  return deepFreeze(normalized) as NormalizedProposal;
 }
 
-export function fingerprintAction(proposal: ActionProposal): string {
-  return checksum(actionPayload(proposal));
-}
+export { fingerprintAction };
 
 function normalizeSelector(selector: ActionSelector): ActionSelector {
   return {
@@ -110,7 +94,7 @@ function normalizeSelector(selector: ActionSelector): ActionSelector {
   };
 }
 
-function selectorMatches(proposal: Readonly<ActionProposal>, selector: ActionSelector | undefined): boolean {
+function selectorMatches(proposal: NormalizedProposal, selector: ActionSelector | undefined): boolean {
   if (selector === undefined) {
     return false;
   }
@@ -122,7 +106,7 @@ function selectorMatches(proposal: Readonly<ActionProposal>, selector: ActionSel
 }
 
 function revocationMatches(
-  proposal: Readonly<ActionProposal>,
+  proposal: NormalizedProposal,
   tombstone: Clause,
   version: ContractVersion,
 ): boolean {
@@ -132,25 +116,6 @@ function revocationMatches(
   const targetIds = new Set(tombstone.targetClauseIds ?? []);
   return version.clauses.some((candidate) =>
     targetIds.has(candidate.id) && selectorMatches(proposal, candidate.selector));
-}
-
-function validConfirmation(
-  confirmation: ConfirmationToken | undefined,
-  version: ContractVersion,
-  proposal: Readonly<ActionProposal>,
-): boolean {
-  const expectedId = confirmation === undefined
-    ? ''
-    : `confirmation-${checksum({
-        contractVersion: confirmation.contractVersion,
-        actionFingerprint: confirmation.actionFingerprint,
-        issuedAtLogicalStep: confirmation.issuedAtLogicalStep,
-      })}`;
-  return confirmation !== undefined
-    && confirmation.id === expectedId
-    && confirmation.contractVersion === version.version
-    && confirmation.actionFingerprint === proposal.fingerprint
-    && confirmation.issuedAtLogicalStep === proposal.stepId;
 }
 
 function decision(
@@ -169,6 +134,13 @@ function decision(
   }) as GateDecision;
 }
 
+function evaluation(
+  gateDecision: GateDecision,
+  confirmationStore: GateRequest['confirmationStore'],
+): GateEvaluation {
+  return Object.freeze({ decision: gateDecision, confirmationStore });
+}
+
 function invalidFingerprint(proposal: ActionProposal): string {
   return `invalid-${checksum({
     id: String(proposal.id),
@@ -180,23 +152,62 @@ function invalidFingerprint(proposal: ActionProposal): string {
   })}`;
 }
 
-export function evaluateAction(
-  version: ContractVersion,
-  proposal: ActionProposal,
-  confirmation?: ConfirmationToken,
-): GateDecision {
-  let normalized: Readonly<ActionProposal>;
+function validateCapability(
+  request: GateRequest,
+  proposal: NormalizedProposal,
+): readonly string[] {
+  let validation: ReturnType<GateRequest['validateCapability']>;
   try {
-    normalized = normalizeProposal(proposal);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'Malformed action proposal.';
-    return decision('BLOCK', version.version, invalidFingerprint(proposal), [], [reason]);
+    validation = request.validateCapability(proposal);
+  } catch {
+    return ['Capability validation failed closed'];
   }
 
-  if (compoundOperationPattern.test(normalized.operation)) {
-    return decision('BLOCK', version.version, normalized.fingerprint, [], [
-      'Composite operations are not allowed',
-    ]);
+  if (!validation.ok) {
+    try {
+      return [normalizeText(validation.reason, 'capability validation reason')];
+    } catch {
+      return ['Capability validation failed closed'];
+    }
+  }
+  if (validation.effects.length !== 1) {
+    return ['Composite operations are not allowed'];
+  }
+  if (validation.effects[0] !== proposal.effect) {
+    return ['Capability effect does not match proposal effect'];
+  }
+
+  let derivedResource: string;
+  try {
+    derivedResource = normalizeText(validation.resource, 'capability resource');
+  } catch {
+    return ['Capability validation returned a malformed resource'];
+  }
+  if (derivedResource !== proposal.resource) {
+    return ['Capability-derived resource does not match proposal resource'];
+  }
+  return [];
+}
+
+export function evaluateAction(request: GateRequest): GateEvaluation {
+  const { version, confirmationStore } = request;
+  let normalized: NormalizedProposal;
+  try {
+    normalized = normalizeProposal(request.proposal);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Malformed action proposal.';
+    return evaluation(
+      decision('BLOCK', version.version, invalidFingerprint(request.proposal), [], [reason]),
+      confirmationStore,
+    );
+  }
+
+  const capabilityReasons = validateCapability(request, normalized);
+  if (capabilityReasons.length > 0) {
+    return evaluation(
+      decision('BLOCK', version.version, normalized.fingerprint, [], capabilityReasons),
+      confirmationStore,
+    );
   }
 
   const matches: Clause[] = [];
@@ -216,9 +227,16 @@ export function evaluateAction(
   }
 
   if (malformedDenials.length > 0) {
-    return decision('BLOCK', version.version, normalized.fingerprint, malformedDenials.map(({ id }) => id), [
-      'Malformed denial authority: blocked closed',
-    ]);
+    return evaluation(
+      decision(
+        'BLOCK',
+        version.version,
+        normalized.fingerprint,
+        malformedDenials.map(({ id }) => id),
+        ['Malformed denial authority: blocked closed'],
+      ),
+      confirmationStore,
+    );
   }
 
   const denials = matches.filter(({ kind }) => kind === 'MUST_NOT' || kind === 'REVOKED');
@@ -232,27 +250,65 @@ export function evaluateAction(
       ...(denials.some(({ kind }) => kind === 'REVOKED') ? ['Denied by active REVOKED authority'] : []),
       ...(grants.length > 0 ? ['Conflicting authority: denial wins'] : []),
     ];
-    return decision('BLOCK', version.version, normalized.fingerprint, matchedClauseIds, reasons);
+    return evaluation(
+      decision('BLOCK', version.version, normalized.fingerprint, matchedClauseIds, reasons),
+      confirmationStore,
+    );
   }
 
   if (confirmations.length > 0) {
-    if (validConfirmation(confirmation, version, normalized)) {
-      return decision('ALLOW', version.version, normalized.fingerprint, matchedClauseIds, [
-        'Action-bound confirmation accepted',
-      ]);
+    const structurallyValid = confirmations.every(({ afterConfirmation }) =>
+      afterConfirmation === 'MAY' || afterConfirmation === 'MUST');
+    if (!structurallyValid) {
+      return evaluation(
+        decision(
+          'BLOCK',
+          version.version,
+          normalized.fingerprint,
+          matchedClauseIds,
+          ['Malformed confirmation authority: blocked closed'],
+        ),
+        confirmationStore,
+      );
     }
-    return decision('CONFIRM', version.version, normalized.fingerprint, matchedClauseIds, [
-      'Action-bound confirmation required',
-    ]);
+
+    if (request.confirmation !== undefined) {
+      const consumed = consumeConfirmation(
+        confirmationStore,
+        request.confirmation,
+        version,
+        normalized,
+      );
+      if (consumed.ok) {
+        return evaluation(
+          decision('ALLOW', version.version, normalized.fingerprint, matchedClauseIds, [
+            'Action-bound confirmation accepted',
+          ]),
+          consumed.store,
+        );
+      }
+    }
+    return evaluation(
+      decision('CONFIRM', version.version, normalized.fingerprint, matchedClauseIds, [
+        'Action-bound confirmation required',
+      ]),
+      confirmationStore,
+    );
   }
 
   if (grants.length > 0) {
-    return decision('ALLOW', version.version, normalized.fingerprint, matchedClauseIds, [
-      'Matching active authority',
-    ]);
+    return evaluation(
+      decision('ALLOW', version.version, normalized.fingerprint, matchedClauseIds, [
+        'Matching active authority',
+      ]),
+      confirmationStore,
+    );
   }
 
-  return decision('BLOCK', version.version, normalized.fingerprint, matchedClauseIds, [
-    'No matching authority',
-  ]);
+  return evaluation(
+    decision('BLOCK', version.version, normalized.fingerprint, matchedClauseIds, [
+      'No matching authority',
+    ]),
+    confirmationStore,
+  );
 }

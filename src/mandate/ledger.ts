@@ -125,11 +125,12 @@ export function activeClauses(version: ContractVersion): readonly Clause[] {
   const tombstones = version.clauses.filter((clause) => clause.kind === 'REVOKED');
   const revokedIds = new Set(tombstones.flatMap((clause) => clause.targetClauseIds ?? []));
 
-  return deepFreeze(version.clauses.filter((clause) =>
+  const active = version.clauses.filter((clause) =>
     clause.kind === 'REVOKED'
     || (!revokedIds.has(clause.id)
       && !tombstones.some((tombstone) =>
         tombstone.revokedSelector !== undefined
-        && selectorMatches(clause.selector, tombstone.revokedSelector))),
-  ));
+        && selectorMatches(clause.selector, tombstone.revokedSelector))));
+
+  return deepFreeze(structuredClone(active));
 }

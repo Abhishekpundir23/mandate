@@ -192,6 +192,29 @@ describe('append-only authority ledger', () => {
     }).toThrow(TypeError);
   });
 
+  it('does not freeze caller-owned values when selecting active clauses', () => {
+    const selector = { tool: 'commerce', operation: 'buy', effect: 'EXTERNAL_TRANSMIT' as const };
+    const callerClause: Clause = { ...purchaseMay, selector };
+    const callerVersion = {
+      version: 1,
+      parentVersion: null,
+      turnId: 't1',
+      source: purchaseMay.source,
+      clauses: [callerClause],
+      hash: 'caller-version',
+    };
+
+    const selected = activeClauses(callerVersion);
+
+    expect(selected).toEqual([callerClause]);
+    expect(Object.isFrozen(selected)).toBe(true);
+    expect(Object.isFrozen(selected[0])).toBe(true);
+    expect(Object.isFrozen(callerVersion)).toBe(false);
+    expect(Object.isFrozen(callerVersion.clauses)).toBe(false);
+    expect(Object.isFrozen(callerClause)).toBe(false);
+    expect(Object.isFrozen(selector)).toBe(false);
+  });
+
   it('resolves a selector-only tombstone against matching prior clauses', () => {
     const selectorRevocation: IntentDiff = {
       baseVersion: 1,
