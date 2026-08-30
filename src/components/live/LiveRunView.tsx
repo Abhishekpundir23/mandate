@@ -18,6 +18,7 @@ interface LiveRunViewProps {
   readonly selectedScenarioId?: string;
   readonly onScenarioChange?: (scenarioId: string) => void;
   readonly replayMode?: 'interactive' | 'complete';
+  readonly onNavigate?: (view: 'live' | 'benchmark') => void;
 }
 
 export function LiveRunView({
@@ -26,6 +27,7 @@ export function LiveRunView({
   selectedScenarioId = comparison.scenarioId,
   onScenarioChange = () => undefined,
   replayMode = 'interactive',
+  onNavigate = () => undefined,
 }: LiveRunViewProps) {
   const frames = useMemo(() => buildReplayFrames(comparison), [comparison]);
   const replay = useReplay(frames);
@@ -44,6 +46,8 @@ export function LiveRunView({
   return (
     <div className="app-shell">
       <AppHeader
+        activeView="live"
+        onViewChange={onNavigate}
         scenarios={scenarios}
         selectedScenarioId={selectedScenarioId}
         onScenarioChange={changeScenario}

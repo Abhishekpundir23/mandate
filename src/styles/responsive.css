@@ -78,11 +78,26 @@
   }
 
   .app-header nav {
-    display: none;
+    display: flex;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-height: 54px;
+    margin: 0;
+  }
+
+  .app-header nav > div {
+    width: 100%;
+    gap: 12px;
+  }
+
+  .app-header nav button {
+    flex: 1;
+    font-size: 17px;
   }
 
   .scenario-picker {
     grid-column: 1 / -1;
+    grid-row: 3;
     margin-top: 18px;
   }
 

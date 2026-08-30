@@ -37,7 +37,13 @@
   margin-left: 40px;
 }
 
-.app-header nav a,
+.app-header nav > div {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  gap: 38px;
+}
+
 .app-header nav button {
   display: inline-grid;
   min-height: 44px;
@@ -50,14 +56,10 @@
   text-decoration: none;
 }
 
-.app-header nav a[aria-current='page'] {
+.app-header nav button[aria-current='page'] {
   align-self: stretch;
   border-bottom: 4px solid var(--cobalt);
   color: var(--cobalt);
-}
-
-.app-header nav button:disabled {
-  opacity: 1;
 }
 
 .scenario-picker select {
@@ -68,6 +70,17 @@
   border-radius: 4px;
   background: var(--canvas);
   color: var(--ink);
+  font-size: 17px;
+}
+
+.benchmark-count {
+  display: grid;
+  min-height: 56px;
+  margin: 0;
+  padding: 0 16px;
+  place-items: center start;
+  border: 1px solid var(--frame);
+  border-radius: 4px;
   font-size: 17px;
 }
 

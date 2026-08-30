@@ -1,0 +1,67 @@
+.benchmark-metrics {
+  display: grid;
+  grid-template-columns: minmax(332px, 0.9fr) repeat(3, minmax(280px, 1fr));
+  min-height: 144px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.benchmark-intro,
+.metric-group {
+  padding: 28px 32px 22px;
+}
+
+.benchmark-intro h2,
+.metric-group h3,
+.scenario-results h2,
+.scenario-inspector h2,
+.scenario-inspector h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.benchmark-intro p {
+  max-width: 290px;
+  margin: 20px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.metric-group {
+  border-left: 1px solid var(--rule);
+}
+
+.metric-group dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 20px 0 0;
+}
+
+.metric-group dl > div {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.metric-group dl > div + div {
+  padding-left: 22px;
+  border-left: 1px solid var(--rule);
+}
+
+.metric-group dt,
+.metric-group dd {
+  margin: 0;
+}
+
+.metric-group dd {
+  order: -1;
+  font-size: 35px;
+  line-height: 1;
+}
+
+.metric-standard dd {
+  color: var(--red);
+}
+
+.metric-mandate dd {
+  color: var(--green);
+}

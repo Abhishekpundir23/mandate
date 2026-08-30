@@ -1,0 +1,137 @@
+.scenario-results {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 62px minmax(0, 1fr) 48px;
+  padding: 0 30px;
+  border-right: 1px solid var(--rule);
+}
+
+.scenario-results > h2 {
+  display: flex;
+  align-items: center;
+}
+
+.scenario-table-scroll {
+  min-height: 0;
+  overflow: auto;
+}
+
+.scenario-results table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 16px;
+}
+
+.scenario-results th,
+.scenario-results td {
+  height: 44px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.scenario-results th:first-child,
+.scenario-results td:first-child {
+  width: 28%;
+}
+
+.scenario-results th:nth-child(2),
+.scenario-results td:nth-child(2) {
+  width: 15%;
+}
+
+.scenario-results th:nth-child(3),
+.scenario-results td:nth-child(3),
+.scenario-results th:nth-child(4),
+.scenario-results td:nth-child(4) {
+  width: 14%;
+}
+
+.scenario-results th:last-child,
+.scenario-results td:last-child {
+  width: 29%;
+}
+
+.scenario-results th button,
+.scenario-name button {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.scenario-results th button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scenario-results th button svg,
+.scenario-name button svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.scenario-name {
+  padding: 0 !important;
+}
+
+.scenario-name button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 0 18px;
+  text-align: left;
+}
+
+.scenario-results tr.selected td {
+  background: #f1f5ff;
+}
+
+.scenario-results tr.selected td:first-child {
+  border-left: 4px solid var(--cobalt);
+  color: var(--cobalt);
+}
+
+.benchmark-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.benchmark-status .status-icon,
+.boundary-result .status-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.status-pass,
+.boundary-pass {
+  color: var(--green);
+}
+
+.status-fail,
+.boundary-fail,
+.event-fail {
+  color: var(--red);
+}
+
+.scenario-range {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+}

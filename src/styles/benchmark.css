@@ -1,0 +1,131 @@
+@import './benchmark-metrics.css';
+@import './benchmark-table.css';
+@import './benchmark-inspector.css';
+
+.benchmark-shell {
+  grid-template-rows: 80px 144px minmax(0, 706px) 62px;
+}
+
+.benchmark-shell .app-header {
+  grid-template-columns: auto auto minmax(280px, 1fr) auto;
+  min-height: 80px;
+  padding: 12px 22px 12px 32px;
+}
+
+.benchmark-shell .scenario-picker {
+  width: min(405px, 100%);
+  justify-self: end;
+}
+
+.benchmark-shell .benchmark-count,
+.benchmark-shell .run-button {
+  min-height: 48px;
+}
+
+.benchmark-shell .run-button {
+  min-width: 160px;
+}
+
+.benchmark-progress {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.benchmark-workspace {
+  display: grid;
+  grid-template-columns: 70fr 30fr;
+  min-height: 0;
+}
+
+.benchmark-footer {
+  gap: 24px;
+  font-size: 16px;
+}
+
+.benchmark-footer span:last-child {
+  text-align: right;
+}
+
+@media (max-width: 1199px) {
+  .benchmark-shell {
+    grid-template-rows: auto auto auto auto;
+  }
+
+  .benchmark-shell .app-header {
+    grid-template-columns: auto 1fr auto;
+  }
+
+  .benchmark-shell .scenario-picker {
+    width: 100%;
+  }
+
+  .benchmark-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .benchmark-intro,
+  .metric-group {
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .benchmark-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .scenario-results {
+    min-height: 720px;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .scenario-inspector {
+    max-height: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .benchmark-shell .run-button {
+    padding-right: 10px;
+    padding-left: 10px;
+    white-space: nowrap;
+  }
+
+  .benchmark-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .benchmark-intro,
+  .metric-group {
+    padding: 24px 28px;
+  }
+
+  .metric-group {
+    border-left: 0;
+  }
+
+  .scenario-results {
+    min-height: 680px;
+    padding: 0 20px;
+  }
+
+  .scenario-inspector {
+    padding: 28px;
+  }
+
+  .benchmark-footer {
+    display: grid;
+    gap: 10px;
+    padding-top: 18px;
+    padding-bottom: 18px;
+  }
+
+  .benchmark-footer span:last-child {
+    text-align: left;
+  }
+}
