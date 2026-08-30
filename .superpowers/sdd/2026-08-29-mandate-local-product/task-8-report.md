@@ -10,7 +10,7 @@ Scope remained local. No deploy, push, publish, upload, registration, submission
 
 ## Task 9 supersession note
 
-The Task 8 source-policy implementation, file sizes, 51-module count, 59-negative/15-positive corpus, and source-location reflection exceptions documented below are historical evidence for the Task 8 commit. Task 9 review-fix commit `e51e377d958b2fa0455237a73f5885afe3b1ba6e` replaces that split syntax-specific policy with one closed-world entry graph and binding/write/call IR, conservative interprocedural origin/effect analysis, declarative exact call summaries, exact module/chunk receipts, exact module effect budgets, and a narrow browser facade. Its frozen independent matrix rejects all 47 hostile and accepts all 20 safe programs; the expanded structural suite is 324/324. The current gate has no file/function/source-location exceptions and reports 52 analysis, 49 runtime, and 49 bundle-source receipts with zero forbidden or unknown effects. Current claims and verification belong to `task-9-report.md`.
+The Task 8 source-policy implementation, file sizes, 51-module count, 59-negative/15-positive corpus, and source-location reflection exceptions documented below are historical evidence for the Task 8 commit. Task 9 review-fix round 1 (`e51e377d958b2fa0455237a73f5885afe3b1ba6e`) and round 2 (`670e5de8087a13446eca8c77bad32fe0be540bd8`) replace that split syntax-specific policy with one closed-world entry graph and binding/write/call IR, conservative interprocedural origin/effect/descriptor/deferred analysis, declarative exact call summaries, exact module/chunk receipts, exact module effect budgets, and a narrow browser facade. The unchanged independent matrix rejects all 47 hostile and accepts all 20 safe programs; the checked-in structural suite is 463/463. The current gate has no file/function/test-name source-location allowlisting escape hatch and reports 52 analysis, 49 runtime, and 49 bundle-source receipts with zero forbidden or unknown effects. Current bounded claims and fresh verification belong to `task-9-report.md`.
 
 ## Outcome
 
@@ -115,7 +115,7 @@ Derived from `coverage/coverage-final.json` by `scripts/coverage-directories.mjs
 | Layer | Enforced evidence | Result |
 | --- | --- | --- |
 | Source graph/imports | Every production TS/TSX parses; exact bare allowlist `react`, `react-dom/client`, `zod`; local TS/TSX/CSS imports resolve inside `src`; dynamic import/require/import-equals/re-export/URL/node/unknown bare routes denied | Pass, 51 files |
-| Ambient/capability AST | Historical Task 8 policy, superseded by Task 9's uniform IR/origin/effect gate with no source-location exceptions | Historical pass, 59 adversarial negatives + 15 positive controls |
+| Ambient/capability AST | Historical Task 8 policy, superseded by Task 9's uniform IR/origin/effect gate with no source-location allowlisting escape hatch | Historical pass, 59 adversarial negatives + 15 positive controls |
 | Build freshness | Standalone `test:security` always rebuilds; already-built subcommand is explicit; stale forbidden `dist` fixture must disappear | Pass in automated stale-dist test and direct absent-dist run |
 | Build shape | `modulePreload.polyfill=false`, `assetsInlineLimit=0`, strict CSP; reject unknown extensions/symlinks; HTML/CSS refs must resolve locally; font magic verified | Pass: `.html` 1, `.js` 3, `.css` 1, `.woff` 12, `.woff2` 12 |
 | Built text | Zero network primitives, remote imports, product endpoints, credential-shaped material, app dynamic execution, unsafe sinks; narrow inert diagnostic and Zod-jitless allowlists only | Pass |
@@ -146,7 +146,7 @@ The fidelity ledger records all 15 checkpoints and truth-first deviations. In pa
 - README Quick start contains exactly three commands.
 - Demo timing is exactly 15 + 35 + 25 + 15 = 90 seconds.
 - README and methodology metrics are source-imported/tested: Standard 5/15, Mandate 15/15, unauthorized effects 8/0, false claims 3/0.
-- `docs/architecture.md` records the historical Task 8 policy. Its narrowly proven reflection-site language is superseded by Task 9's uniform origin/effect analysis, exact entry/bundle receipts, and no source-location exceptions.
+- The security details in this Task 8 report are historical. `docs/architecture.md` now records Task 9's current uniform origin/effect/descriptor/deferred boundary, exact entry/bundle receipts, and lack of source-location exceptions.
 - `docs/benchmark-methodology.md` defines independent initiating-decision reconstruction, the immediate full ACTION recovery lifecycle, and claim evidence verification.
 - Generated `dist`, coverage, Playwright traces/reports, and screenshots remain untracked; screenshots exist only in the authorized output directory.
 - `git diff --check` and post-commit status are recorded in the handoff.
