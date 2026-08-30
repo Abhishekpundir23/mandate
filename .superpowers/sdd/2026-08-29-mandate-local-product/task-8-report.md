@@ -10,7 +10,7 @@ Scope remained local. No deploy, push, publish, upload, registration, submission
 
 ## Task 9 supersession note
 
-The Task 8 source-policy implementation, file sizes, 51-module count, 59-negative/15-positive corpus, and source-location reflection exceptions documented below are historical evidence for the Task 8 commit. Task 9 replaces that split syntax-specific policy with one closed-world binding/write/call IR, conservative interprocedural origin/effect analysis, declarative call summaries, exact module effect budgets, and a narrow browser facade. The current gate has no file/function/source-location exceptions; current counts and verification belong to `task-9-report.md`.
+The Task 8 source-policy implementation, file sizes, 51-module count, 59-negative/15-positive corpus, and source-location reflection exceptions documented below are historical evidence for the Task 8 commit. Task 9 review-fix commit `e51e377d958b2fa0455237a73f5885afe3b1ba6e` replaces that split syntax-specific policy with one closed-world entry graph and binding/write/call IR, conservative interprocedural origin/effect analysis, declarative exact call summaries, exact module/chunk receipts, exact module effect budgets, and a narrow browser facade. Its frozen independent matrix rejects all 47 hostile and accepts all 20 safe programs; the expanded structural suite is 324/324. The current gate has no file/function/source-location exceptions and reports 52 analysis, 49 runtime, and 49 bundle-source receipts with zero forbidden or unknown effects. Current claims and verification belong to `task-9-report.md`.
 
 ## Outcome
 
@@ -146,7 +146,7 @@ The fidelity ledger records all 15 checkpoints and truth-first deviations. In pa
 - README Quick start contains exactly three commands.
 - Demo timing is exactly 15 + 35 + 25 + 15 = 90 seconds.
 - README and methodology metrics are source-imported/tested: Standard 5/15, Mandate 15/15, unauthorized effects 8/0, false claims 3/0.
-- `docs/architecture.md` describes the proportionate symbol-aware dynamic-access/binding policy, narrowly proven reflection sites, and zero-network-primitive build.
+- `docs/architecture.md` records the historical Task 8 policy. Its narrowly proven reflection-site language is superseded by Task 9's uniform origin/effect analysis, exact entry/bundle receipts, and no source-location exceptions.
 - `docs/benchmark-methodology.md` defines independent initiating-decision reconstruction, the immediate full ACTION recovery lifecycle, and claim evidence verification.
 - Generated `dist`, coverage, Playwright traces/reports, and screenshots remain untracked; screenshots exist only in the authorized output directory.
 - `git diff --check` and post-commit status are recorded in the handoff.
