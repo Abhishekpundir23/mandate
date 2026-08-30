@@ -2243,6 +2243,122 @@ describe('Task 9 review fix round 3 spread and argument canonicalization', () =>
   });
 
   it.each([
+    ['Object.defineProperty direct', `Object.defineProperty(source, 'marker', descriptor);`],
+    ['Object.defineProperty alias', `const define = Object.defineProperty; define(source, 'marker', descriptor);`],
+    ['Object.defineProperty call', `Object.defineProperty.call(Object, source, 'marker', descriptor);`],
+    ['Object.defineProperty apply', `Object.defineProperty.apply(Object, [source, 'marker', descriptor]);`],
+    ['Object.defineProperty bind', `const define = Object.defineProperty.bind(Object, source); define('marker', descriptor);`],
+    ['Object.defineProperty helper', `function hide(value: object): void { Object.defineProperty(value, 'marker', descriptor); } hide(source);`],
+    ['Reflect.defineProperty', `Reflect.defineProperty(source, 'marker', descriptor);`],
+    ['Object.defineProperties', `Object.defineProperties(source, { marker: descriptor });`],
+  ])('rejects non-enumerable spread provenance through %s', async (_, operation) => {
+    const result = await runGate(`export function update(proto: object): void {
+      const source = { marker: 'present' };
+      const descriptor = { value: 'hidden', writable: true, enumerable: false };
+      ${operation}
+      const target = { __proto__: proto, ...source };
+      Reflect.set(target, 'marker', 'changed');
+    }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_REFLECT_SET_TARGET|security/i);
+  });
+
+  it.each([
+    ['conditional enumerability', `Object.defineProperty(source, 'marker', {
+      value: 'hidden', writable: true, enumerable: choose,
+    });`],
+    ['write after non-enumerable definition', `Object.defineProperty(source, 'marker', {
+      value: 'hidden', writable: true, enumerable: false,
+    }); source.marker = 'updated';`],
+  ])('rejects possible non-enumerability after %s', async (_, operation) => {
+    const result = await runGate(`export function update(
+      proto: object, choose: boolean,
+    ): void {
+      const source = { marker: 'present' };
+      ${operation}
+      const target = { __proto__: proto, ...source };
+      Reflect.set(target, 'marker', 'changed');
+    }`);
+
+    expect(result.status, result.output).not.toBe(0);
+  });
+
+  it.each([
+    ['direct', `Object.defineProperty(source, 'marker', {
+      value: 'visible', writable: true, enumerable: true,
+    });`],
+    ['alias', `const define = Object.defineProperty; define(source, 'marker', {
+      value: 'visible', writable: true, enumerable: true,
+    });`],
+    ['Reflect.defineProperty', `Reflect.defineProperty(source, 'marker', {
+      value: 'visible', writable: true, enumerable: true,
+    });`],
+    ['Object.defineProperties', `Object.defineProperties(source, { marker: {
+      value: 'visible', writable: true, enumerable: true,
+    } });`],
+  ])('accepts definitely enumerable descriptor spread through %s', async (_, operation) => {
+    const result = await runGate(`export function update(proto: object): void {
+      const source = { marker: 'present' };
+      ${operation}
+      const target = { __proto__: proto, ...source };
+      Reflect.set(target, 'marker', 'changed');
+    }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['call', `Object.defineProperty.call(Object, source, 'marker', {
+      value: 'visible', writable: true, enumerable: true,
+    });`],
+    ['apply', `Object.defineProperty.apply(Object, [source, 'marker', {
+      value: 'visible', writable: true, enumerable: true,
+    }]);`],
+    ['bind', `const define = Object.defineProperty.bind(Object, source);
+    define('marker', { value: 'visible', writable: true, enumerable: true });`],
+    ['helper', `function show(value: object): void {
+      Object.defineProperty(value, 'marker', {
+        value: 'visible', writable: true, enumerable: true,
+      });
+    }
+    show(source);`],
+  ])('accepts normalized definitely-enumerable descriptor spread through %s', async (_, operation) => {
+    const result = await runGate(`export function update(proto: object): void {
+      const source = { marker: 'present' };
+      ${operation}
+      const target = { __proto__: proto, ...source };
+      Reflect.set(target, 'marker', 'changed');
+    }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['call', `Object.defineProperty.call(Object, source, 'marker', {
+      value: 'visible', writable: true,
+    });`],
+    ['apply', `Object.defineProperty.apply(Object, [source, 'marker', {
+      value: 'visible', writable: true,
+    }]);`],
+    ['bind', `const define = Object.defineProperty.bind(Object, source);
+    define('marker', { value: 'visible', writable: true });`],
+    ['helper', `function show(value: object): void {
+      Object.defineProperty(value, 'marker', { value: 'visible', writable: true });
+    }
+    show(source);`],
+  ])('accepts normalized omitted-enumerability descriptor spread through %s', async (_, operation) => {
+    const result = await runGate(`export function update(proto: object): void {
+      const source = { marker: 'present' };
+      ${operation}
+      const target = { __proto__: proto, ...source };
+      Reflect.set(target, 'marker', 'changed');
+    }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
     ['apply', `Reflect.set.apply(undefined, args);`],
     ['direct spread', `Reflect.set(...args);`],
     ['call spread', `Reflect.set.call(undefined, ...args);`],
