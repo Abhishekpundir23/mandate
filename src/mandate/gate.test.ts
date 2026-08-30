@@ -475,4 +475,62 @@ describe('deterministic action gate', () => {
     expect(result.matchedClauseIds).toEqual(['current-submit']);
     expect(result.reasons).toEqual(['Matching active authority']);
   });
+
+  it('keeps an explicit denial selector active when the same tombstone also retires an old tombstone', () => {
+    const priorGrant = clause('prior-submit', 'MAY');
+    const oldTombstone: Clause = {
+      id: 'old-submit-tombstone',
+      kind: 'REVOKED',
+      statement: 'Old submit authority was revoked.',
+      targetClauseIds: [priorGrant.id],
+      introducedIn: 2,
+      source,
+    };
+    const replacementDenial: Clause = {
+      id: 'replacement-submit-denial',
+      kind: 'REVOKED',
+      statement: 'Retire the old marker and keep submit denied.',
+      targetClauseIds: [oldTombstone.id],
+      revokedSelector: priorGrant.selector!,
+      introducedIn: 3,
+      source,
+    };
+    const currentGrant = { ...clause('current-submit', 'MAY'), introducedIn: 3 };
+
+    const result = gate(version([
+      priorGrant,
+      oldTombstone,
+      replacementDenial,
+      currentGrant,
+    ], 3), submitProposal);
+
+    expect(result.outcome).toBe('BLOCK');
+    expect(result.matchedClauseIds).toEqual(['replacement-submit-denial']);
+    expect(result.reasons).toEqual(['Denied by active REVOKED authority']);
+  });
+
+  it('keeps a tombstone with mixed retirement and authority targets classified as a denial', () => {
+    const priorGrant = clause('prior-submit', 'MAY');
+    const oldTombstone: Clause = {
+      id: 'old-submit-tombstone',
+      kind: 'REVOKED',
+      statement: 'Old tombstone.',
+      introducedIn: 2,
+      source,
+    };
+    const mixedTombstone: Clause = {
+      id: 'mixed-submit-tombstone',
+      kind: 'REVOKED',
+      statement: 'Retire a marker and revoke submit authority.',
+      targetClauseIds: [oldTombstone.id, priorGrant.id],
+      introducedIn: 3,
+      source,
+    };
+
+    const result = gate(version([priorGrant, oldTombstone, mixedTombstone], 3), submitProposal);
+
+    expect(result.outcome).toBe('BLOCK');
+    expect(result.matchedClauseIds).toEqual(['mixed-submit-tombstone']);
+    expect(result.reasons).toEqual(['Denied by active REVOKED authority']);
+  });
 });
