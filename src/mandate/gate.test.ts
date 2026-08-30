@@ -184,8 +184,24 @@ describe('deterministic action gate', () => {
     expect(decision.reasons).toContain(reason);
   });
 
-  it('fails closed when the capability validator returns a malformed rejection', () => {
-    const malformedValidator = (() => ({ ok: false, reason: '' })) as CapabilityValidationPort;
+  const throwingEffects = Object.defineProperty(
+    { ok: true, resource: 'application:1' },
+    'effects',
+    { enumerable: true, get: () => { throw new Error('getter escaped'); } },
+  );
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['array', []],
+    ['wrong primitive', true],
+    ['partial success', { ok: true }],
+    ['invalid effect', { ok: true, effects: ['NETWORK'], resource: 'application:1' }],
+    ['wrong resource primitive', { ok: true, effects: ['EXTERNAL_TRANSMIT'], resource: 1 }],
+    ['empty rejection reason', { ok: false, reason: '' }],
+    ['throwing getter', throwingEffects],
+  ] as const)('fails closed for a %s capability response', (_, runtimeResponse) => {
+    const malformedValidator = (() => runtimeResponse) as unknown as CapabilityValidationPort;
 
     const result = evaluateAction({
       version: version([clause('allow-submit', 'MAY')]),
@@ -197,6 +213,8 @@ describe('deterministic action gate', () => {
     expect(result.decision.outcome).toBe('BLOCK');
     expect(result.decision.matchedClauseIds).toEqual([]);
     expect(result.decision.reasons).toContain('Capability validation failed closed');
+    expect(Object.isFrozen(result.decision)).toBe(true);
+    expect(result.confirmationStore).toBe(emptyConfirmationStore);
   });
 
   it('blocks when validated arguments derive a different resource', () => {

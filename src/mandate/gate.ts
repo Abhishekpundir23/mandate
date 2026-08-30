@@ -152,41 +152,118 @@ function invalidFingerprint(proposal: ActionProposal): string {
   })}`;
 }
 
+function readExactDataRecord(
+  value: unknown,
+  expectedKeys: readonly string[],
+): Readonly<Record<string, unknown>> | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  if (prototype !== Object.prototype && prototype !== null) {
+    return undefined;
+  }
+
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some((key) => typeof key !== 'string')) {
+    return undefined;
+  }
+  const stringKeys = ownKeys as string[];
+  if ([...stringKeys].sort().join('\0') !== [...expectedKeys].sort().join('\0')) {
+    return undefined;
+  }
+
+  const descriptors = Object.getOwnPropertyDescriptors(value) as Record<string, PropertyDescriptor>;
+  const entries: [string, unknown][] = [];
+  for (const key of expectedKeys) {
+    const descriptor = descriptors[key];
+    if (descriptor === undefined || !('value' in descriptor)) {
+      return undefined;
+    }
+    entries.push([key, descriptor.value]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function readDenseDataArray(value: unknown): readonly unknown[] | undefined {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    return undefined;
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value) as Record<string, PropertyDescriptor>;
+  const lengthDescriptor = descriptors.length;
+  if (lengthDescriptor === undefined || !('value' in lengthDescriptor)) {
+    return undefined;
+  }
+  const length = lengthDescriptor.value as unknown;
+  if (!Number.isSafeInteger(length) || (length as number) < 0) {
+    return undefined;
+  }
+
+  const expectedKeys = [
+    ...Array.from({ length: length as number }, (_, index) => String(index)),
+    'length',
+  ];
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some((key) => typeof key !== 'string')) {
+    return undefined;
+  }
+  const stringKeys = ownKeys as string[];
+  if ([...stringKeys].sort().join('\0') !== [...expectedKeys].sort().join('\0')) {
+    return undefined;
+  }
+
+  const result: unknown[] = [];
+  for (let index = 0; index < (length as number); index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (descriptor === undefined || !('value' in descriptor)) {
+      return undefined;
+    }
+    result.push(descriptor.value);
+  }
+  return result;
+}
+
 function validateCapability(
   request: GateRequest,
   proposal: NormalizedProposal,
 ): readonly string[] {
-  let validation: ReturnType<GateRequest['validateCapability']>;
   try {
-    validation = request.validateCapability(proposal);
+    const runtimeValidation: unknown = request.validateCapability(proposal);
+    const rejection = readExactDataRecord(runtimeValidation, ['ok', 'reason']);
+    if (rejection?.ok === false) {
+      if (typeof rejection.reason !== 'string') {
+        return ['Capability validation failed closed'];
+      }
+      return [normalizeText(rejection.reason, 'capability validation reason')];
+    }
+
+    const success = readExactDataRecord(runtimeValidation, ['ok', 'effects', 'resource']);
+    if (success?.ok !== true || typeof success.resource !== 'string') {
+      return ['Capability validation failed closed'];
+    }
+    const declaredEffects = readDenseDataArray(success.effects);
+    if (declaredEffects === undefined) {
+      return ['Capability validation failed closed'];
+    }
+    if (declaredEffects.length !== 1) {
+      return ['Composite operations are not allowed'];
+    }
+    const declaredEffect = declaredEffects[0];
+    if (typeof declaredEffect !== 'string' || !effects.has(declaredEffect as Effect)) {
+      return ['Capability validation failed closed'];
+    }
+    if (declaredEffect !== proposal.effect) {
+      return ['Capability effect does not match proposal effect'];
+    }
+
+    const derivedResource = normalizeText(success.resource, 'capability resource');
+    if (derivedResource !== proposal.resource) {
+      return ['Capability-derived resource does not match proposal resource'];
+    }
+    return [];
   } catch {
     return ['Capability validation failed closed'];
   }
-
-  if (!validation.ok) {
-    try {
-      return [normalizeText(validation.reason, 'capability validation reason')];
-    } catch {
-      return ['Capability validation failed closed'];
-    }
-  }
-  if (validation.effects.length !== 1) {
-    return ['Composite operations are not allowed'];
-  }
-  if (validation.effects[0] !== proposal.effect) {
-    return ['Capability effect does not match proposal effect'];
-  }
-
-  let derivedResource: string;
-  try {
-    derivedResource = normalizeText(validation.resource, 'capability resource');
-  } catch {
-    return ['Capability validation returned a malformed resource'];
-  }
-  if (derivedResource !== proposal.resource) {
-    return ['Capability-derived resource does not match proposal resource'];
-  }
-  return [];
 }
 
 export function evaluateAction(request: GateRequest): GateEvaluation {
