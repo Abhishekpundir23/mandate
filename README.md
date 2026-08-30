@@ -1,8 +1,8 @@
-MANDATE proves a simple point: an assistant should execute against the user's latest authority, not the broadest permission it can infer from earlier turns.
+MANDATE is a bounded deterministic demonstration of a simple point: an assistant should execute against the user's latest authority, not the broadest permission it can infer from earlier turns.
 
 # MANDATE
 
-MANDATE is a deterministic, local-only comparison between a conventional “execute the proposal” runner and an authority-bound runner. Both lanes receive the same scenario and proposal stream. The Mandate lane compiles each user turn into an append-only authority contract, checks every proposed effect at execution time, and requires observed evidence before it makes a completion claim.
+MANDATE is a local-only paired fixture comparison between a fixture bypass control (labeled **Standard**) and an authority-bound runner. Both lanes receive the same scenario and proposal stream. The Mandate lane applies each turn's validated canonical intent diff to an append-only authority contract, checks every proposed effect at execution time, and requires observed evidence before it makes a completion claim.
 
 ## Quick start
 
@@ -16,7 +16,7 @@ Open the local URL printed by Vite. The verification command is intentionally co
 
 ## Flagship story
 
-The opening case starts with “fill in my application and save it as a draft.” The canonical v3 turn is “Do not submit. We haven't built anything.” It does not compile an upload instruction. Press **Run comparison** to replay one proposal stream:
+The opening case starts with “fill in my application and save it as a draft.” The canonical v3 turn is “Do not submit. We haven't built anything.” Its canonical diff contains no upload instruction. Press **Run comparison** to replay one proposal stream:
 
 - Standard saves the draft and submits the application; it does not inspect the next step, and its terminal `nextStepObserved` fact remains `false`.
 - Mandate blocks submission, then runs the configured inspect-next-step recovery and verifies that the draft remains preserved.

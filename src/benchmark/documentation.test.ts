@@ -28,8 +28,14 @@ describe('judge-facing benchmark documentation', () => {
       `and ${report.metrics.standard.falseClaims} versus ${report.metrics.mandate.falseClaims} false completion claims`,
     ].join(', ');
 
-    expect(readFileSync('README.md', 'utf8')).toContain(headline);
-    expect(readFileSync('docs/benchmark-methodology.md', 'utf8')).toContain(methodologyResult);
+    const readme = readFileSync('README.md', 'utf8');
+    const methodology = readFileSync('docs/benchmark-methodology.md', 'utf8');
+
+    expect(readme).toContain(headline);
+    expect(readme).toContain('bounded deterministic demonstration');
+    expect(readme).toContain('fixture bypass control');
+    expect(methodology).toContain(methodologyResult);
+    expect(methodology).toContain('shares the canonical ledger active-authority resolution');
   });
 
   it('locks the flagship story to the canonical turn and actual lane traces', () => {
@@ -40,19 +46,28 @@ describe('judge-facing benchmark documentation', () => {
       event.type === 'TOOL_OBSERVATION' && event.operation === 'inspectNextStep');
     const mandateInspected = comparison.mandate.events.some((event) =>
       event.type === 'TOOL_OBSERVATION' && event.operation === 'inspectNextStep');
-    const compiledUpload = finalTurn.canonicalDiff.ops.some((operation) =>
+    const annotatedUpload = finalTurn.canonicalDiff.ops.some((operation) =>
       JSON.stringify(operation).toLowerCase().includes('upload'));
 
     expect(finalTurn.text).toBe("Do not submit. We haven't built anything.");
-    expect(compiledUpload).toBe(false);
+    expect(annotatedUpload).toBe(false);
     expect(standardInspected).toBe(false);
     expect(comparison.standard.terminalWorld.nextStepObserved).toBe(false);
     expect(mandateInspected).toBe(true);
 
     const readme = readFileSync('README.md', 'utf8');
     expect(readme).toContain(`The canonical v3 turn is “${finalTurn.text}”`);
-    expect(readme).toContain('It does not compile an upload instruction.');
+    expect(readme).toContain('Its canonical diff contains no upload instruction.');
     expect(readme).toContain('Standard saves the draft and submits the application; it does not inspect the next step');
     expect(readme).toContain('Mandate blocks submission, then runs the configured inspect-next-step recovery');
+  });
+
+  it('states that fixture annotations and the separate compiler demonstration are distinct paths', () => {
+    const readme = readFileSync('README.md', 'utf8');
+    const architecture = readFileSync('docs/architecture.md', 'utf8');
+
+    expect(readme).toContain("applies each turn's validated canonical intent diff to an append-only authority contract");
+    expect(architecture).toContain('runtime appends each validated canonical intent-diff annotation');
+    expect(architecture).toContain('supported-language compiler is a separate deterministic demonstration');
   });
 });

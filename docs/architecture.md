@@ -6,7 +6,7 @@ MANDATE separates what the user authorized from what an assistant proposed, and 
 flowchart LR
   T[Ordered user turns] --> C[Canonical intent diffs]
   C --> L[Append-only contract versions]
-  P[Shared proposal program] --> S[Standard bypass lane]
+  P[Shared proposal program] --> S[Fixture bypass control / Standard]
   P --> G[Mandate action gate]
   L --> G
   S --> X[Deterministic capability sandbox]
@@ -22,12 +22,12 @@ flowchart LR
 
 ## Causal chain
 
-1. Each ordered turn carries a validated canonical diff. The compiler normalizes it; the ledger appends a new contract version without mutating prior versions.
-2. The Standard and Mandate runners consume the identical frozen proposal program. Standard validates shape but bypasses authority. Mandate fingerprints each proposed action and evaluates it against the current version's active clauses.
+1. Each ordered fixture turn carries a validated canonical intent-diff annotation. The runtime appends each validated canonical intent-diff annotation as a new contract version without mutating prior versions. The supported-language compiler is a separate deterministic demonstration; it does not generate the benchmark annotations at run time.
+2. The Standard fixture bypass control and Mandate runner consume the identical frozen proposal program. Standard validates shape but bypasses authority. Mandate fingerprints each proposed action and evaluates it against the current version's active clauses.
 3. Only an `ALLOW` decision reaches a registered deterministic capability. `BLOCK` prevents execution. `CONFIRM` cannot become permission without a matching, single-use confirmation bound to the action fingerprint and authority version.
 4. A capability returns a new immutable world plus an observation with logical identity and evidence facts. Completion claims are verified only against earlier successful observations and current world predicates.
 5. Receipts rebuild fixture authority, reconcile emitted versions, report blocked or unauthorized actions, and distinguish exact completion from an incomplete or unsafe run.
-6. The benchmark independently reconstructs valid executions from trace events, the fixture, and sandbox semantics before it aggregates results.
+6. The benchmark reconstructs valid executions from trace events, the fixture, and sandbox semantics before it aggregates results. It is independent of emitted decisions, receipts, and UI labels while sharing the canonical ledger's active-authority resolution.
 
 ## Trust boundaries
 
@@ -37,7 +37,7 @@ flowchart LR
 | Authority | Validated ordered diff | Proposal claims about permission | Append-only versions, active-clause resolution, tombstones, fail-closed malformed input |
 | Execution | Registered local capability | Action metadata, payload, effect, resource | Exact capability validation, normalized fingerprint, gate decision before execution |
 | Evidence | Reconstructed successful observation | Event labels and completion prose | Logical identity, metadata/world replay, predicate support before claim time |
-| Benchmark | Fixture oracle and independently replayed facts | UI snapshot or claimed score | Pair parity, checksums, trace lifecycle and terminal-world checks |
+| Benchmark | Fixture oracle, canonical ledger resolution, and sandbox-replayed facts | Emitted decision, receipt, UI snapshot, or claimed score | Pair parity, checksums, trace lifecycle and terminal-world checks |
 | Browser/runtime | Built local assets | Any cross-origin request or real action | Route-abort E2E plus source and production-bundle deny/allowlist gate |
 
 The React layer is a projection of frozen snapshots. It does not decide permission or manufacture metrics. The source gate builds one TypeScript `Program`, lowers declarations, parameter bindings, object/array patterns, assignment/update/delete targets, loop targets, calls, constructors, and tagged templates into a uniform binding/write/call IR, then solves a monotone origin-and-effect graph across all production modules. Constant, fresh owned allocation, borrowed data, ambient authority, opaque capability, summarized callable, React UI cell, and unknown origins survive casts, aliases, generics, containers, closures, returns, arguments, loops, and reassignment. Optionality/absence is tracked separately so a proven guard can preserve a fresh collection value without treating an absent or Bottom alternative as owned.

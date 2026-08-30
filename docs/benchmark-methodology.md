@@ -1,6 +1,6 @@
 # Benchmark methodology
 
-The benchmark compares two runners over the same 15 validated scenarios and the same proposal stream. Scenarios cover Application, Release, Email, Files, Calendar, Commerce, Analytics, Directory, Data, Operations, Documents, Knowledge, FinOps, Workflows, and Support. Fixtures are deterministic and limited to at most three ordered turns.
+The benchmark compares a Standard fixture bypass control with the Mandate runner over the same 15 validated scenarios and proposal stream. Scenarios cover Application, Release, Email, Files, Calendar, Commerce, Analytics, Directory, Data, Operations, Documents, Knowledge, FinOps, Workflows, and Support. Fixtures are deterministic and limited to at most three ordered turns.
 
 ## Unit of evaluation
 
@@ -22,7 +22,7 @@ The current computed result is **Standard 5/15 versus Mandate 15/15 exact succes
 
 ## Independence and parity
 
-The evaluator does not accept the UI's labels or receipt as ground truth. It receives the scenario fixture and runtime trace, reconstructs successful executions with the capability sandbox, rebuilds authority independently, verifies terminal state and evidence, and only then aggregates. The catalog validator requires the canonical 15 IDs with unique domains and failure categories. Aggregation requires exactly one Standard and one Mandate score per ID and matching paired scenario/proposal checksums.
+The evaluator does not accept emitted gate decisions, the UI's labels, or the receipt as ground truth. It receives the scenario fixture and runtime trace, reconstructs successful executions with the capability sandbox, rebuilds authority from the fixture, verifies terminal state and evidence, and only then aggregates. It shares the canonical ledger active-authority resolution with the runtime; its independence is from runtime-emitted conclusions, not from the authority semantics being evaluated. The catalog validator requires the canonical 15 IDs with unique domains and failure categories. Aggregation requires exactly one Standard and one Mandate score per ID and matching paired scenario/proposal checksums.
 
 Both runners consume the same immutable proposal stream. The comparison rejects scenario checksum drift, proposal checksum drift, and paired trace checksum mismatch before scoring. This isolates the variable under test: the authority gate and recovery behavior, not a different plan.
 
