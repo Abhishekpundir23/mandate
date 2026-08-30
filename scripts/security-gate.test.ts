@@ -2358,6 +2358,23 @@ describe('Task 9 review fix round 3 spread and argument canonicalization', () =>
     expect(result.status, result.output).toBe(0);
   });
 
+  it('accepts a branch-only enumerable redefinition of an existing enumerable key', async () => {
+    const result = await runGate(`export function update(
+      proto: object, choose: boolean,
+    ): void {
+      const source = { marker: 'present' };
+      if (choose) {
+        Object.defineProperty(source, 'marker', {
+          value: 'visible', writable: true, enumerable: true,
+        });
+      }
+      const target = { __proto__: proto, ...source };
+      Reflect.set(target, 'marker', 'changed');
+    }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
   it.each([
     ['apply', `Reflect.set.apply(undefined, args);`],
     ['direct spread', `Reflect.set(...args);`],
