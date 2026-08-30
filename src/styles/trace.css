@@ -1,0 +1,129 @@
+.change-notice {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 24px;
+  color: var(--cobalt);
+}
+
+.status-icon {
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.desktop-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.desktop-comparison-grid h3 {
+  margin: 0;
+  padding: 4px 22px 20px;
+  font-size: 16px;
+}
+
+.desktop-comparison-grid > div {
+  min-width: 0;
+}
+
+.desktop-comparison-grid > div + div {
+  border-left: 1px solid var(--rule);
+}
+
+.execution-lane {
+  padding: 4px 22px 24px;
+}
+
+.event-list {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.event-list::before {
+  position: absolute;
+  top: 20px;
+  bottom: 20px;
+  left: 17px;
+  width: 1px;
+  background: var(--frame);
+  content: '';
+}
+
+.event-row {
+  position: relative;
+  display: grid;
+  min-height: 92px;
+  grid-template-columns: 36px 1fr;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--canvas);
+}
+
+.event-row .status-icon {
+  z-index: 1;
+  margin-top: 1px;
+  background: var(--canvas);
+}
+
+.event-row > div {
+  display: grid;
+  gap: 4px;
+}
+
+.tool-label,
+.event-args,
+.decision-label {
+  display: block;
+}
+
+.event-args {
+  color: var(--muted);
+}
+
+.event-success {
+  color: var(--green);
+}
+
+.event-success strong,
+.event-success .tool-label,
+.event-success .event-args {
+  color: var(--ink);
+}
+
+.event-blocked,
+.event-warning {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.event-info {
+  color: var(--cobalt);
+}
+
+.lane-outcome {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 0 42px;
+  padding: 14px 16px;
+  border-left: 6px solid currentColor;
+}
+
+.outcome-danger {
+  background: var(--red-pale);
+  color: var(--red);
+}
+
+.outcome-safe {
+  background: var(--green-pale);
+  color: var(--green);
+}

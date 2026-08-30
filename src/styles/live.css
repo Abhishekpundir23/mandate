@@ -1,0 +1,90 @@
+.live-workspace {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: 26fr 49fr 25fr;
+}
+
+.history-rail,
+.comparison-rail,
+.authority-rail {
+  min-width: 0;
+  padding: 32px 26px;
+}
+
+.history-rail,
+.comparison-rail {
+  border-right: 1px solid var(--rule);
+}
+
+.live-workspace h2 {
+  margin: 0 0 28px;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.authority-matrix dl {
+  margin: 0 0 64px;
+  border-top: 1px solid var(--rule);
+}
+
+.authority-row {
+  display: grid;
+  min-height: 74px;
+  grid-template-columns: 98px 1fr;
+  border-bottom: 1px solid var(--rule);
+}
+
+.authority-row dt,
+.authority-row dd {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 12px;
+}
+
+.authority-row dt {
+  border-right: 1px solid var(--rule);
+  font-family: var(--font-wordmark);
+  font-weight: 700;
+}
+
+.authority-must dt,
+.authority-may dt,
+.authority-evidence dt {
+  color: var(--green);
+}
+
+.authority-must-not dt {
+  color: var(--red);
+}
+
+.completion-receipt h2 {
+  margin-bottom: 18px;
+}
+
+.receipt-body,
+.receipt-waiting {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--frame);
+  border-radius: 4px;
+}
+
+.receipt-body p {
+  margin: 0 0 18px;
+}
+
+.receipt-body > p:not(.receipt-success) {
+  color: var(--green);
+}
+
+.receipt-success {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 24px -17px -17px !important;
+  padding: 16px;
+  border: 2px solid var(--green);
+  color: var(--green);
+  font-weight: 700;
+}

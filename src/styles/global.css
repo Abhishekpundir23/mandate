@@ -17,38 +17,25 @@ body {
 
 button:focus-visible,
 a:focus-visible,
-[tabindex]:focus-visible {
+[tabindex]:focus-visible,
+select:focus-visible {
   outline: 2px solid #1648e6;
   outline-offset: 2px;
 }
 
-.app-shell {
-  display: grid;
-  min-height: 100vh;
-  grid-template-rows: auto 1fr auto;
+button,
+select {
+  font: inherit;
 }
 
-.app-header,
-.app-footer {
-  padding: 16px 24px;
-}
-
-.app-header {
-  border-bottom: 1px solid var(--rule);
-}
-
-.app-header h1 {
-  margin: 0;
-  font-family: var(--font-wordmark);
-  font-size: 2rem;
-  letter-spacing: 0.04em;
-}
-
-.app-footer {
-  border-top: 1px solid var(--rule);
-  color: var(--muted);
-}
-
-.app-footer p {
-  margin: 0;
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

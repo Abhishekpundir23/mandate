@@ -108,11 +108,12 @@ describe('evidence-backed completion receipts', () => {
       matchedClauseIds: expect.arrayContaining(['submit-must-not']),
     }));
     expect(mandate.unmetClauseIds).toEqual([]);
-    expect(mandate.evidenceIds).toEqual(expect.arrayContaining([
-      'evidence-006',
-      'evidence-009',
-      'evidence-015',
-    ]));
+    const successfulEvidence = comparison.mandate.events.flatMap((event) =>
+      event.type === 'TOOL_OBSERVATION'
+        && event.observation?.status === 'SUCCEEDED'
+        ? [event.observation.evidenceId]
+        : []);
+    expect(mandate.evidenceIds).toEqual([...successfulEvidence].sort());
     expect(mandate.exactMandateSuccess).toBe(true);
   });
 

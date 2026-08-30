@@ -3,6 +3,13 @@
   --ink: #101010;
   --muted: #6b6b6b;
   --rule: #cfcfcf;
+  --frame: #b8b8b8;
+  --cobalt: #1648e6;
+  --green: #438a05;
+  --green-pale: #f4faef;
+  --red: #f21d10;
+  --red-pale: #fff7f5;
+  --cta: #050505;
   --font-operational: 'IBM Plex Mono', SFMono-Regular, Consolas, monospace;
   --font-wordmark: 'Roboto Condensed', 'Arial Narrow', sans-serif;
 }
