@@ -583,23 +583,38 @@ export async function scanSourceFiles(sourceFiles, sourceRoot, configPath) {
     for (const mutation of resolution.mutationReceivers) {
       const api = mutation.api;
       if (api === 'Object.assign') {
-        for (const source of args.slice(1)) {
-          const sourceShape = getterFreeObject(source, analysis);
-          if (!sourceShape.safe) {
-            diagnostics.push(diagnostic(source, 'UNPROVEN_ASSIGN_SOURCE', 'Object.assign sources must be direct owned getter-free object literals with finite keys'));
-          } else {
-            validateMutation(source, mutation.receiver, sourceShape.keys, mutation.label);
+        const sourceRecords = mutation.assignSources ?? [];
+        if (mutation.assignSourcesComplete !== true) {
+          diagnostics.push(diagnostic(
+            mutation.site ?? call.node,
+            'UNPROVEN_ASSIGN_SOURCE',
+            'Object.assign canonical source normalization is incomplete',
+          ));
+        }
+        for (const source of sourceRecords) {
+          const sourceNode = source.node ?? mutation.site ?? call.node;
+          if (!source.directOwnedLiteral || !source.getterFree || !source.keysComplete) {
+            diagnostics.push(diagnostic(
+              sourceNode,
+              'UNPROVEN_ASSIGN_SOURCE',
+              'Object.assign sources must resolve to owned getter-free object literals with complete finite keys',
+              describeOrigin(source.origin),
+            ));
+          } else if (source.keys.size > 0) {
+            validateMutation(sourceNode, mutation.receiver, source.keys, mutation.label);
           }
         }
         if (mutation.dispatchSafe === false) {
           diagnostics.push(diagnostic(
-            call.node,
+            mutation.site ?? call.node,
             'UNPROVEN_SET_DISPATCH',
             'Object.assign pre-dispatch proof found neither an intrinsic/null prototype nor a definitely-present own data property',
             describeOrigin(mutation.receiver),
           ));
         }
-        if (args.length < 2) validateMutation(call.node, mutation.receiver, undefined, mutation.label);
+        if ((mutation.assignSourceCount ?? 0) === 0) {
+          validateMutation(mutation.site ?? call.node, mutation.receiver, undefined, mutation.label);
+        }
         continue;
       }
       if (api === 'Object.defineProperties') {

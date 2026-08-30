@@ -146,6 +146,18 @@ function emptyOrigin() {
     mayBeNonExtensible: false,
     finiteKeysComplete: false,
     shapeKeysComplete: false,
+    // Positional iteration/call semantics are distinct from enumerable own
+    // object shape. A sparse array has no own key for a hole, but array
+    // iteration and Function#apply still observe an explicit undefined value
+    // at that position.
+    sequence: undefined,
+    sequenceComplete: false,
+    // Canonical Object.assign source evidence follows the value through
+    // aliases, meta-calls, binds, and analyzed parameters. The map key is the
+    // stable allocation site; the boolean fields are must-facts for that
+    // syntactic source alternative.
+    assignSourceEvidence: new Map(),
+    assignSourceEvidenceComplete: false,
     nullPrototype: false,
     intrinsicPrototype: false,
     ordinaryData: false,
@@ -177,6 +189,8 @@ function snapshotOrigin(value, seen = new WeakMap()) {
   snapshot.mayBeNonExtensible = value.mayBeNonExtensible;
   snapshot.finiteKeysComplete = value.finiteKeysComplete;
   snapshot.shapeKeysComplete = value.shapeKeysComplete;
+  snapshot.sequenceComplete = value.sequenceComplete;
+  snapshot.assignSourceEvidenceComplete = value.assignSourceEvidenceComplete;
   snapshot.nullPrototype = value.nullPrototype;
   snapshot.intrinsicPrototype = value.intrinsicPrototype;
   snapshot.ordinaryData = value.ordinaryData;
@@ -186,7 +200,11 @@ function snapshotOrigin(value, seen = new WeakMap()) {
   snapshot.accessorKeys = new Set(value.accessorKeys);
   snapshot.nonWritableKeys = new Set(value.nonWritableKeys);
   snapshot.invalidatedDataKeys = new Set(value.invalidatedDataKeys);
+  snapshot.assignSourceEvidence = new Map(value.assignSourceEvidence);
   snapshot.content = value.content === undefined ? undefined : snapshotOrigin(value.content, seen);
+  snapshot.sequence = value.sequence === undefined
+    ? undefined
+    : value.sequence.map((child) => snapshotOrigin(child, seen));
   snapshot.shape = new Map([...value.shape.entries()].map(([key, child]) => [
     key,
     snapshotOrigin(child, seen),
@@ -270,6 +288,7 @@ function transitiveSecurityFacts(root) {
     for (const surface of value.surfaces) surfaces.add(surface);
     for (const callable of value.callables) visitCallable(callable);
     if (value.content !== undefined) visitOrigin(value.content);
+    for (const child of value.sequence ?? []) visitOrigin(child);
     for (const child of value.shape.values()) visitOrigin(child);
   };
   visitOrigin(root);
@@ -279,7 +298,8 @@ function transitiveSecurityFacts(root) {
 function abstractLargeArgument(value, provenance) {
   const facts = transitiveSecurityFacts(value);
   if (facts.originCount + facts.callableCount <= ORIGIN_LARGE_ARGUMENT_LIMIT) return value;
-  if (value.shape.size > 0 && value.shape.size <= 32) {
+  if (value.shape.size > 0 && value.shape.size <= 32
+    && (value.sequence?.length ?? 0) <= 32) {
     // Preserve a finite public record/tuple surface (especially analyzed
     // methods returned beside large data) while bounding each oversized
     // child and the aggregate content tail. A security-bearing child widens
@@ -294,6 +314,8 @@ function abstractLargeArgument(value, provenance) {
     compact.mayBeNonExtensible = value.mayBeNonExtensible;
     compact.finiteKeysComplete = value.finiteKeysComplete;
     compact.shapeKeysComplete = value.shapeKeysComplete;
+    compact.sequenceComplete = value.sequenceComplete;
+    compact.assignSourceEvidenceComplete = value.assignSourceEvidenceComplete;
     compact.nullPrototype = value.nullPrototype;
     compact.intrinsicPrototype = value.intrinsicPrototype;
     compact.ordinaryData = value.ordinaryData;
@@ -304,6 +326,7 @@ function abstractLargeArgument(value, provenance) {
     compact.accessorKeys = new Set(value.accessorKeys);
     compact.nonWritableKeys = new Set(value.nonWritableKeys);
     compact.invalidatedDataKeys = new Set(value.invalidatedDataKeys);
+    compact.assignSourceEvidence = new Map(value.assignSourceEvidence);
     compact.shape = new Map([...value.shape.entries()].map(([key, child]) => {
       const childFacts = transitiveSecurityFacts(child);
       return [key, child.callables.length > 0
@@ -311,6 +334,13 @@ function abstractLargeArgument(value, provenance) {
         ? child
         : widenedSecurityTail(child)];
     }));
+    compact.sequence = value.sequence?.map((child) => {
+      const childFacts = transitiveSecurityFacts(child);
+      return child.callables.length > 0
+        || childFacts.originCount + childFacts.callableCount <= ORIGIN_LARGE_ARGUMENT_LIMIT
+        ? child
+        : widenedSecurityTail(child);
+    });
     compact.content = value.content === undefined ? undefined : widenedSecurityTail(value.content);
     compact.provenance.add(`${provenance}: finite surface retained with bounded transitive content`);
     return normalizeJoined(compact);
@@ -471,6 +501,8 @@ function originSubsumes(left, right, seen = new WeakMap(), depth = 0) {
   if (!left.mayBeNonExtensible && right.mayBeNonExtensible) return false;
   if (left.finiteKeysComplete && !right.finiteKeysComplete) return false;
   if (left.shapeKeysComplete && !right.shapeKeysComplete) return false;
+  if (left.sequenceComplete && !right.sequenceComplete) return false;
+  if (left.assignSourceEvidenceComplete && !right.assignSourceEvidenceComplete) return false;
   if (left.nullPrototype && !right.nullPrototype) return false;
   if (left.intrinsicPrototype && !right.intrinsicPrototype) return false;
   if (left.ordinaryData && !right.ordinaryData) return false;
@@ -480,11 +512,25 @@ function originSubsumes(left, right, seen = new WeakMap(), depth = 0) {
   if (!setContains(left.nonWritableKeys, right.nonWritableKeys)) return false;
   if (!setContains(left.invalidatedDataKeys, right.invalidatedDataKeys)) return false;
   if (![...left.hiddenKeys].every((key) => right.hiddenKeys.has(key))) return false;
+  for (const [key, rightEvidence] of right.assignSourceEvidence) {
+    const leftEvidence = left.assignSourceEvidence.get(key);
+    if (leftEvidence === undefined
+      || (leftEvidence.directOwnedLiteral && !rightEvidence.directOwnedLiteral)
+      || (leftEvidence.getterFree && !rightEvidence.getterFree)
+      || (leftEvidence.keysComplete && !rightEvidence.keysComplete)) return false;
+  }
 
   const leftCallableKeys = new Set(left.callables.map((item) => callableKey(item)));
   if (!right.callables.every((item) => leftCallableKeys.has(callableKey(item)))) return false;
   if (right.content !== undefined
     && (left.content === undefined || !originSubsumes(left.content, right.content, seen, depth + 1))) return false;
+  if (left.sequenceComplete && right.sequenceComplete) {
+    if (left.sequence === undefined || right.sequence === undefined
+      || left.sequence.length !== right.sequence.length) return false;
+    for (let index = 0; index < right.sequence.length; index += 1) {
+      if (!originSubsumes(left.sequence[index], right.sequence[index], seen, depth + 1)) return false;
+    }
+  }
   for (const [key, child] of right.shape) {
     const leftChild = left.shape.get(key);
     if (leftChild === undefined || !originSubsumes(leftChild, child, seen, depth + 1)) return false;
@@ -516,6 +562,11 @@ function mergeOriginPair(left, right, depth = 0) {
   output.mayBeNonExtensible = left.mayBeNonExtensible || right.mayBeNonExtensible;
   output.finiteKeysComplete = left.finiteKeysComplete && right.finiteKeysComplete;
   output.shapeKeysComplete = left.shapeKeysComplete && right.shapeKeysComplete;
+  output.sequenceComplete = left.sequenceComplete && right.sequenceComplete
+    && left.sequence !== undefined && right.sequence !== undefined
+    && left.sequence.length === right.sequence.length;
+  output.assignSourceEvidenceComplete = left.assignSourceEvidenceComplete
+    && right.assignSourceEvidenceComplete;
   output.nullPrototype = left.nullPrototype && right.nullPrototype;
   output.intrinsicPrototype = left.intrinsicPrototype && right.intrinsicPrototype;
   output.ordinaryData = left.ordinaryData && right.ordinaryData;
@@ -530,6 +581,16 @@ function mergeOriginPair(left, right, depth = 0) {
     ...right.invalidatedDataKeys,
   ]);
   output.hiddenKeys = new Set([...left.hiddenKeys].filter((key) => right.hiddenKeys.has(key)));
+  output.assignSourceEvidence = new Map(left.assignSourceEvidence);
+  for (const [key, evidence] of right.assignSourceEvidence) {
+    const existing = output.assignSourceEvidence.get(key);
+    output.assignSourceEvidence.set(key, existing === undefined ? evidence : {
+      ...existing,
+      directOwnedLiteral: existing.directOwnedLiteral && evidence.directOwnedLiteral,
+      getterFree: existing.getterFree && evidence.getterFree,
+      keysComplete: existing.keysComplete && evidence.keysComplete,
+    });
+  }
   const callableKeys = new Set();
   for (const value of [left, right]) {
     for (const tag of value.tags) output.tags.add(tag);
@@ -556,6 +617,9 @@ function mergeOriginPair(left, right, depth = 0) {
         ? widenedSecurityTail(left.content)
         : left.content
       : mergeOriginPair(left.content, right.content, depth + 1);
+  output.sequence = output.sequenceComplete
+    ? left.sequence.map((child, index) => mergeOriginPair(child, right.sequence[index], depth + 1))
+    : undefined;
   output.shape = new Map(left.shape);
   for (const [key, child] of right.shape) {
     output.shape.set(key, output.shape.has(key)
@@ -819,6 +883,21 @@ function originSignature(value, state = signatureState(), depth = 0) {
     value.finiteKeysComplete ? 'complete' : 'open',
     'shape-keys',
     value.shapeKeysComplete ? 'complete' : 'open',
+    'sequence',
+    value.sequenceComplete ? 'complete' : 'open',
+    ...(value.sequenceComplete && value.sequence !== undefined
+      ? value.sequence.map((child) => originSignature(child, state, depth + 1))
+      : []),
+    'assign-source-evidence',
+    value.assignSourceEvidenceComplete ? 'complete' : 'open',
+    ...[...value.assignSourceEvidence.entries()]
+      .map(([key, evidence]) => [
+        key,
+        evidence.directOwnedLiteral ? 'direct' : 'indirect',
+        evidence.getterFree ? 'getter-free' : 'getter-possible',
+        evidence.keysComplete ? 'keys-complete' : 'keys-open',
+      ].join(':'))
+      .sort(),
     'prototype',
     value.nullPrototype ? 'null-prototype' : '',
     value.intrinsicPrototype ? 'intrinsic-prototype' : '',
@@ -1529,14 +1608,43 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         receiver: snapshotOrigin(mutation.receiver),
         target: mutation.target === undefined ? undefined : snapshotOrigin(mutation.target),
         keys: new Set(mutation.keys ?? []),
+        assignSources: (mutation.assignSources ?? []).map((source) => ({
+          ...source,
+          origin: snapshotOrigin(source.origin),
+          keys: new Set(source.keys ?? []),
+        })),
       })),
     };
     if (previous === undefined) return stabilized;
     const mutations = new Map();
     for (const mutation of [...previous.mutationReceivers, ...stabilized.mutationReceivers]) {
-      const key = `${mutation.api ?? ''}:${mutation.label}`;
+      const site = mutation.site;
+      const siteKey = site === undefined
+        ? mutation.label
+        : `${site.getSourceFile().fileName}:${site.pos}`;
+      const key = `${mutation.api ?? ''}:${siteKey}`;
       const existing = mutations.get(key);
-      mutations.set(key, existing === undefined ? mutation : {
+      if (existing === undefined) {
+        mutations.set(key, mutation);
+        continue;
+      }
+      const assignSources = new Map();
+      for (const source of [...(existing.assignSources ?? []), ...(mutation.assignSources ?? [])]) {
+        const sourceSite = source.node === undefined
+          ? '<unknown>'
+          : `${source.node.getSourceFile().fileName}:${source.node.pos}`;
+        const sourceKey = `${source.sourceIndex}:${sourceSite}`;
+        const previousSource = assignSources.get(sourceKey);
+        assignSources.set(sourceKey, previousSource === undefined ? source : {
+          ...previousSource,
+          origin: joinOrigins(previousSource.origin, source.origin),
+          keys: new Set([...(previousSource.keys ?? []), ...(source.keys ?? [])]),
+          keysComplete: previousSource.keysComplete && source.keysComplete,
+          getterFree: previousSource.getterFree && source.getterFree,
+          directOwnedLiteral: previousSource.directOwnedLiteral && source.directOwnedLiteral,
+        });
+      }
+      mutations.set(key, {
         ...existing,
         receiver: joinOrigins(existing.receiver, mutation.receiver),
         target: existing.target === undefined
@@ -1547,6 +1655,13 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         keys: new Set([...(existing.keys ?? []), ...(mutation.keys ?? [])]),
         keysComplete: existing.keysComplete !== false && mutation.keysComplete !== false,
         dispatchSafe: existing.dispatchSafe !== false && mutation.dispatchSafe !== false,
+        assignSourceCount: existing.assignSourceCount === mutation.assignSourceCount
+          ? existing.assignSourceCount
+          : Math.max(existing.assignSourceCount ?? 0, mutation.assignSourceCount ?? 0),
+        assignSourcesComplete: existing.assignSourcesComplete !== false
+          && mutation.assignSourcesComplete !== false
+          && existing.assignSourceCount === mutation.assignSourceCount,
+        assignSources: [...assignSources.values()],
       });
     }
     return {
@@ -2433,6 +2548,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
                 || ordinarySetDispatchSafe(receiver, keys, keyDomain.complete),
             );
           }
+          invalidateSequence(receiver, `function-local ${write.channel} write`);
           if (write.channel === 'delete') {
             const invalidated = !keyDomain.complete || keys.size === 0
               ? new Set([...receiver.initialDataKeys, ...receiver.definedDataKeys])
@@ -2614,8 +2730,21 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         shapeKeysComplete &&= spread.shapeKeysComplete;
         for (const [key, child] of spread.shape) {
           if (!spread.hiddenKeys.has(key)) {
-            shape.set(key, child);
-            initialDataKeys.add(String(key));
+            const definitelyPresent = (spread.initialDataKeys.has(key)
+              || spread.definedDataKeys.has(key))
+              && !spread.invalidatedDataKeys.has(key);
+            shape.set(key, shape.has(key) && !definitelyPresent
+              ? joinOrigins(shape.get(key), child)
+              : child);
+            // Shape is a may-domain: joins retain keys present on only one
+            // branch so projections remain conservative. Object spread may
+            // copy that value, but it establishes an own-data must fact only
+            // when the source key is definitely present on every alternative.
+            // Preserve the canonical key identity (including symbols) rather
+            // than promoting/stringifying every may-shape entry.
+            if (definitelyPresent) {
+              initialDataKeys.add(key);
+            }
           }
         }
         children.push(spread.content ?? spread);
@@ -2699,6 +2828,10 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         for (const key of keyDomain.keys) accessorKeys.add(descriptorPropertyKey(key));
       }
     }
+    const directAssignSource = shapeKeysComplete && !node.properties.some((property) =>
+      ts.isSpreadAssignment(property) || ts.isGetAccessorDeclaration(property)
+      || ts.isSetAccessorDeclaration(property));
+    const assignEvidenceKey = `${node.getSourceFile().fileName}:${node.pos}`;
     const result = freshOwned(node, allocationProvenance(node, 'fresh object allocation'), {
       shape,
       initialDataKeys,
@@ -2709,6 +2842,13 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       intrinsicPrototype: literalPrototype === 'default',
       ordinaryData: !node.properties.some((property) =>
         ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property)),
+      assignSourceEvidenceComplete: true,
+      assignSourceEvidence: new Map([[assignEvidenceKey, {
+        directOwnedLiteral: directAssignSource,
+        getterFree: directAssignSource,
+        keysComplete: directAssignSource,
+        node,
+      }]]),
     });
     const capabilityMethods = ['deriveResource', 'facts', 'reduce'];
     const exactCapabilityShape = shape.size === 5
@@ -2729,27 +2869,56 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   const arrayOrigin = (node, overrides, depth) => {
     const shape = new Map();
     const children = [];
-    node.elements.forEach((element, index) => {
-      if (ts.isOmittedExpression(element)) return;
+    const initialDataKeys = new Set();
+    const sequence = [];
+    let sequenceComplete = true;
+    let shapeKeysComplete = true;
+    node.elements.forEach((element) => {
+      if (ts.isOmittedExpression(element)) {
+        const missing = constantOrigin(undefined, allocationProvenance(element, 'sparse array hole'));
+        if (sequenceComplete) sequence.push(missing);
+        children.push(missing);
+        return;
+      }
       if (ts.isSpreadElement(element)) {
         const spread = evaluate(element.expression, overrides, depth + 1);
-        const spreadChildren = spread.shape.size > 0
-          ? [...spread.shape.values()]
-          : [spread.content ?? origin(ORIGIN.UNKNOWN, 'unresolved array spread element')];
-        for (const child of spreadChildren) {
-          shape.set(String(shape.size), child);
+        const expanded = positionalSequence(spread, 'array spread');
+        if (!expanded.complete) {
+          sequenceComplete = false;
+          shapeKeysComplete = false;
+          children.push(spread.content ?? spread);
+          return;
+        }
+        for (const child of expanded.values) {
+          if (sequenceComplete) {
+            const key = String(sequence.length);
+            sequence.push(child);
+            // Array iteration materializes a source hole as an own undefined
+            // element in the newly spread array.
+            shape.set(key, child);
+            initialDataKeys.add(key);
+          }
           children.push(child);
         }
         return;
       }
       const value = evaluate(element, overrides, depth + 1);
-      shape.set(String(index), value);
+      if (sequenceComplete) {
+        const key = String(sequence.length);
+        sequence.push(value);
+        shape.set(key, value);
+        initialDataKeys.add(key);
+      } else {
+        shapeKeysComplete = false;
+      }
       children.push(value);
     });
     return freshOwned(node, allocationProvenance(node, 'fresh array allocation'), {
       shape,
-      shapeKeysComplete: true,
-      initialDataKeys: new Set(shape.keys()),
+      shapeKeysComplete,
+      initialDataKeys,
+      sequence,
+      sequenceComplete,
       intrinsicPrototype: true,
       content: children.length === 0
         ? origin(ORIGIN.BORROWED, 'empty array element type')
@@ -2934,24 +3103,35 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       const substitutions = ts.isTemplateExpression(node.template)
         ? node.template.templateSpans.map((span) => evaluate(span.expression, overrides, depth + 1))
         : [];
-      return [origin(ORIGIN.BORROWED, 'frozen template strings argument'), ...substitutions];
+      const taggedArguments = [origin(ORIGIN.BORROWED, 'frozen template strings argument'), ...substitutions];
+      taggedArguments.sequenceComplete = true;
+      return taggedArguments;
     }
     const values = [];
+    let sequenceComplete = true;
     for (const argument of node.arguments ?? []) {
       if (ts.isSpreadElement(argument)) {
         const spread = evaluate(argument.expression, overrides, depth + 1);
-        if (spread.shape.size > 0) values.push(...orderedShapeValues(spread));
-        else values.push(spread.content ?? origin(ORIGIN.UNKNOWN, 'unresolved spread call argument'));
+        const expanded = positionalSequence(spread, 'spread call argument');
+        sequenceComplete &&= expanded.complete;
+        values.push(...expanded.values);
       } else {
         values.push(evaluate(argument, overrides, depth + 1));
       }
     }
+    values.sequenceComplete = sequenceComplete;
     return values;
   };
 
   const escapeOwned = (value, provenance, seen = new Set()) => {
     if (seen.has(value)) return;
     seen.add(value);
+    const sequenceChildren = value.sequence ?? [];
+    if (value.sequenceComplete || value.sequence !== undefined) {
+      value.sequenceComplete = false;
+      value.sequence = undefined;
+      value.provenance.add(`${provenance}: positional sequence escaped`);
+    }
     if (value.tags.has(ORIGIN.OWNED)) {
       value.tags.delete(ORIGIN.OWNED);
       value.tags.add(ORIGIN.ESCAPED);
@@ -2959,7 +3139,15 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       value.provenance.add(provenance);
     }
     if (value.content !== undefined) escapeOwned(value.content, provenance, seen);
+    for (const child of sequenceChildren) escapeOwned(child, provenance, seen);
     for (const child of value.shape.values()) escapeOwned(child, provenance, seen);
+  };
+
+  const invalidateSequence = (value, provenance) => {
+    if (!value.sequenceComplete && value.sequence === undefined) return;
+    value.sequenceComplete = false;
+    value.sequence = undefined;
+    value.provenance.add(`${provenance}: positional sequence invalidated by mutation`);
   };
 
   const mergeContent = (receiver, value, provenance) => {
@@ -3086,6 +3274,32 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           .filter((key) => !source.hiddenKeys.has(key)));
         return sourceKeys.size === 0 || operationDispatchSafe(target, sourceKeys, true);
       });
+    const assignSourceArguments = api === 'Object.assign' ? argumentsList.slice(1) : [];
+    const assignSources = assignSourceArguments.flatMap((source, sourceIndex) => {
+      const keys = new Set([...source.shape.keys()]
+        .filter((key) => !source.hiddenKeys.has(key)));
+      const common = {
+        sourceIndex,
+        origin: source,
+        keys,
+      };
+      if (!source.assignSourceEvidenceComplete || source.assignSourceEvidence.size === 0) {
+        return [{
+          ...common,
+          node: callNode,
+          keysComplete: false,
+          getterFree: false,
+          directOwnedLiteral: false,
+        }];
+      }
+      return [...source.assignSourceEvidence.values()].map((evidence) => ({
+        ...common,
+        node: evidence.node ?? callNode,
+        keysComplete: source.shapeKeysComplete && evidence.keysComplete,
+        getterFree: evidence.getterFree && source.ordinaryData && source.accessorKeys.size === 0,
+        directOwnedLiteral: evidence.directOwnedLiteral && isProvenMutableLocal(source),
+      }));
+    });
     return {
       receiver: receiver ?? origin(ORIGIN.UNKNOWN, `missing ${api} effective receiver`),
       target,
@@ -3097,12 +3311,20 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
       label,
       api,
       argumentsList,
+      site: callNode,
+      assignSourceCount: assignSourceArguments.length,
+      assignSourcesComplete: api !== 'Object.assign'
+        || (argumentsList.sequenceComplete !== false
+          && assignSourceArguments.every((source) => source.assignSourceEvidenceComplete
+            && source.assignSourceEvidence.size > 0)),
+      assignSources,
       potentiallySkipped: isPotentiallySkipped(callNode, checker),
     };
   };
 
   const applyObjectMutationTransfer = (api, mutation, argumentsList) => {
     const { receiver } = mutation;
+    invalidateSequence(receiver, api);
     const descriptorIsDefinitelyWritable = (descriptor) => {
       const writable = descriptor.shape.get('writable');
       return writable !== undefined && writable.tags.size === 1
@@ -3205,10 +3427,15 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     }
   };
 
-  const orderedShapeValues = (value) => [...value.shape.entries()]
-    .filter(([key]) => !value.hiddenKeys.has(key) && typeof key !== 'symbol')
-    .sort(([left], [right]) => Number(left) - Number(right))
-    .map(([, child]) => child);
+  const positionalSequence = (value, provenance) => {
+    if (value.sequenceComplete && value.sequence !== undefined) {
+      return { complete: true, values: [...value.sequence] };
+    }
+    return {
+      complete: false,
+      values: [origin(ORIGIN.UNKNOWN, provenance + ' has unresolved positional length or indices')],
+    };
+  };
 
   resolveCall = (node, overrides = new Map(), depth = 0) => {
     const calleeNode = ts.isTaggedTemplateExpression(node) ? node.tag : node.expression;
@@ -3219,6 +3446,11 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
     const mutationReceivers = [];
     let known = callee.callables.length > 0;
     const descriptions = [];
+    if (argumentsList.sequenceComplete === false) {
+      known = false;
+      effects.add('HOST_UNKNOWN');
+      descriptions.push('call arguments have unresolved positional length or indices');
+    }
     const evaluateDirectFunction = (entry, invocationArguments) => {
       const declaration = functions.get(entry.id);
       if (declaration !== undefined && nearestContainingFunction(node) === declaration) {
@@ -3346,9 +3578,20 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
             boundThis: argumentsList[0] ?? constantOrigin(undefined, 'undefined bound this'),
           }, 'directly analyzed bound callable'));
         } else {
+          const applied = entry.name === 'apply'
+            ? positionalSequence(
+              argumentsList[1] ?? origin(ORIGIN.UNKNOWN, 'missing apply arguments'),
+              'Function.apply argument container',
+            )
+            : undefined;
+          if (applied?.complete === false) {
+            known = false;
+            effects.add('HOST_UNKNOWN');
+            descriptions.push('Function.apply argument container has unresolved positional length or indices');
+          }
           const invoked = entry.name === 'call'
             ? argumentsList.slice(1)
-            : orderedShapeValues(argumentsList[1] ?? origin(ORIGIN.UNKNOWN, 'missing apply arguments'));
+            : applied.values;
           const thisOrigin = argumentsList[0] ?? constantOrigin(undefined, `undefined ${entry.name} this`);
           targets.forEach((target) => invokeDirect(functionWithThis(target, thisOrigin), invoked));
         }
@@ -3546,6 +3789,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         }
         if (mutatingMethodEffects.has(entry.name)) {
           effects.add(mutatingMethodEffects.get(entry.name));
+          invalidateSequence(entry.receiver, `.${entry.name}()`);
           mutationReceivers.push({ receiver: entry.receiver, label: `.${entry.name}()`, api: `method:${entry.name}`, argumentsList });
           const inserted = entry.name === 'set'
             ? argumentsList[1]
@@ -3904,8 +4148,10 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
   const directInvocationArguments = (edge, overrides = new Map()) => {
     const values = argsFor(edge.callNode, overrides, 0);
     if (edge.metaName === 'call') return values.slice(1);
-    if (edge.metaName === 'apply') return orderedShapeValues(values[1]
-      ?? origin(ORIGIN.UNKNOWN, 'missing apply argument container'));
+    if (edge.metaName === 'apply') return positionalSequence(
+      values[1] ?? origin(ORIGIN.UNKNOWN, 'missing apply argument container'),
+      'direct Function.apply argument container',
+    ).values;
     return values;
   };
 
@@ -4303,6 +4549,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           );
         }
         if (appliedWrites.has(write) || !isProvenMutableLocal(receiver)) continue;
+        invalidateSequence(receiver, `top-level ${write.channel} write`);
         const written = write.source === undefined
           ? constantOrigin(undefined, `delete ${write.receiver.getText()}`)
           : project(evaluate(write.source), write.projection, write.node);
