@@ -2185,3 +2185,76 @@ export const read = readInternal;`,
     expect(result.status, result.output).toBe(0);
   });
 });
+
+describe('Task 9 review fix round 3 spread and argument canonicalization', () => {
+  it.each([
+    ['Reflect.set direct', `Reflect.set(target, 'marker', 'changed');`],
+    ['Reflect.set alias', `const set = Reflect.set; set(target, 'marker', 'changed');`],
+    ['Reflect.set call', `Reflect.set.call(Reflect, target, 'marker', 'changed');`],
+    ['Reflect.set apply', `Reflect.set.apply(Reflect, [target, 'marker', 'changed']);`],
+    ['Reflect.set bind', `const set = Reflect.set.bind(Reflect, target); set('marker', 'changed');`],
+    ['same-module helper', `function setMarker(value: object): void { Reflect.set(value, 'marker', 'changed'); } setMarker(target);`],
+    ['direct assignment', `target.marker = 'changed';`],
+    ['Object.assign', `Object.assign(target, { marker: 'changed' });`],
+  ])('rejects conditional-spread may-presence through %s', async (_, operation) => {
+    const result = await runGate(`export function update(proto: object, choose: boolean): void {
+      const source = choose ? { marker: 'present' } : {};
+      const target = { __proto__: proto, ...source };
+      ${operation}
+    }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/UNPROVEN_(?:SET_DISPATCH|REFLECT_SET_TARGET)|security/i);
+  });
+
+  it('accepts a spread key definitely present on every source alternative', async () => {
+    const result = await runGate(`export function update(proto: object, choose: boolean): void {
+      const source = choose ? { marker: 'left' } : { marker: 'right' };
+      const target = { __proto__: proto, ...source };
+      Reflect.set(target, 'marker', 'changed');
+    }`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['apply', `Reflect.set.apply(undefined, args);`],
+    ['direct spread', `Reflect.set(...args);`],
+    ['call spread', `Reflect.set.call(undefined, ...args);`],
+    ['bind spread', `Reflect.set.bind(undefined, ...args)();`],
+  ])('rejects a sparse Reflect.set argument container through %s', async (_, invocation) => {
+    const result = await runGate(`export function update(receiver: object): void {
+      const target = {};
+      const args = [target, , 'changed', receiver] as unknown as Parameters<typeof Reflect.set>;
+      ${invocation}
+    }`);
+
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/HOST_UNKNOWN|UNPROVEN_(?:SET_DISPATCH|REFLECT_SET_TARGET|MUTATION_RECEIVER)|security/i);
+  });
+
+  it('accepts a dense four-argument Reflect.set container with an owned receiver', async () => {
+    const result = await runGate(`const target = {};
+      const receiver = {};
+      const args = [target, 'marker', 'changed', receiver] as Parameters<typeof Reflect.set>;
+      Reflect.set.apply(undefined, args);
+      export { receiver };`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each([
+    ['direct', `Object.assign(target, { marker: 'changed' });`],
+    ['alias', `const assign = Object.assign; assign(target, { marker: 'changed' });`],
+    ['bind', `const assign = Object.assign.bind(Object, target); assign({ marker: 'changed' });`],
+    ['call', `Object.assign.call(Object, target, { marker: 'changed' });`],
+    ['apply', `Object.assign.apply(Object, [target, { marker: 'changed' }]);`],
+    ['helper', `function update(source: { marker: string }): void { Object.assign(target, source); } update({ marker: 'changed' });`],
+  ])('accepts canonical Object.assign source records through %s', async (_, invocation) => {
+    const result = await runGate(`const target = { marker: 'before' };
+      ${invocation}
+      export { target };`);
+
+    expect(result.status, result.output).toBe(0);
+  });
+});
