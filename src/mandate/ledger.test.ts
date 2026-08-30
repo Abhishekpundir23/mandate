@@ -215,7 +215,7 @@ describe('append-only authority ledger', () => {
       .not.toContain(purchaseMay.id);
   });
 
-  it.each(['MUST_NOT', 'NEEDS_CONFIRMATION'] as const)(
+  it.each(['MUST_NOT', 'NEEDS_CONFIRMATION', 'REVOKED'] as const)(
     'rejects REPLACE against a protected %s clause',
     (kind) => {
       const protectedClause: Clause = {
@@ -226,6 +226,9 @@ describe('append-only authority ledger', () => {
         introducedIn: 1,
         source: { turnId: 't1', quote: 'Protect this action.' },
         ...(kind === 'NEEDS_CONFIRMATION' ? { afterConfirmation: 'MAY' as const } : {}),
+        ...(kind === 'REVOKED'
+          ? { targetClauseIds: ['prior-authority'], revokedSelector: { operation: 'send' } }
+          : {}),
       };
       const replaceProtected: IntentDiff = {
         baseVersion: 1,

@@ -136,4 +136,11 @@ describe('scenario fixture validation', () => {
 
     expect(() => parseScenarioFixture(mismatchedSource)).toThrow(/source turn/i);
   });
+
+  it('rejects a fabricated canonical diff quote for the correct turn id', () => {
+    const fabricatedQuote = structuredClone(validScenario);
+    fabricatedQuote.turns[0]!.canonicalDiff.source.quote = 'fabricated';
+
+    expect(() => parseScenarioFixture(fabricatedQuote)).toThrow(/source quote/i);
+  });
 });

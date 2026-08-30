@@ -98,6 +98,9 @@ export const scenarioDefinitionSchema = z.object({
     || turn.canonicalDiff.source.turnId !== turn.id)) {
     context.addIssue({ code: 'custom', message: 'Canonical diff source turn must match its scenario turn.' });
   }
+  if (scenario.turns.some((turn) => turn.canonicalDiff.source.quote !== turn.text)) {
+    context.addIssue({ code: 'custom', message: 'Canonical diff source quote must match its exact scenario turn text.' });
+  }
 
   const proposalIds = [
     ...scenario.proposalProgram.main,

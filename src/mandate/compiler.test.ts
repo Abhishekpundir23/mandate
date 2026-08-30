@@ -275,7 +275,7 @@ describe('supported-language intent compiler', () => {
     });
   });
 
-  it.each(['MUST_NOT', 'NEEDS_CONFIRMATION'] as const)(
+  it.each(['MUST_NOT', 'NEEDS_CONFIRMATION', 'REVOKED'] as const)(
     'does not replace an active %s constraint with a MAY grant',
     (kind) => {
       const protectedAlice: Clause = {
@@ -286,6 +286,9 @@ describe('supported-language intent compiler', () => {
         introducedIn: 1,
         source: { turnId: 'email-1', quote: 'Protect sending to Alice.' },
         ...(kind === 'NEEDS_CONFIRMATION' ? { afterConfirmation: 'MAY' as const } : {}),
+        ...(kind === 'REVOKED'
+          ? { targetClauseIds: ['prior-send-alice'], revokedSelector: { resource: 'recipient:alice' } }
+          : {}),
       };
       const protectedContext = {
         baseVersion: 1,
