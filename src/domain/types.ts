@@ -8,6 +8,7 @@ export interface Predicate {
 }
 
 export type ClauseKind = 'MUST' | 'MUST_NOT' | 'MAY' | 'REVOKED' | 'NEEDS_CONFIRMATION' | 'EVIDENCE';
+export type CompilerConfidence = 1 | 0.9 | 0.6;
 export type Effect = 'READ' | 'DRAFT_WRITE' | 'LOCAL_PERSIST' | 'EXTERNAL_TRANSMIT' | 'PUBLISH' | 'DESTRUCTIVE';
 
 export interface ActionSelector {
@@ -29,6 +30,7 @@ export interface Clause {
   readonly selector?: ActionSelector;
   readonly introducedIn: number;
   readonly source: SourceRef;
+  readonly confidence?: CompilerConfidence;
   readonly targetClauseIds?: readonly string[];
   readonly revokedSelector?: ActionSelector;
   readonly afterConfirmation?: 'MAY' | 'MUST';
