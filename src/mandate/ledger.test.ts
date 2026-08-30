@@ -238,6 +238,101 @@ describe('append-only authority ledger', () => {
       .not.toContain(purchaseMay.id);
   });
 
+  it('keeps a later matching grant visible while an earlier selector tombstone remains active', () => {
+    const selectorRevocation: IntentDiff = {
+      baseVersion: 1,
+      turnId: 't2',
+      source: { turnId: 't2', quote: 'Do not buy anything.' },
+      ops: [{
+        op: 'REVOKE',
+        tombstone: {
+          id: 'all-purchases-revoked',
+          kind: 'REVOKED',
+          statement: 'All existing purchases revoked',
+          revokedSelector: { operation: 'buy' },
+          source: { turnId: 't2', quote: 'Do not buy anything.' },
+        },
+      }],
+    };
+    const laterGrant: IntentDiff = {
+      baseVersion: 2,
+      turnId: 't3',
+      source: { turnId: 't3', quote: 'You may buy item 1.' },
+      ops: [{
+        op: 'ADD',
+        clause: {
+          ...purchaseMay,
+          id: 'purchase-may-later',
+          source: { turnId: 't3', quote: 'You may buy item 1.' },
+        },
+      }],
+    };
+
+    const latest = appendVersion(
+      appendVersion(createLedger([purchaseMay], 't1'), selectorRevocation),
+      laterGrant,
+    ).at(-1)!;
+
+    expect(activeClauses(latest).map(({ id }) => id)).toEqual([
+      'all-purchases-revoked',
+      'purchase-may-later',
+    ]);
+  });
+
+  it('retires an active tombstone without resurrecting the authority it already cancelled', () => {
+    const selectorRevocation: IntentDiff = {
+      baseVersion: 1,
+      turnId: 't2',
+      source: { turnId: 't2', quote: 'Do not buy anything.' },
+      ops: [{
+        op: 'REVOKE',
+        tombstone: {
+          id: 'all-purchases-revoked',
+          kind: 'REVOKED',
+          statement: 'All existing purchases revoked',
+          revokedSelector: { operation: 'buy' },
+          source: { turnId: 't2', quote: 'Do not buy anything.' },
+        },
+      }],
+    };
+    const beforeRetirement = appendVersion(createLedger([purchaseMay], 't1'), selectorRevocation);
+    const frozenSnapshot = canonicalize(beforeRetirement[1] as unknown as JsonValue);
+    const retireAndGrant: IntentDiff = {
+      baseVersion: 2,
+      turnId: 't3',
+      source: { turnId: 't3', quote: 'Retire that denial. You may buy item 1.' },
+      ops: [
+        {
+          op: 'REVOKE',
+          tombstone: {
+            id: 'purchase-denial-retired',
+            kind: 'REVOKED',
+            statement: 'The purchase denial is retired',
+            targetClauseIds: ['all-purchases-revoked'],
+            source: { turnId: 't3', quote: 'Retire that denial. You may buy item 1.' },
+          },
+        },
+        {
+          op: 'ADD',
+          clause: {
+            ...purchaseMay,
+            id: 'purchase-may-current',
+            source: { turnId: 't3', quote: 'Retire that denial. You may buy item 1.' },
+          },
+        },
+      ],
+    };
+
+    const versions = appendVersion(beforeRetirement, retireAndGrant);
+    const activeIds = activeClauses(versions[2]!).map(({ id }) => id);
+
+    expect(activeIds).toEqual(['purchase-denial-retired', 'purchase-may-current']);
+    expect(activeIds).not.toContain(purchaseMay.id);
+    expect(activeIds).not.toContain('all-purchases-revoked');
+    expect(canonicalize(versions[1] as unknown as JsonValue)).toBe(frozenSnapshot);
+    expect(Object.isFrozen(versions[2]?.clauses)).toBe(true);
+  });
+
   it.each(['MUST_NOT', 'NEEDS_CONFIRMATION', 'REVOKED'] as const)(
     'rejects REPLACE against a protected %s clause',
     (kind) => {

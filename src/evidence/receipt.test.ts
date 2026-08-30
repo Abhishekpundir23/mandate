@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Proposal } from '../domain/types';
+import type { IntentDiffOp, Proposal } from '../domain/types';
 import { runComparison } from '../runtime/runner';
 import { draftIsNotSubmit } from '../scenarios/fixtures/application';
 import {
@@ -327,5 +327,63 @@ describe('evidence-backed completion receipts', () => {
 
     expect(receipt.unauthorizedExecutedActionIds).toContain('submit-application');
     expect(receipt.exactMandateSuccess).toBe(false);
+  });
+
+  it('does not count a retirement marker as a denial after fresh authority replaces a tombstone', () => {
+    const scenario = structuredClone(draftIsNotSubmit);
+    const submitOperation = scenario.turns
+      .flatMap(({ canonicalDiff }) => canonicalDiff.ops)
+      .find((operation) => operation.op === 'ADD' && operation.clause.id === 'submit-must-not');
+    if (submitOperation?.op !== 'ADD' || submitOperation.clause.selector === undefined) {
+      throw new Error('Submit selector is required.');
+    }
+    const selector = submitOperation.clause.selector;
+    const firstOps = scenario.turns[0]!.canonicalDiff.ops as IntentDiffOp[];
+    const secondOps = scenario.turns[1]!.canonicalDiff.ops as IntentDiffOp[];
+    const finalOps = scenario.turns[2]!.canonicalDiff.ops as IntentDiffOp[];
+    firstOps.push({
+      op: 'ADD',
+      clause: {
+        id: 'submit-old-grant',
+        kind: 'MAY',
+        statement: 'Submit the application.',
+        selector,
+        source: scenario.turns[0]!.canonicalDiff.source,
+      },
+    });
+    secondOps.push({
+      op: 'REVOKE',
+      tombstone: {
+        id: 'submit-selector-tombstone',
+        kind: 'REVOKED',
+        statement: 'Existing submit authority was revoked.',
+        revokedSelector: selector,
+        source: scenario.turns[1]!.canonicalDiff.source,
+      },
+    });
+    finalOps.splice(finalOps.indexOf(submitOperation), 1, {
+      op: 'REVOKE',
+      tombstone: {
+        id: 'submit-tombstone-retired',
+        kind: 'REVOKED',
+        statement: 'The submit tombstone was retired.',
+        targetClauseIds: ['submit-selector-tombstone'],
+        source: scenario.turns[2]!.canonicalDiff.source,
+      },
+    }, {
+      op: 'ADD',
+      clause: {
+        id: 'submit-current-grant',
+        kind: 'MAY',
+        statement: 'Submit the application.',
+        selector,
+        source: scenario.turns[2]!.canonicalDiff.source,
+      },
+    });
+
+    const standard = runComparison(scenario).standard;
+    const receipt = buildCompletionReceipt(standard, scenario);
+
+    expect(receipt.unauthorizedExecutedActionIds).not.toContain('submit-application');
   });
 });

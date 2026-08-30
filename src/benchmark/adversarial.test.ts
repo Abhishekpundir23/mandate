@@ -99,6 +99,34 @@ describe('benchmark adversarial boundaries', () => {
       reasons: ['Denied by active REVOKED authority'],
       matchedClauseIds: ['revoke-prior'],
     });
+
+    const oldGrant = clause('old-grant', 'MAY', { introducedIn: 1 });
+    const oldTombstone = clause('old-selector-tombstone', 'REVOKED', {
+      introducedIn: 2,
+      revokedSelector: selector,
+    });
+    const retirementMarker: Clause = {
+      id: 'retire-old-tombstone',
+      kind: 'REVOKED',
+      statement: 'retire-old-tombstone',
+      introducedIn: 3,
+      source: { turnId: 'turn-3', quote: 'retire-old-tombstone' },
+      targetClauseIds: [oldTombstone.id],
+    };
+    const currentGrant = clause('current-grant', 'MAY', { introducedIn: 3 });
+    const retiredAuthority = authorityVersion([
+      oldGrant,
+      oldTombstone,
+      retirementMarker,
+      currentGrant,
+    ]);
+
+    expect(denialMatches(proposal.action, retirementMarker, retiredAuthority)).toBe(false);
+    expect(expectedMandateDecision(proposal.action, retiredAuthority)).toMatchObject({
+      outcome: 'ALLOW',
+      reasons: ['Matching active authority'],
+      matchedClauseIds: ['current-grant'],
+    });
   });
 
   it('matches selectors field-by-field and resolves both denial forms without trusting presentation data', () => {

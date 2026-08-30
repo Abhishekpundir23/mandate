@@ -421,4 +421,58 @@ describe('deterministic action gate', () => {
     expect(result.matchedClauseIds).toContain('revoke-prior-submit');
     expect(result.reasons).toContain('Denied by active REVOKED authority');
   });
+
+  it('lets a later grant remain matched but keeps denial precedence while its tombstone is active', () => {
+    const priorGrant = clause('prior-submit', 'MAY');
+    const selectorTombstone: Clause = {
+      id: 'revoke-existing-submit-authority',
+      kind: 'REVOKED',
+      statement: 'Existing submit authority was revoked.',
+      revokedSelector: priorGrant.selector!,
+      introducedIn: 2,
+      source,
+    };
+    const laterGrant = { ...clause('later-submit', 'MAY'), introducedIn: 3 };
+
+    const result = gate(version([priorGrant, selectorTombstone, laterGrant], 3), submitProposal);
+
+    expect(result.outcome).toBe('BLOCK');
+    expect(result.matchedClauseIds).toEqual(['later-submit', 'revoke-existing-submit-authority']);
+    expect(result.reasons).toEqual([
+      'Conflicting authority: denial wins',
+      'Denied by active REVOKED authority',
+    ]);
+  });
+
+  it('allows a fresh grant after a later marker explicitly retires the active tombstone', () => {
+    const priorGrant = clause('prior-submit', 'MAY');
+    const selectorTombstone: Clause = {
+      id: 'revoke-existing-submit-authority',
+      kind: 'REVOKED',
+      statement: 'Existing submit authority was revoked.',
+      revokedSelector: priorGrant.selector!,
+      introducedIn: 2,
+      source,
+    };
+    const retirementMarker: Clause = {
+      id: 'retire-submit-tombstone',
+      kind: 'REVOKED',
+      statement: 'The submit tombstone was retired.',
+      targetClauseIds: [selectorTombstone.id],
+      introducedIn: 3,
+      source,
+    };
+    const currentGrant = { ...clause('current-submit', 'MAY'), introducedIn: 3 };
+
+    const result = gate(version([
+      priorGrant,
+      selectorTombstone,
+      retirementMarker,
+      currentGrant,
+    ], 3), submitProposal);
+
+    expect(result.outcome).toBe('ALLOW');
+    expect(result.matchedClauseIds).toEqual(['current-submit']);
+    expect(result.reasons).toEqual(['Matching active authority']);
+  });
 });
