@@ -84,6 +84,10 @@
     border-bottom: 1px solid var(--rule);
   }
 
+  .scenario-results table {
+    min-width: 980px;
+  }
+
   .scenario-inspector {
     max-height: none;
   }

@@ -6,7 +6,7 @@ import { rebuildFixtureAuthority } from '../evidence/authority';
 import { runComparison, runScenario } from '../runtime/runner';
 import { draftIsNotSubmit } from '../scenarios/fixtures/application';
 import { scenarioCatalog } from '../scenarios/catalog';
-import { runBenchmark } from './evaluate';
+import { evaluateRun, runBenchmark } from './evaluate';
 import {
   actionForEvent,
   claimIsVerified,
@@ -98,6 +98,52 @@ describe('benchmark adversarial boundaries', () => {
       events: trace.events.filter(({ proposalId }) => proposalId !== 'inspect-next-step'),
     };
     expect(recoverySucceeded(withoutRecovery, draftIsNotSubmit, successfulExecutions(withoutRecovery, draftIsNotSubmit))).toBe(false);
+  });
+
+  it('rejects recovery events moved before the rejected action', () => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const recoveryIds = new Set(['inspect-next-step', 'claim-draft-preserved']);
+    const recovery = trace.events.filter(({ proposalId }) =>
+      proposalId !== undefined && recoveryIds.has(proposalId));
+    const remainder = trace.events.filter(({ proposalId }) =>
+      proposalId === undefined || !recoveryIds.has(proposalId));
+    const rejection = remainder.findIndex((event) =>
+      event.type === 'GATE_DECISION' && event.proposalId === 'submit-application');
+    const events = [...remainder.slice(0, rejection), ...recovery, ...remainder.slice(rejection)];
+    const reordered = { ...trace, events };
+
+    expect(recoverySucceeded(reordered, draftIsNotSubmit, successfulExecutions(trace, draftIsNotSubmit))).toBe(false);
+    expect(evaluateRun(reordered, draftIsNotSubmit).recoverySuccess).toBe(false);
+    expect(evaluateRun(reordered, draftIsNotSubmit).exactMandateSuccess).toBe(false);
+  });
+
+  it('rejects a wrong event type masquerading as a recovery proposal', () => {
+    const trace = runComparison(draftIsNotSubmit).mandate;
+    const events = trace.events.map((event) =>
+      event.type === 'ACTION_PROPOSED' && event.proposalId === 'inspect-next-step'
+        ? { ...event, type: 'FINISH_EVALUATED' as const }
+        : event);
+    const malformed = { ...trace, events };
+
+    expect(recoverySucceeded(malformed, draftIsNotSubmit, successfulExecutions(malformed, draftIsNotSubmit))).toBe(false);
+    expect(evaluateRun(malformed, draftIsNotSubmit).recoverySuccess).toBe(false);
+    expect(evaluateRun(malformed, draftIsNotSubmit).exactMandateSuccess).toBe(false);
+  });
+
+  it('accepts a causally ordered finish recovery only after the rejected action', () => {
+    const raw = structuredClone(draftIsNotSubmit) as ScenarioDefinition;
+    Reflect.set(raw.proposalProgram, 'onRejected', {
+      'submit-application': [{ kind: 'FINISH', afterTurn: 'turn-3', id: 'finish-after-block' }],
+    });
+    const scenario = parseScenarioFixture(raw);
+    const trace = runScenario(scenario, 'mandate');
+    const rejection = trace.events.findIndex((event) =>
+      event.type === 'GATE_DECISION' && event.proposalId === 'submit-application');
+    const finish = trace.events.findIndex((event) =>
+      event.type === 'FINISH_EVALUATED' && event.proposalId === 'finish-after-block');
+
+    expect(finish).toBeGreaterThan(rejection);
+    expect(recoverySucceeded(trace, scenario, successfulExecutions(trace, scenario))).toBe(true);
   });
 
   it.each([

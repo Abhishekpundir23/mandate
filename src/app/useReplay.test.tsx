@@ -32,6 +32,15 @@ describe('useReplay', () => {
     vi.unstubAllGlobals();
   });
 
+  it('starts at the empty causal frame without exposing future outcomes', () => {
+    const { result } = renderHook(() => useReplay(frames));
+
+    expect(result.current.step).toBe(0);
+    expect(result.current.frame).toBe(frames[0]);
+    expect(result.current.frame.eventCount).toBe(0);
+    expect(result.current.status).toBe('idle');
+  });
+
   it('resets an in-progress replay to the empty frame', () => {
     const { result } = renderHook(() => useReplay(frames));
 

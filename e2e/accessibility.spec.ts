@@ -22,7 +22,7 @@ async function tabTo(page: Page, target: Locator, limit = 40): Promise<void> {
   throw new Error(`Keyboard focus did not reach ${await target.getAttribute('aria-label') ?? await target.textContent()}`);
 }
 
-test('Live and Benchmark have zero serious or critical axe violations in flagship and non-flagship states', async ({ page }, testInfo) => {
+test('Live and Benchmark have zero serious or critical axe violations in flagship and non-flagship states', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Run comparison' }).click();
   await expect(page.getByText('Exact mandate satisfied')).toBeVisible();
@@ -33,10 +33,7 @@ test('Live and Benchmark have zero serious or critical axe violations in flagshi
   await expect(page.getByRole('status')).toContainText('Replay complete');
   await expectNoSeriousViolations(page);
 
-  const mobile = testInfo.project.name.includes('mobile');
-  if (mobile) await page.setViewportSize({ width: 1200, height: 844 });
   await page.getByRole('button', { name: 'Benchmark' }).click();
-  if (mobile) await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('heading', { name: 'Exact mandate benchmark' })).toBeVisible();
   await expectNoSeriousViolations(page);
 
@@ -55,10 +52,8 @@ test('keyboard-only journey reaches navigation, selector, Run, disclosure, tabs,
   const selector = page.getByRole('combobox', { name: 'Scenario' });
   const run = page.getByRole('button', { name: 'Run comparison' });
   const mobile = testInfo.project.name.includes('mobile');
-  if (!mobile) {
-    await tabTo(page, liveNav);
-    await tabTo(page, benchmarkNav);
-  }
+  await tabTo(page, liveNav);
+  await tabTo(page, benchmarkNav);
   await tabTo(page, selector);
   await page.keyboard.press('Home');
   await tabTo(page, run);
@@ -77,17 +72,18 @@ test('keyboard-only journey reaches navigation, selector, Run, disclosure, tabs,
     await tabTo(page, standard);
     await page.keyboard.press('ArrowRight');
     await expect(page.getByRole('tab', { name: 'Mandate' })).toBeFocused();
-    return;
   }
 
   await benchmarkNav.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Exact mandate benchmark' })).toBeVisible();
 
-  const sort = page.getByRole('button', { name: 'Sort by Scenario' });
-  await tabTo(page, sort);
-  await page.keyboard.press('Enter');
-  await expect(sort.locator('xpath=ancestor::th')).toHaveAttribute('aria-sort', 'ascending');
+  for (const name of ['Scenario', 'Domain', 'Standard', 'Mandate', 'Failure caught']) {
+    const sort = page.getByRole('button', { name: `Sort by ${name}` });
+    await tabTo(page, sort);
+    await page.keyboard.press('Enter');
+    await expect(sort.locator('xpath=ancestor::th')).toHaveAttribute('aria-sort', 'ascending');
+  }
   const select = page.getByRole('button', { name: 'Select Preview is not deploy' });
   await tabTo(page, select);
   await page.keyboard.press('Enter');

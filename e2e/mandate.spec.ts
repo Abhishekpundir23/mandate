@@ -5,6 +5,11 @@ test('desktop Live comparison proves the unsafe and safe outcomes before a deter
 
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Live comparison' })).toBeVisible();
+  await expect(page.getByRole('status')).toHaveText('Replay ready');
+  await expect(page.getByText('APPLICATION SUBMITTED')).toHaveCount(0);
+  await expect(page.getByText('BLOCKED by mandate v3')).toHaveCount(0);
+  await expect(page.getByText('DRAFT PRESERVED')).toHaveCount(0);
+  await expect(page.getByText('Exact mandate satisfied')).toHaveCount(0);
   await page.getByRole('button', { name: 'Run comparison' }).click();
   await expect(page.getByRole('status')).toContainText('Replaying');
   await expect(page.getByText('APPLICATION SUBMITTED')).toBeVisible();
@@ -27,6 +32,9 @@ test('mobile Run supports arrow-key trace navigation and one visible stacked tra
   test.skip(!testInfo.project.name.includes('mobile'), 'Mobile journey');
 
   await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Live run' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Benchmark' })).toBeVisible();
+  await expect(page.getByText('APPLICATION SUBMITTED')).toHaveCount(0);
   await page.getByRole('button', { name: 'Run comparison' }).click();
   await expect(page.getByRole('status')).toContainText('Replaying');
   await expect(page.getByText('APPLICATION SUBMITTED')).toBeVisible();
@@ -44,6 +52,40 @@ test('mobile Run supports arrow-key trace navigation and one visible stacked tra
   await expect(page.getByRole('complementary', { name: 'Authority and completion evidence' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Completion receipt' })).toBeVisible();
   await expect(page.getByText('Exact mandate satisfied')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Benchmark' }).click();
+  await expect(page.getByRole('button', { name: 'Run benchmark' })).toBeVisible();
+});
+
+test('all fifteen benchmark rows and truthful failure labels fit the exact desktop scrollport', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.includes('mobile'), 'Exact desktop geometry proof');
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Benchmark' }).click();
+  await expect(page.locator('tbody tr')).toHaveCount(15);
+
+  const geometry = await page.locator('.scenario-table-scroll').evaluate((scrollport) => {
+    const viewport = scrollport.getBoundingClientRect();
+    const rows = [...scrollport.querySelectorAll('tbody tr')].map((row) => {
+      const box = row.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom };
+    });
+    return {
+      scrollTop: scrollport.scrollTop,
+      horizontalOverflow: scrollport.scrollWidth - scrollport.clientWidth,
+      rowsFullyVisible: rows.every(({ top, bottom }) =>
+        top >= viewport.top - 0.5 && bottom <= viewport.bottom + 0.5),
+      lastRowBottom: rows.at(-1)?.bottom,
+      viewportBottom: viewport.bottom,
+    };
+  });
+  expect(geometry).toMatchObject({ scrollTop: 0, horizontalOverflow: 0, rowsFullyVisible: true });
+
+  const failureLabels = page.locator('.failure-label');
+  await expect(failureLabels).toHaveCount(15);
+  for (const label of await failureLabels.all()) {
+    await expect(label).toHaveAttribute('aria-label', /.+/);
+    await expect(label).toHaveAttribute('title', /.+/);
+  }
 });
 
 test('200% zoom-equivalent reflow keeps all primary controls reachable without page clipping', async ({ page }, testInfo) => {

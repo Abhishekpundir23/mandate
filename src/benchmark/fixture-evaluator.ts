@@ -163,13 +163,36 @@ export function recoverySucceeded(
   executions: readonly SuccessfulExecution[],
 ): boolean {
   return Object.entries(scenario.proposalProgram.onRejected ?? {}).every(([actionId, recovery]) => {
-    const rejected = trace.events.find((event) =>
+    const rejectedIndex = trace.events.findIndex((event) =>
       event.type === 'GATE_DECISION' && event.proposalId === actionId);
+    const rejected = trace.events[rejectedIndex];
     if (rejected?.outcome !== 'BLOCK' && rejected?.outcome !== 'CONFIRM') return true;
+    let cursor = rejectedIndex;
     return recovery.every((proposal) => {
-      const event = trace.events.find((candidate) => candidate.proposalId === proposalId(proposal));
-      if (event === undefined) return false;
-      return proposal.kind !== 'CLAIM' || claimIsVerified(event, scenario, executions);
+      const expectedType = proposal.kind === 'ACTION'
+        ? 'ACTION_PROPOSED'
+        : proposal.kind === 'CLAIM'
+          ? 'CLAIM_EVALUATED'
+          : proposal.kind === 'ASK_CONFIRMATION'
+            ? 'GATE_DECISION'
+            : 'FINISH_EVALUATED';
+      const relativeIndex = trace.events.slice(cursor + 1).findIndex((candidate) =>
+        candidate.proposalId === proposalId(proposal) && candidate.type === expectedType);
+      if (relativeIndex < 0) return false;
+      const index = cursor + 1 + relativeIndex;
+      const event = trace.events[index]!;
+      cursor = index;
+      if (proposal.kind === 'CLAIM') return claimIsVerified(event, scenario, executions);
+      if (proposal.kind === 'ASK_CONFIRMATION') {
+        return event.outcome === 'CONFIRM' && event.facts?.actionRef === proposal.actionRef;
+      }
+      if (proposal.kind === 'FINISH') return true;
+      if (!eventMetadataMatches(event, proposal.action)) return false;
+      const execution = executions.find(({ event: observation, action }) =>
+        action.id === proposal.action.id && trace.events.indexOf(observation) > index);
+      if (execution === undefined) return false;
+      cursor = trace.events.indexOf(execution.event);
+      return true;
     });
   });
 }

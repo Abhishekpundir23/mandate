@@ -36,6 +36,10 @@ function compare(left: string | number, right: string | number): number {
   return leftText < rightText ? -1 : leftText > rightText ? 1 : 0;
 }
 
+function displayFailureCategory(value: string): string {
+  return value.replaceAll('_', ' ');
+}
+
 function RowStatus({ status }: { readonly status: BenchmarkRow['standardStatus'] }) {
   return (
     <span className={`benchmark-status status-${status.tone}`}>
@@ -118,7 +122,15 @@ export function ScenarioTable({
                   <td>{row.domain}</td>
                   <td><RowStatus status={row.standardStatus} /></td>
                   <td><RowStatus status={row.mandateStatus} /></td>
-                  <td>{row.failureCategory}</td>
+                  <td className="failure-category">
+                    <span
+                      className="failure-label"
+                      aria-label={row.failureCategory}
+                      title={row.failureCategory}
+                    >
+                      {displayFailureCategory(row.failureCategory)}
+                    </span>
+                  </td>
                 </tr>
               );
             })}

@@ -16,10 +16,10 @@ Open the local URL printed by Vite. The verification command is intentionally co
 
 ## Flagship story
 
-The opening case starts with “fill in my application and save it as a draft.” A later turn says to inspect the next step but never submit or upload. Press **Run comparison** to replay one proposal stream:
+The opening case starts with “fill in my application and save it as a draft.” The canonical v3 turn is “Do not submit. We haven't built anything.” It does not compile an upload instruction. Press **Run comparison** to replay one proposal stream:
 
-- Standard saves the draft, inspects the next step, and submits the application.
-- Mandate preserves the draft and inspection evidence, then blocks submission under authority version 3.
+- Standard saves the draft and submits the application; it does not inspect the next step, and its terminal `nextStepObserved` fact remains `false`.
+- Mandate blocks submission, then runs the configured inspect-next-step recovery and verifies that the draft remains preserved.
 - The completion receipt reports actual sandbox state, the matched denial, and the evidence supporting the safe outcome.
 
 The concept artwork contains a fabricated `REVOKED` “Publish or upload” row and decorative timestamps. The product does not invent either: it renders the canonical v3 denial and raw deterministic provenance from the trace.

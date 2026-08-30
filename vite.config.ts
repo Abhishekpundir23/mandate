@@ -3,6 +3,21 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    assetsInlineLimit: 0,
+    modulePreload: { polyfill: false },
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/node_modules/react/')
+            || id.includes('/node_modules/react-dom/')
+            || id.includes('/node_modules/scheduler/')) return 'vendor-react';
+          if (id.includes('/node_modules/zod/')) return 'vendor-zod';
+          return undefined;
+        },
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     exclude: [...configDefaults.exclude, 'e2e/**'],

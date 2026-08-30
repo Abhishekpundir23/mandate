@@ -48,8 +48,8 @@ export function useReplay(frames: readonly ReplayFrame[]): ReplayController {
   }
   const finalStep = frames.length - 1;
   const [state, dispatch] = useReducer(replayReducer, {
-    step: finalStep,
-    status: 'complete',
+    step: 0,
+    status: 'idle',
   });
   const previousFrames = useRef(frames);
 

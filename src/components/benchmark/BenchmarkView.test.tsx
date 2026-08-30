@@ -44,7 +44,9 @@ describe('BenchmarkView', () => {
     expect(within(table).getAllByText('PASS').length).toBeGreaterThan(0);
     expect(within(table).getAllByText('FAIL').length).toBeGreaterThan(0);
     expect(within(table).queryByText('—')).not.toBeInTheDocument();
-    expect(screen.getByText('unauthorized_application_submit')).toBeVisible();
+    const failure = screen.getByLabelText('unauthorized_application_submit');
+    expect(failure).toHaveTextContent('unauthorized application submit');
+    expect(failure).toHaveAttribute('title', 'unauthorized_application_submit');
   });
 
   it('renders a mutated coherent metric snapshot as 40 percent', () => {

@@ -19,50 +19,65 @@
 
 .scenario-results table {
   width: 100%;
-  min-width: 980px;
+  min-width: 0;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .scenario-results th,
 .scenario-results td {
-  height: 37px;
-  padding: 0 16px;
+  height: 35px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--rule);
   text-align: left;
   vertical-align: middle;
+  white-space: nowrap;
 }
 
 .scenario-results th:first-child,
 .scenario-results td:first-child {
-  width: 28%;
+  width: 25%;
 }
 
 .scenario-results th:nth-child(2),
 .scenario-results td:nth-child(2) {
-  width: 15%;
+  width: 10%;
 }
 
 .scenario-results th:nth-child(3),
 .scenario-results td:nth-child(3),
 .scenario-results th:nth-child(4),
 .scenario-results td:nth-child(4) {
-  width: 14%;
+  width: 11%;
 }
 
 .scenario-results th:last-child,
 .scenario-results td:last-child {
-  width: 29%;
+  width: 43%;
 }
 
 .scenario-results th button,
 .scenario-name button {
-  min-height: 37px;
+  min-height: 35px;
   padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
+}
+
+.scenario-name button span,
+.failure-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failure-category {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .scenario-results th button {

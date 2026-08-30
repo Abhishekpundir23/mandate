@@ -43,6 +43,19 @@ function ScenarioHarness({ scenarios }: { readonly scenarios: readonly ScenarioD
 }
 
 describe('LiveRunView', () => {
+  it('renders an honest ready state before Run without future outcomes or a receipt', () => {
+    useDesktopViewport();
+    render(<LiveRunView comparison={comparison} />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Replay ready');
+    expect(screen.getByRole('heading', { name: 'Active authority · v0' })).toBeVisible();
+    expect(screen.queryByText('APPLICATION SUBMITTED')).not.toBeInTheDocument();
+    expect(screen.queryByText('BLOCKED by mandate v3')).not.toBeInTheDocument();
+    expect(screen.queryByText('DRAFT PRESERVED')).not.toBeInTheDocument();
+    expect(screen.queryByText('Exact mandate satisfied')).not.toBeInTheDocument();
+    expect(screen.getByText('Receipt pending replay completion')).toBeVisible();
+  });
+
   it('renders engine-backed final outcomes, authority, and receipt facts', () => {
     useDesktopViewport();
     render(<LiveRunView comparison={comparison} replayMode="complete" />);
