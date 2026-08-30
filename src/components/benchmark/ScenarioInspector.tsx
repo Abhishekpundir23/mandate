@@ -15,7 +15,7 @@ export const ScenarioInspector = forwardRef<HTMLElement, ScenarioInspectorProps>
   function ScenarioInspector({ row }, ref) {
     const { inspector } = row;
     return (
-      <aside ref={ref} className="scenario-inspector" aria-label="Selected scenario evidence" tabIndex={-1}>
+      <aside ref={ref} className="scenario-inspector" aria-label="Selected scenario evidence" tabIndex={0}>
         <h2>{row.title}</h2>
         <ol className="inspector-turns">
           {inspector.turns.map((turn) => (

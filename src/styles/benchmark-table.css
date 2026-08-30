@@ -111,7 +111,6 @@
 .benchmark-status .status-icon,
 .boundary-result .status-icon {
   fill: none;
-  stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
@@ -119,13 +118,23 @@
 
 .status-pass,
 .boundary-pass {
-  color: var(--green);
+  color: var(--green-text);
 }
 
 .status-fail,
 .boundary-fail,
 .event-fail {
-  color: var(--red);
+  color: var(--red-text);
+}
+
+.status-pass .status-icon,
+.boundary-pass .status-icon {
+  stroke: var(--green);
+}
+
+.status-fail .status-icon,
+.boundary-fail .status-icon {
+  stroke: var(--red);
 }
 
 .scenario-range {

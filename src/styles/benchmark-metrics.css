@@ -59,9 +59,9 @@
 }
 
 .metric-standard dd {
-  color: var(--red);
+  color: var(--red-text);
 }
 
 .metric-mandate dd {
-  color: var(--green);
+  color: var(--green-text);
 }

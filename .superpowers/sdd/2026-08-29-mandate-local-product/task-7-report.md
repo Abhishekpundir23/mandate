@@ -61,6 +61,27 @@ Command:
 Observed expected failure: the safe Standard lane had the old lane-owned red class
 instead of the score-owned `event-pass` class.
 
+### Accessibility review RED — fix round 1
+
+The independent post-Task-7 review corrected the earlier visual-only conclusion
+that no fixable material mismatch remained. Axe found 39 serious desktop and 11
+serious compact color-contrast nodes: the locked accent `#f21d10` and `#438a05`
+were also being used for 16px status, trace, evidence, and boundary text.
+
+Regression added first:
+
+`npm run test:e2e -- --reporter=line`
+
+The new real-browser axe gate failed in both the 1586×992 and 390×844 projects
+with `color-contrast` serious violations on the selected cobalt row and canvas.
+After the color-only repair, the same gate exposed one additional serious desktop
+`scrollable-region-focusable` violation for the taller non-flagship inspector.
+This failed before the inspector became keyboard-focusable.
+
+The first post-addition `npm run verify` also failed because Vitest collected the
+Playwright spec. The test boundary was repaired by preserving Vitest's defaults
+and excluding `e2e/**`; the fresh complete gate below then passed.
+
 ## GREEN evidence
 
 ### Focused Task 7 + Live regression
@@ -96,11 +117,34 @@ Result:
 - Vite production build: passed; 160 modules transformed.
 - `git diff --check`: passed before staging.
 
+### Accessibility GREEN — fix round 1
+
+`npm run test:e2e -- --reporter=line`
+
+Result: 2 projects passed; zero critical and zero serious axe violations across
+the initial flagship and selected non-flagship state at both required viewports.
+The inspector remains selection-focus-neutral but is now a keyboard-focusable
+scroll region.
+
+Fresh post-fix verification remained green: focused Task 7 + Live 4 files / 29
+tests; benchmark/runtime/evidence 6 files / 62 tests; full `npm run verify` 24
+files / 195 tests plus typecheck, zero-warning lint, and production build.
+
+The locked accent tokens remain unchanged for SVG strokes and non-text surfaces.
+Semantic text uses darker chromatic tokens with these WCAG contrast ratios:
+
+| Text token | Color | On `#fffefd` | On selected `#f1f5ff` |
+|---|---:|---:|---:|
+| red text | `#c51d13` | 5.857:1 | 5.407:1 |
+| green text | `#357400` | 5.712:1 | 5.273:1 |
+
 ## Browser fidelity evidence
 
-Method: Codex in-app Browser against local Vite at `127.0.0.1`, followed by an
-exact-size screenshot saved temporarily for the required original-detail
-`view_image` comparison. The temporary QA screenshot was removed after review.
+Initial Task 7 method: Codex in-app Browser against local Vite at `127.0.0.1`,
+followed by an exact-size screenshot saved temporarily for original-detail
+comparison. During fix round 1 the Browser runtime reported no available browser,
+so the explicitly permitted local Playwright Chromium fallback supplied the fresh
+rendered QA and screenshots.
 
 Viewports checked:
 
@@ -118,6 +162,13 @@ Interaction evidence:
 - Mobile Live run / Benchmark navigation remained visible and operable.
 - Direct mobile row activation smoothly settled the selected inspector at the
   viewport start; prop/state changes do not trigger that scroll path.
+- Fix-round computed styles confirmed accessible text `rgb(197, 29, 19)` and
+  `rgb(53, 116, 0)` while status/boundary SVG strokes retained locked accent
+  `rgb(242, 29, 16)` and `rgb(67, 138, 5)`.
+- Fix-round desktop geometry remained exactly 80px / 144px / 706px / 62px with
+  a 1110.1875px / 475.796875px main split; minimum Benchmark text remained 16px.
+- Live retained its 88px desktop header, both viewports had no console warnings
+  or errors, and non-flagship selection preserved button focus and provenance.
 
 Fidelity ledger:
 
@@ -148,5 +199,6 @@ Intentional truth-first differences from the illustrative concept:
 - Runtime checksums replace the concept's numeric seed literal.
 
 The accepted concept and final native-size render were inspected together at
-original detail. No fixable material visual mismatch remains within the locked
-runtime-truth and 44px-accessibility constraints.
+original detail. After the review-driven axe correction above, no known fixable
+material visual or serious/critical accessibility mismatch remains within the
+locked runtime-truth and 44px-accessibility constraints.

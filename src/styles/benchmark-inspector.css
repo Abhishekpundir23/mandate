@@ -82,7 +82,7 @@
 }
 
 .event-pass {
-  color: var(--green);
+  color: var(--green-text);
 }
 
 .terminal-evidence {
@@ -121,11 +121,11 @@
 }
 
 .fact-true {
-  color: var(--green);
+  color: var(--green-text);
 }
 
 .fact-false {
-  color: var(--red);
+  color: var(--red-text);
 }
 
 .boundary-result {
