@@ -4,6 +4,8 @@ Initial review fix: `e51e377d958b2fa0455237a73f5885afe3b1ba6e`.
 
 Review-fix round 2 implementation: `670e5de8087a13446eca8c77bad32fe0be540bd8`.
 
+Review-fix round 3 final implementation: `d8138388a7730cc7cb50eb792b587b187ec2c486` (mechanism commits `f820554adf65287e4ab9573d41eac6f41b2e7759` and `b28ef0d68ffd8b939c1174c0cf506bbab9b75713`).
+
 Replace the patch-by-patch scanner with one closed-world capability/effect gate. Keep CSP, built-asset scanning, and browser interception as independent defenses.
 
 ## Root cause
@@ -39,6 +41,14 @@ The analyzer supports a bounded production subset. Unsupported or unresolved cap
 - Optionality/absence is independent of origin. Branch narrowing may prove a collection result present without treating an absent or Bottom alternative as owned; Map/Set loop-element provenance and local class `this` survive interprocedural summaries.
 - Deferred boundaries retain the resolved callable origin, exact registered arguments, bound `this`, captures, site, and kind. Timers, listeners, JSX direct/member/spread/ref handlers, typed callbacks, React effects and cleanups, and nested wrappers are replayed to a monotone external fixed point whenever reachable state widens.
 - Facade export traversal follows local imports/re-exports, aliases, bound functions, returns, nested shapes, classes, and closures rather than trusting a physical filename filter.
+
+## Review-fix round 3 addendum
+
+- Object shape remains a may-domain, but object spread establishes a definitely-own key only when every source alternative proves that key present and enumerable. Possible non-enumerability survives descriptor mutation, aliases, meta-calls, helpers, joins, snapshots, and replay.
+- Positional sequences carry exact length and index presence independently of enumerable object shape. Sparse holes become explicit `undefined` values in place; unresolved length/index alternatives fail closed rather than compacting and shifting `call`/`apply`/spread arguments.
+- `Object.assign` source facts and data-descriptor/data-descriptor-map facts are canonical mutation records. The scanner consumes those normalized records for direct, alias, call, apply, bind, and analyzed-helper routes instead of rereading syntax-specific argument positions.
+- Descriptor enumerability is independent of presence and writability. `enumerable:false` or an unresolved enumerable flag taints spread must-presence; omitted enumerability preserves an existing key's state and defaults a newly created key to non-enumerable.
+- Ordered descriptor replay refreshes only declarations after the operation. Later dependent spreads observe the mutation, while receiver facts established by a first-statement/nonthrowing definition are not erased by speculative whole-function rebinding.
 
 ## Uniform write IR
 
@@ -146,7 +156,7 @@ The facade receives only mount, media read/subscription, timer, focus, and scrol
 - `security-source-policy.mjs` retains declarative exact module budgets plus standard/framework/browser-facade contracts; these explicit boundaries are not source-location allowlisting escape hatches.
 - `security-source-inventory.mjs` and the Vite receipt plugin independently bind the HTML entry graph, TypeScript analysis receipts, Rollup module graph, and exact chunks.
 - `security-gate.test.ts` freezes the hostile/safe metamorphic corpus plus public build-freshness and inventory behavior.
-- `src/platform/browser-capabilities.tsx` remains the only raw `window`/`document` production boundary; no production behavior or rendering changed in round 2.
+- `src/platform/browser-capabilities.tsx` remains the only raw `window`/`document` production boundary; no production behavior or rendering changed in Task 9's analyzer rounds.
 
 Migration result: the 51 Task 8 production TS/TSX modules plus the browser facade make 52 analyzed modules. The HTML entry graph proves 49 runtime-reachable source modules; Vite/Rollup independently receipts the same 49 and exactly three JavaScript chunks. Raw `window`/`document` production access is confined to the facade. The final report has zero forbidden or unknown effects.
 
@@ -165,10 +175,12 @@ Migration result: the 51 Task 8 production TS/TSX modules plus the browser facad
 
 Round 2 extends those criteria with effective-receiver parity for every `Reflect.set` call form; pre-operation temporal dispatch proof for all ordinary-`[[Set]]` channels; complete finite-key and symbol domains; all-path descriptor/absence facts; semantic re-evaluation of registered callbacks after captures or arguments widen; and paired safe controls for owned collections, ordinary objects, and hard-private instance state.
 
+Round 3 extends them with all-alternatives spread presence/enumerability, non-compacting positional sequences, canonical descriptor/Object.assign records across meta/helper routes, and ordered post-descriptor dependency refresh. Its 45 checked-in cases are 23 hostile and 22 paired safe controls.
+
 The key policy is that a property name such as `innerHTML` on local data is not itself authority. The write is dangerous because its receiver is DOM/ambient or unproven. Make that distinction once, centrally.
 
 ## Accepted bounded guarantee and trusted computing base
 
-All ten acceptance criteria remain green at `670e5de`: the unchanged independent matrix is 47 hostile rejected and 20 safe accepted; the expanded checked-in structural suite is 463/463; and the production effect report has 52 analysis, 49 runtime, and 49 bundle receipts with zero network, storage, navigation, form, unsafe-DOM, dynamic-code, or unknown effects.
+All ten acceptance criteria remain green at `d8138388a7730cc7cb50eb792b587b187ec2c486`: the unchanged independent matrix is 47 hostile rejected and 20 safe accepted; the expanded checked-in structural suite is 508/508; the final enumerability and ordered-convergence rechecks are 52/52 and 92/92; and the production effect report has 52 analysis, 49 runtime, and 49 bundle receipts with zero network, storage, navigation, form, unsafe-DOM, dynamic-code, or unknown effects.
 
 The guarantee covers the current HTML-reachable graph and analyzer-supported strict TS/TSX subset, not arbitrary JavaScript. The trusted computing base is TypeScript's parser/checker, the inventory/normalizer/origin/effect/descriptor/deferred implementation and explicit summaries/budgets, Node filesystem/path canonicalization, the HTML graph parser, and Vite/Rollup's module/output graph. Third-party implementation semantics and browser correctness are outside the static proof; exact built receipts, CSP, asset scanning, and desktop/mobile runtime interception independently bound that residual risk. No root-complete or general-program proof is claimed.
