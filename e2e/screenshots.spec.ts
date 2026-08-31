@@ -1,6 +1,8 @@
+import { resolve } from 'node:path';
+
 import { expect, test } from '@playwright/test';
 
-const outputRoot = '/Users/abhi/Documents/Codex/2026-08-29/hey/outputs';
+const outputRoot = resolve(process.env.MANDATE_SCREENSHOT_OUTPUT ?? 'test-results/screenshots');
 
 test('captures the three exact non-stitched judge viewports', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name.includes('mobile'), 'Capture once from the desktop project');

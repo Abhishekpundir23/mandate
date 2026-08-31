@@ -13,7 +13,7 @@ This is the primary script to read while recording. Text after **SAY** is spoken
 1. Open Terminal and run:
 
    ```bash
-   cd /Users/abhi/Documents/Codex/2026-08-29/hey/work/mandate
+   cd /path/to/mandate
    npm run preview
    ```
 

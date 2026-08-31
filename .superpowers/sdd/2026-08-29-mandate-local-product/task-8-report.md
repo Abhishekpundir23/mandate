@@ -135,9 +135,9 @@ Round-5 E2E recapture remained pixel-identical because the fixes are source-poli
 
 | Artifact | Dimensions | Geometry proof |
 | --- | ---: | --- |
-| `/Users/abhi/Documents/Codex/2026-08-29/hey/outputs/mandate-live-desktop-1586x992.png` | 1586×992 | Three-rail Live composition; semantic dark status text; final causal outcomes/receipt |
-| `/Users/abhi/Documents/Codex/2026-08-29/hey/outputs/mandate-live-mobile-853x1844.png` | 853×1844 | Header 853×179; document 853×1844; footer y=1764–1844; zero horizontal/vertical overflow beyond viewport |
-| `/Users/abhi/Documents/Codex/2026-08-29/hey/outputs/mandate-benchmark-desktop-1586x992.png` | 1586×992 | Table scrollport y=286–882; all 15 rows fully visible; footer y=930–992 |
+| `outputs/mandate-live-desktop-1586x992.png` | 1586×992 | Three-rail Live composition; semantic dark status text; final causal outcomes/receipt |
+| `outputs/mandate-live-mobile-853x1844.png` | 853×1844 | Header 853×179; document 853×1844; footer y=1764–1844; zero horizontal/vertical overflow beyond viewport |
+| `outputs/mandate-benchmark-desktop-1586x992.png` | 1586×992 | Table scrollport y=286–882; all 15 rows fully visible; footer y=930–992 |
 
 The fidelity ledger records all 15 checkpoints and truth-first deviations. In particular, the concept's fabricated `REVOKED — Publish or upload` row is absent because canonical v3 compiles no upload instruction. No fabricated timestamps, friendly evidence aliases, provenance, or checksums were introduced.
 
