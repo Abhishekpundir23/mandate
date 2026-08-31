@@ -83,4 +83,14 @@ describe('judge-facing benchmark documentation', () => {
     expect(architecture).toContain('runtime appends each validated canonical intent-diff annotation');
     expect(architecture).toContain('supported-language compiler is a separate deterministic demonstration');
   });
+
+  it('describes the accessible benchmark scroll geometry without claiming all rows are initially visible', () => {
+    const fidelityLedger = readFileSync('docs/fidelity-ledger.md', 'utf8');
+
+    expect(fidelityLedger).toContain('All 15 rows are reachable through deliberate vertical scrolling');
+    expect(fidelityLedger).toContain('the table heading remains sticky');
+    expect(fidelityLedger).toContain('full last-row visibility after scrolling');
+    expect(fidelityLedger).not.toContain('All 15 compact rows');
+    expect(fidelityLedger).not.toContain('gates full row intersection');
+  });
 });
