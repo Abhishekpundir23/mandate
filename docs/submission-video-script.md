@@ -1,7 +1,9 @@
 # MANDATE — Primary Submission Video Script
 
-**Target runtime:** 4 minutes 25 seconds  
-**Hard limit:** 5 minutes  
+**Target runtime:** 4 minutes 44 seconds, including the final hold
+
+**Hard limit:** 5 minutes
+
 **Recommended recording:** Desktop, 1586 × 992, browser zoom 100%
 
 This is the primary script to read while recording. Text after **SAY** is spoken. Everything in square brackets is a stage direction and must not be read aloud.
@@ -24,23 +26,23 @@ This is the primary script to read while recording. Text after **SAY** is spoken
 
 ---
 
-## 0:00–0:20 — Problem and hook
+## 0:00–0:22 — Problem and hook
 
 **[SCREEN]** Leave the untouched **Live run** screen visible. Move the cursor slowly over the three areas: Mandate history, Live comparison, and Active authority.
 
 **SAY:**
 
-> The dangerous failure in an AI agent is not merely a bad answer. It is taking an irreversible action after the user changes the boundary. A user may first ask an agent to prepare something, then say, “Do not submit.” MANDATE makes that latest authority executable.
+> For people delegating consequential work to tool-using agents—applications, releases, email, or purchases—the dangerous failure is not merely a bad answer. It is an irreversible action after the user changes the boundary. A user can say, “Do not submit,” but the plan may continue. MANDATE makes that latest authority executable.
 
-## 0:20–0:40 — Baseline and solution
+## 0:22–0:44 — Baseline and solution
 
 **[POINT]** Point to **Standard agent**, then **Mandate agent**.
 
 **SAY:**
 
-> This demo compares an ungated fixture control, labelled Standard, with MANDATE. Both receive the same ordered turns and frozen proposal stream; only the authority boundary differs. MANDATE versions each change, checks every proposed effect against the current version, and requires evidence before completion.
+> This demo compares an ungated fixture control, labelled Standard, with MANDATE. Both receive the same ordered turns and frozen proposal program. Standard validates proposals but bypasses authority. MANDATE gates them against the latest contract and, after a rejection, runs only configured safe recovery. It also requires evidence before completion.
 
-## 0:40–1:10 — Run one realistic execution
+## 0:44–1:15 — Run one realistic execution
 
 **[CLICK]** Click **Run comparison** exactly once.
 
@@ -54,9 +56,9 @@ This is the primary script to read while recording. Text after **SAY** is spoken
 
 **SAY:**
 
-> The latest message becomes an explicit version-three prohibition. Earlier permission cannot silently survive it.
+> The original task never granted submit authority; version three makes the denial explicit. Preparing a draft cannot be broadened into submitting it.
 
-## 1:10–1:40 — Explain the live result
+## 1:15–1:45 — Explain the live result
 
 **[POINT]** Point to the red Standard result: **APPLICATION SUBMITTED — Unauthorized effect executed**.
 
@@ -70,7 +72,7 @@ This is the primary script to read while recording. Text after **SAY** is spoken
 
 > MANDATE fingerprints the identical action and checks it at execution time. Version three blocks it before the capability. The runner then preserves the draft and safely inspects the next step. It is the same plan with different authority enforcement.
 
-## 1:40–2:02 — Prove the outcome with evidence
+## 1:45–2:08 — Prove the outcome with evidence
 
 **[POINT]** Point to **Active authority · v3**. Move down the rows: **MUST Save a draft**, **MAY Inspect next step**, **MUST NOT Submit application**, and **EVIDENCE Draft preservation**.
 
@@ -78,9 +80,9 @@ This is the primary script to read while recording. Text after **SAY** is spoken
 
 **SAY:**
 
-> This is not refusal prose. The active contract is inspectable, and the receipt comes from sandbox observations: draft saved is true, unauthorized effects are zero, and the next-step state was observed. Only then does it report, “Exact mandate satisfied.”
+> This is not refusal prose. The receipt reconciles the active contract, valid sandbox observations, terminal world, and required evidence: draft saved is true, unauthorized effects are zero, and the next-step state was observed. Only then does it report, “Exact mandate satisfied.”
 
-## 2:02–2:32 — Final baseline-versus-solution comparison
+## 2:08–2:38 — Final baseline-versus-solution comparison
 
 **[CLICK]** Click **Benchmark** in the top navigation.
 
@@ -90,7 +92,7 @@ This is the primary script to read while recording. Text after **SAY** is spoken
 
 > One story could be cherry-picked, so the final comparison uses fifteen deterministic scenarios across multiple domains. In this benchmark, the control succeeds exactly five out of fifteen times, shown as thirty-three percent. MANDATE succeeds fifteen out of fifteen. Unauthorized effects fall from eight to zero, and false completion claims fall from three to zero.
 
-## 2:32–3:02 — Inspect another domain and recompute
+## 2:38–3:08 — Inspect another domain and recompute
 
 **[CLICK]** In the scenario table, click the second row: **Preview is not deploy**.
 
@@ -104,29 +106,31 @@ This is the primary script to read while recording. Text after **SAY** is spoken
 
 **[CLICK]** Click **Run benchmark**.
 
+**[WAIT]** Pause for one second so recomputation finishes.
+
 **[POINT]** Point to the reproducibility checksums in the footer.
 
 **SAY:**
 
 > Recomputing the unchanged catalog reproduces the seed, catalog, proposal, and paired-trace checksums. These metrics come from execution traces, not hard-coded interface values.
 
-## 3:02–3:30 — Brief improvement changelog
+## 3:08–3:50 — Brief improvement changelog
 
 **[SCREEN]** Keep the Benchmark screen visible. Move the cursor from the scenario turns to the violation trace, terminal evidence, and checksum footer as you name the layers.
 
 **SAY:**
 
-> The improvement path had four steps. First came append-only, source-linked authority versions. Second came normalized action fingerprints, a fail-closed gate, and action-bound single-use confirmation. Third came the immutable sandbox and evidence-backed receipts. Finally, we added an independent fifteen-scenario evaluator, reproducibility checksums, accessibility coverage, and a closed-world browser security gate.
+> The changelog begins with the ungated baseline: five exact successes, eight unauthorized effects, and three false claims. We retained source-linked authority versions so every message change stayed reviewable. We retained action fingerprints and the fail-closed gate because enforcement had to occur before effects. We retained the sandbox and receipts because prose could not prove state. Finally, we retained an evaluator that reconstructs traces independently of emitted decisions, receipts, and UI labels, while sharing canonical authority semantics. Together, these changes reach fifteen exact successes, zero unauthorized effects, and zero false claims in this benchmark.
 
-## 3:30–3:48 — Most impactful change
+## 3:50–4:08 — Most impactful change
 
 **[POINT]** Point again to the paired **EXECUTED** and **BLOCKED** events.
 
 **SAY:**
 
-> The most impactful change was moving the authority check to the exact action boundary. A later receipt cannot undo an unsafe effect. Gating the action fingerprint against the latest contract before execution makes stale permission non-executable.
+> The most impactful change was moving the authority check to the exact action boundary. A later receipt cannot undo an unsafe effect. Gating the action fingerprint against the latest contract means inferred or revoked authority cannot cross that boundary.
 
-## 3:48–4:05 — Removed experiment and lesson
+## 4:08–4:25 — Removed experiment and lesson
 
 **[SCREEN]** Keep the truthful runtime evidence visible; no additional click is required.
 
@@ -134,7 +138,7 @@ This is the primary script to read while recording. Text after **SAY** is spoken
 
 > We removed a concept experiment: a persuasive “revoked publish or upload” row and decorative timestamps that were absent from the canonical trace. The lesson was simple: safety evidence must come from runtime truth, not presentation.
 
-## 4:05–4:25 — Close
+## 4:25–4:42 — Close
 
 **[POINT]** Point to the footer: **Fixture mode · deterministic sandbox · No real external action**.
 
@@ -148,7 +152,7 @@ This is the primary script to read while recording. Text after **SAY** is spoken
 
 ## Emergency recovery cues
 
-- **If you click Run comparison twice:** wait for the second replay to finish and restart the sentence at “Here, version one says…”
+- **If you click Run comparison twice:** wait for the second replay to finish and restart the sentence at “Version one says…”
 - **If v3 collapses:** click the v3 card once to reopen it, then continue.
 - **If Standard and Mandate become tabs:** stop recording and widen the browser to at least 1200px; 1586 × 992 is recommended.
 - **If lower receipt evidence is cut off:** scroll the page slightly downward after explaining the two lanes.
