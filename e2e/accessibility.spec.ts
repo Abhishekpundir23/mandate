@@ -83,7 +83,7 @@ test('keyboard-only journey reaches navigation, selector, Run, disclosure, tabs,
   await tabTo(page, runBenchmark);
   await expect(runBenchmark).toBeFocused();
   await page.keyboard.press(mobile ? 'Space' : 'Enter');
-  await expect(page.getByRole('status')).toContainText('Benchmark recomputed');
+  await expect(page.getByRole('status')).toContainText('Benchmark run 1 complete');
 
   for (const name of ['Scenario', 'Domain', 'Standard', 'Mandate', 'Failure caught']) {
     const sort = page.getByRole('button', { name: `Sort by ${name}` });

@@ -27,15 +27,20 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /run comparison/i })).toBeEnabled();
   });
 
-  it('reruns the complete benchmark snapshot and preserves deterministic checksum truth', async () => {
+  it('reports every deterministic benchmark rerun as a distinct completion', async () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole('button', { name: 'Benchmark' }));
     const before = screen.getByText(/Reproducible.*traces/).textContent;
+    const status = screen.getByRole('status');
+
+    expect(status).toHaveTextContent('Benchmark ready');
 
     await user.click(screen.getByRole('button', { name: 'Run benchmark' }));
 
-    expect(screen.getByRole('status')).toHaveTextContent('Benchmark recomputed');
+    expect(status).toHaveTextContent('Benchmark run 1 complete');
+    await user.click(screen.getByRole('button', { name: 'Run benchmark' }));
+    expect(status).toHaveTextContent('Benchmark run 2 complete');
     expect(screen.getByText(/Reproducible.*traces/)).toHaveTextContent(before!);
     expect(document.body).not.toHaveTextContent(/seed\s+42/i);
   });

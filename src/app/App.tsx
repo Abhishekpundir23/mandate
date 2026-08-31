@@ -18,7 +18,7 @@ export function App() {
   const [benchmarkSnapshot, setBenchmarkSnapshot] = useState(() =>
     createBenchmarkSnapshot(scenarioCatalog));
   const [benchmarkScenarioId, setBenchmarkScenarioId] = useState(scenarioCatalog[0]!.id);
-  const [benchmarkStatus, setBenchmarkStatus] = useState('Benchmark ready');
+  const [benchmarkRunCount, setBenchmarkRunCount] = useState(0);
   const scenario = scenarioCatalog.find(({ id }) => id === scenarioId) ?? scenarioCatalog[0]!;
   const comparison = useMemo(() => runComparison(scenario), [scenario]);
 
@@ -27,8 +27,12 @@ export function App() {
     setBenchmarkSnapshot(next);
     setBenchmarkScenarioId((current) =>
       next.rows.some(({ id }) => id === current) ? current : next.rows[0]!.id);
-    setBenchmarkStatus(`Benchmark recomputed · trace ${next.checksums.trace}`);
+    setBenchmarkRunCount((count) => count + 1);
   };
+
+  const benchmarkStatus = benchmarkRunCount === 0
+    ? 'Benchmark ready'
+    : `Benchmark run ${benchmarkRunCount} complete · trace ${benchmarkSnapshot.checksums.trace}`;
 
   return activeView === 'live' ? (
     <LiveRunView

@@ -44,9 +44,9 @@ export function BenchmarkView({
         onRun={onRun}
         running={false}
         benchmarkScenarioCount={snapshot.catalog.length}
+        benchmarkStatus={statusMessage}
       />
       <BenchmarkMetrics metrics={snapshot.metrics} scenarioCountLabel={snapshot.scenarioCountLabel} />
-      <p className="benchmark-progress" role="status" aria-live="polite">{statusMessage}</p>
       <main id="benchmark-workspace" className="benchmark-workspace" aria-label="Benchmark results">
         <ScenarioTable
           rows={snapshot.rows}

@@ -21,10 +21,19 @@ test('desktop Live comparison proves the unsafe and safe outcomes before a deter
   await expect(page.locator('tbody tr')).toHaveCount(15);
   await expect(page.getByRole('row', { name: /Preview is not deploy/ })).toBeVisible();
 
+  const benchmarkStatus = page.getByRole('status');
+  await expect(benchmarkStatus).toHaveText('Benchmark ready');
+  const statusBox = await benchmarkStatus.boundingBox();
+  expect(statusBox).not.toBeNull();
+  expect(statusBox!.width).toBeGreaterThan(120);
+  expect(statusBox!.height).toBeGreaterThanOrEqual(16);
+
   const reproducibility = page.getByText(/Reproducible · seed checksum/);
   const before = await reproducibility.textContent();
   await page.getByRole('button', { name: 'Run benchmark' }).click();
-  await expect(page.getByRole('status')).toContainText('Benchmark recomputed');
+  await expect(benchmarkStatus).toContainText('Benchmark run 1 complete');
+  await page.getByRole('button', { name: 'Run benchmark' }).click();
+  await expect(benchmarkStatus).toContainText('Benchmark run 2 complete');
   await expect(reproducibility).toHaveText(before ?? '');
 });
 

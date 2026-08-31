@@ -106,9 +106,9 @@ This is the primary script to read while recording. Text after **SAY** is spoken
 
 **[CLICK]** Click **Run benchmark**.
 
-**[WAIT]** Pause for one second so recomputation finishes.
+**[WAIT]** Wait until the header visibly reads **Benchmark run 1 complete · trace 1c48b617**.
 
-**[POINT]** Point to the reproducibility checksums in the footer.
+**[POINT]** Point briefly to that completion status, then to the reproducibility checksums in the footer.
 
 **SAY:**
 

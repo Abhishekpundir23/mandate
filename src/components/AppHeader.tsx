@@ -9,6 +9,7 @@ interface AppHeaderProps {
   readonly onRun: () => void;
   readonly running: boolean;
   readonly benchmarkScenarioCount?: number;
+  readonly benchmarkStatus?: string;
 }
 
 export function AppHeader({
@@ -20,6 +21,7 @@ export function AppHeader({
   onRun,
   running,
   benchmarkScenarioCount = scenarios.length,
+  benchmarkStatus = 'Benchmark ready',
 }: AppHeaderProps) {
   const benchmark = activeView === 'benchmark';
   return (
@@ -40,7 +42,12 @@ export function AppHeader({
         </div>
       </nav>
       {benchmark ? (
-        <p className="scenario-picker benchmark-count">{benchmarkScenarioCount} deterministic scenarios</p>
+        <div className="scenario-picker benchmark-count">
+          <span>{benchmarkScenarioCount} deterministic scenarios</span>
+          <span className="benchmark-progress" role="status" aria-live="polite">
+            {benchmarkStatus}
+          </span>
+        </div>
       ) : (
         <label className="scenario-picker">
           <span className="visually-hidden">Scenario</span>

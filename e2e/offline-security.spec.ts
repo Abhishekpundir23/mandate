@@ -144,7 +144,7 @@ test('the complete product tour stays inside the closed local capability envelop
     await expect(page.getByRole('complementary', { name: 'Selected scenario evidence' })).toBeVisible();
   }
   await page.getByRole('button', { name: 'Run benchmark' }).click();
-  await expect(page.getByRole('status')).toContainText('Benchmark recomputed');
+  await expect(page.getByRole('status')).toContainText('Benchmark run 1 complete');
 
   const violations = await page.evaluate(() =>
     (globalThis as typeof globalThis & { __mandateSecurityViolations: string[] }).__mandateSecurityViolations);

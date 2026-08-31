@@ -78,7 +78,9 @@
   min-height: 56px;
   margin: 0;
   padding: 0 16px;
-  place-items: center start;
+  align-content: center;
+  gap: 3px;
+  justify-items: start;
   border: 1px solid var(--frame);
   border-radius: 4px;
   font-size: 17px;
