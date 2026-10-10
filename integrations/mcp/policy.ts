@@ -51,13 +51,13 @@ function validateSelector(selector: ParsedSelector | undefined, repositories: Po
 
 export function validPath(path: string): boolean {
   return path.length > 0 && path.length <= 1024 && path === path.normalize('NFC')
-    && !/[\\\u0000-\u001f\u007f]/u.test(path)
+    && !/[\\\p{Cc}]/u.test(path)
     && path.split('/').every((part) => part.length > 0 && part !== '.' && part !== '..');
 }
 
 export function validRef(ref: string): boolean {
   return ref.startsWith('refs/heads/') && ref.length > 'refs/heads/'.length
-    && !/[\u0000-\u0020\u007f~^:?*\[\\]/u.test(ref)
+    && !/[\\\p{Cc} ~^:?*[]/u.test(ref)
     && !ref.includes('..') && !ref.includes('@{')
     && ref.split('/').every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.') && !part.endsWith('.lock'))
     && ref === ref.normalize('NFC');

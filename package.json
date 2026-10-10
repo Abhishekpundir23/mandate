@@ -16,11 +16,13 @@
     "test:security": "npm run build && npm run test:security:built",
     "test:security:built": "node scripts/security-gate.mjs",
     "verify": "npm run typecheck && npm run lint && npm test -- --run && npm run test:coverage && npm run build && npm run test:e2e:built && npm run test:security:built",
-    "test:mcp": "vitest run --config vitest.mcp.config.ts"
+    "test:mcp": "vitest run --config vitest.mcp.config.ts",
+    "build:mcp": "node scripts/build-mcp.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "5.3.0",
     "@fontsource/roboto-condensed": "5.3.0",
+    "@modelcontextprotocol/server": "2.3.1",
     "lucide-react": "1.37.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -29,6 +31,7 @@
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
     "@eslint/js": "10.0.1",
+    "@modelcontextprotocol/client": "2.3.1",
     "@playwright/test": "1.62.1",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",
@@ -38,6 +41,7 @@
     "@types/react-dom": "19.2.5",
     "@vitejs/plugin-react": "6.1.1",
     "@vitest/coverage-v8": "4.1.11",
+    "esbuild": "0.28.2",
     "eslint": "10.9.1",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.5",
