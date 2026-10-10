@@ -1,7 +1,7 @@
 # Local MCP authority adapter
 
 Date: 2026-10-10
-Status: proposed design for human review; adapter not implemented.
+Status: approved and implemented in this session. See the [adapter guide](../../mcp-adapter.md) for current commands and observed validation.
 
 ## Purpose and success
 
@@ -35,6 +35,8 @@ Use strict JSON with these top-level fields:
 - `diffs`: an ordered array of canonical `IntentDiff` records.
 
 Initialize with `createLedger([], "policy:root")`, whose empty contract is version 1. Apply each validated diff with `appendVersion`. The first diff therefore has `baseVersion: 1`. Source turn IDs must be unique and consistent with their source references. Clause IDs must be unique across the ledger, including generated replacement tombstones; reject duplicates before accepting the policy. Reject invalid clause kinds, selectors, confirmation shapes, unknown replacement/revocation targets, stale versions, and unknown fields. Check semantic invariants in addition to parsing JSON. An empty authority ledger is valid and grants nothing.
+
+Evidence references are checked against the resulting atomic version, allowing a rule to reference a grant introduced in the same diff. Replacement and revocation targets are checked against the preceding version.
 
 Only selectors for the three supported capabilities below, their effects, and their canonical resources are accepted. Selectors may omit fields to express broader authority deliberately, including an effect-wide denial. Unsupported or malformed selectors fail startup instead of silently becoming ineffective.
 

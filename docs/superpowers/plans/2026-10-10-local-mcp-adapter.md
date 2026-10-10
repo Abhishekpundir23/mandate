@@ -10,7 +10,7 @@
 
 **Spec:** [Approved design](../specs/2026-10-10-local-mcp-adapter-design.md).
 
-**Status:** Proposed execution plan; specification approved, plan execution not yet selected.
+**Status:** Implementation and fresh-review fix complete; paused at the user-requested GitHub checkpoint. Final full-suite qualification remains pending.
 
 ## Global Constraints
 
@@ -60,11 +60,11 @@
 - `loadPolicyFile(absolutePath: string): Promise<AuthoritySnapshot>`.
 - Test helper `makePolicy(overrides?): unknown` returns a schemaVersion-1 synthetic policy with one repository and ordered canonical diffs.
 
-- [ ] **Step 1:** Add failing tests named `loads ordered authority without mutation`, `rejects partial or malformed policy`, and `enforces UTF-8 byte and ledger limits`. Assert version 1 for an empty policy, correct version increments, stable digest under object-key reordering, changed digest under policy changes, frozen nested data, and rejection of stale bases, source mismatches, duplicate turns/clauses/generated tombstones, invalid targets/confirmation/selectors, extra fields, 101 diffs, 501 clauses, 256 KiB + 1 byte, and invalid UTF-8. File tests reject a relative or missing path.
-- [ ] **Step 2:** Run `npx vitest run --config vitest.mcp.config.ts integrations/mcp/policy.test.ts`; observe missing implementation failures.
-- [ ] **Step 3:** Implement the three interfaces. Use strict Zod objects throughout the adapter policy boundary; the existing fixture schemas strip unknown keys, so do not use them as a substitute for strict validation. Reuse domain types, canonicalization, createLedger, and appendVersion. Validate target kinds and source consistency before appending, including generated IDs. Use bounded file reads that stop after 256 KiB + 1 byte, fatal UTF-8 decoding, Node crypto SHA-256, and frozen output. Do not change fixture schema behavior.
-- [ ] **Step 4:** Add a strict Node-only tsconfig reference and independent Vitest config without React/jsdom setup. Add `test:mcp` and exclude `integrations/mcp/**` from the existing browser-oriented Vitest config to prevent duplicate/wrong-environment runs. Run the focused tests and `npm run typecheck`; expect zero failures.
-- [ ] **Step 5:** Verify commit identity, stage only this task's files, and commit `feat: validate local authority policy snapshots`; verify HEAD identity.
+- [x] **Step 1:** Add failing tests named `loads ordered authority without mutation`, `rejects partial or malformed policy`, and `enforces UTF-8 byte and ledger limits`. Assert version 1 for an empty policy, correct version increments, stable digest under object-key reordering, changed digest under policy changes, frozen nested data, and rejection of stale bases, source mismatches, duplicate turns/clauses/generated tombstones, invalid targets/confirmation/selectors, extra fields, 101 diffs, 501 clauses, 256 KiB + 1 byte, and invalid UTF-8. File tests reject a relative or missing path.
+- [x] **Step 2:** Run `npx vitest run --config vitest.mcp.config.ts integrations/mcp/policy.test.ts`; observe missing implementation failures.
+- [x] **Step 3:** Implement the three interfaces. Use strict Zod objects throughout the adapter policy boundary; the existing fixture schemas strip unknown keys, so do not use them as a substitute for strict validation. Reuse domain types, canonicalization, createLedger, and appendVersion. Validate target kinds and source consistency before appending, including generated IDs. Use bounded file reads that stop after 256 KiB + 1 byte, fatal UTF-8 decoding, Node crypto SHA-256, and frozen output. Do not change fixture schema behavior.
+- [x] **Step 4:** Add a strict Node-only tsconfig reference and independent Vitest config without React/jsdom setup. Add `test:mcp` and exclude `integrations/mcp/**` from the existing browser-oriented Vitest config to prevent duplicate/wrong-environment runs. Run the focused tests and `npm run typecheck`; expect zero failures.
+- [x] **Step 5:** Verify commit identity, stage only this task's files, and commit `feat: validate local authority policy snapshots`; verify HEAD identity.
 
 ## Task 2: Trusted action mapping and advisory decisions
 
@@ -80,12 +80,12 @@
 - `checkAction(snapshot: AuthoritySnapshot, input: unknown): ActionCheckResult`; throws typed validation/stale-snapshot errors without a decision.
 - `AuthorityResult` and `ActionCheckResult` are strict schema-backed output objects containing the common advisory fields and the specification's authority/proposal/decision fields.
 
-- [ ] **Step 1:** Write failing registry tests for each exact effect/resource and canonical args. Assert rejection of extra effect/resource/fingerprint/confirmation fields, unknown operations/IDs, invalid paths/refs/digests/OIDs, non-NFC paths, and a 16 KiB + 1-byte serialized action. A configured `constructor` repository ID works; an unconfigured one fails.
-- [ ] **Step 2:** Write failing service tests for ALLOW with a grant, BLOCK without a grant, denial-over-grant, revocation after grant, CONFIRM with confirmation authority, digest mismatch, and repeated/concurrent checks returning identical immutable decisions. Assert `executionPerformed === false` and unchanged ledger/empty confirmation state on every path.
-- [ ] **Step 3:** Run `npx vitest run --config vitest.mcp.config.ts integrations/mcp/actions.test.ts integrations/mcp/service.test.ts`; observe failures.
-- [ ] **Step 4:** Implement the interfaces using Map/Set or explicit own-property membership. Map the public operation `git.commit` to engine tool `git` and operation `commit`, similarly for the other two. Re-derive resource/effect inside the capability port. Use the engine's fingerprintAction and evaluateAction with an empty confirmation store. Build stable action IDs from canonical correlation data, never from caller authority. Project active clauses without reading repository data or returning the policy path.
-- [ ] **Step 5:** Run the focused tests, `npm run typecheck`, and `npm test -- --run src/domain src/mandate src/benchmark`; expect all pass and the existing benchmark headline/checksum unchanged.
-- [ ] **Step 6:** Verify identity, commit `feat: check declared coding actions against local authority`, and verify HEAD.
+- [x] **Step 1:** Write failing registry tests for each exact effect/resource and canonical args. Assert rejection of extra effect/resource/fingerprint/confirmation fields, unknown operations/IDs, invalid paths/refs/digests/OIDs, non-NFC paths, and a 16 KiB + 1-byte serialized action. A configured `constructor` repository ID works; an unconfigured one fails.
+- [x] **Step 2:** Write failing service tests for ALLOW with a grant, BLOCK without a grant, denial-over-grant, revocation after grant, CONFIRM with confirmation authority, digest mismatch, and repeated/concurrent checks returning identical immutable decisions. Assert `executionPerformed === false` and unchanged ledger/empty confirmation state on every path.
+- [x] **Step 3:** Run `npx vitest run --config vitest.mcp.config.ts integrations/mcp/actions.test.ts integrations/mcp/service.test.ts`; observe failures.
+- [x] **Step 4:** Implement the interfaces using Map/Set or explicit own-property membership. Map the public operation `git.commit` to engine tool `git` and operation `commit`, similarly for the other two. Re-derive resource/effect inside the capability port. Use the engine's fingerprintAction and evaluateAction with an empty confirmation store. Build stable action IDs from canonical correlation data, never from caller authority. Project active clauses without reading repository data or returning the policy path.
+- [x] **Step 5:** Run the focused tests, `npm run typecheck`, and `npm test -- --run src/domain src/mandate src/benchmark`; expect all pass and the existing benchmark headline/checksum unchanged.
+- [x] **Step 6:** Verify identity, commit `feat: check declared coding actions against local authority`, and verify HEAD.
 
 ## Task 3: Working stdio MCP server and bounded process boundary
 
@@ -98,14 +98,14 @@
 - `runCli(argv: readonly string[]): Promise<void>` parses only `--policy <absolutePath>`, loads once, then connects server/transport.
 - Build command `npm run build:mcp` emits `dist-mcp/server.mjs`.
 
-- [ ] **Step 1:** Verify published exact stable v2 SDK and esbuild versions/engine requirements, then install with save-exact. Server is a runtime dependency; client and esbuild are development dependencies. Replace the local node_modules symlink with a worktree-local install before adding dependencies, preserving the original checkout's install.
-- [ ] **Step 2:** Write failing tests asserting two deterministic tool definitions with strict schemas and read-only/idempotent annotations; structured/text results agree; BLOCK/CONFIRM are ordinary results; malformed inputs return tool errors without a decision.
-- [ ] **Step 3:** Write failing stream tests for a split UTF-8 character, split CRLF, two valid lines in one chunk, exactly 64 KiB payload (excluding LF), and 64 KiB + 1 byte with/without LF. The oversized case must fail before any JSON parser receives the frame; no unbounded accumulation.
-- [ ] **Step 4:** Run the server and stream tests through `vitest.mcp.config.ts`; observe failures.
-- [ ] **Step 5:** Implement registration using the SDK's McpServer and StdioServerTransport. Supply bounded input to the transport and a 64 KiB SDK maxBufferSize defense. Emit one complete accepted frame at a time, retaining raw UTF-8 bytes. Register fixed tool descriptions explaining advisory behavior. Use SDK lifecycle/metadata support instead of hand-written protocol messages.
-- [ ] **Step 6:** Implement strict startup arguments and startup-before-connect validation. Keep stdout protocol-only; log fixed diagnostic categories to stderr without raw exceptions/paths/policy/arguments. Close on EOF/termination; handle EPIPE without an uncaught exception or open handle. Build with esbuild platform=node, format=esm, packages=external, bundle=true, and the dedicated CLI entry.
-- [ ] **Step 7:** Add subprocess tests for missing/invalid policy and flags, EOF before/after connection, termination, and broken output pipe. Assert bounded exit times, nonzero invalid-startup exit, and no policy/argument leakage. Run `npm run build:mcp`, all MCP tests, typecheck, and lint; expect pass.
-- [ ] **Step 8:** Ignore/exclude dist-mcp from Git, ESLint, and test discovery. Verify identity, commit `feat: expose advisory authority tools over local MCP`, and verify HEAD.
+- [x] **Step 1:** Verify published exact stable v2 SDK and esbuild versions/engine requirements, then install with save-exact. Server is a runtime dependency; client and esbuild are development dependencies. Replace the local node_modules symlink with a worktree-local install before adding dependencies, preserving the original checkout's install.
+- [x] **Step 2:** Write failing tests asserting two deterministic tool definitions with strict schemas and read-only/idempotent annotations; structured/text results agree; BLOCK/CONFIRM are ordinary results; malformed inputs return tool errors without a decision.
+- [x] **Step 3:** Write failing stream tests for a split UTF-8 character, split CRLF, two valid lines in one chunk, exactly 64 KiB payload (excluding LF), and 64 KiB + 1 byte with/without LF. The oversized case must fail before any JSON parser receives the frame; no unbounded accumulation.
+- [x] **Step 4:** Run the server and stream tests through `vitest.mcp.config.ts`; observe failures.
+- [x] **Step 5:** Implement registration using the SDK's McpServer and StdioServerTransport. Supply bounded input to the transport and a 64 KiB SDK maxBufferSize defense. Emit one complete accepted frame at a time, retaining raw UTF-8 bytes. Register fixed tool descriptions explaining advisory behavior. Use SDK lifecycle/metadata support instead of hand-written protocol messages.
+- [x] **Step 6:** Implement strict startup arguments and startup-before-connect validation. Keep stdout protocol-only; log fixed diagnostic categories to stderr without raw exceptions/paths/policy/arguments. Close on EOF/termination; handle EPIPE without an uncaught exception or open handle. Build with esbuild platform=node, format=esm, packages=external, bundle=true, and the dedicated CLI entry.
+- [x] **Step 7:** Add subprocess tests for missing/invalid policy and flags, EOF before/after connection, termination, and broken output pipe. Assert bounded exit times, nonzero invalid-startup exit, and no policy/argument leakage. Run `npm run build:mcp`, all MCP tests, typecheck, and lint; expect pass.
+- [x] **Step 8:** Ignore/exclude dist-mcp from Git, ESLint, and test discovery. Verify identity, commit `feat: expose advisory authority tools over local MCP`, and verify HEAD.
 
 ## Task 4: Real client interoperability and regression qualification
 
@@ -113,16 +113,16 @@
 
 **Interfaces:** The official client starts `node dist-mcp/server.mjs --policy <absolute-path>` and exercises tools/list and tools/call through the SDK.
 
-- [ ] **Step 1:** Write failing subprocess integration tests that connect/list/call/close using the official client. The synthetic policy permits commit and denies external transmit: assert ALLOW commit, BLOCK push with the denial ID, CONFIRM under a separate confirmation policy, structured output schemas, and false executionPerformed on every result. Use only temporary policy files and no actual Git commands.
-- [ ] **Step 2:** Add a restart test: read digest A, modify policy and restart, then assert old digest A errors and fresh digest B obtains the changed decision. Add raw-stream capture coverage proving stdout contains protocol lines only and stderr omits a recognizable synthetic policy marker.
-- [ ] **Step 3:** Run `npm run build:mcp && npm run test:mcp`; investigate any round-trip failure at the actual transport boundary, then rerun only after a fix. Expect all MCP tests pass and child processes exit.
-- [ ] **Step 4:** Add the verified example and documentation: exact startup command, observed Node/SDK versions, policy authoring/restart instructions, the three supported declared primitives, read-only policy disclosure, and advisory limitations including Git hooks and the lack of observed execution evidence. Do not modify or claim a named coding-agent configuration.
+- [x] **Step 1:** Write failing subprocess integration tests that connect/list/call/close using the official client. The synthetic policy permits commit and denies external transmit: assert ALLOW commit, BLOCK push with the denial ID, CONFIRM under a separate confirmation policy, structured output schemas, and false executionPerformed on every result. Use only temporary policy files and no actual Git commands.
+- [x] **Step 2:** Add a restart test: read digest A, modify policy and restart, then assert old digest A errors and fresh digest B obtains the changed decision. Add raw-stream capture coverage proving stdout contains protocol lines only and stderr omits a recognizable synthetic policy marker.
+- [x] **Step 3:** Run `npm run build:mcp && npm run test:mcp`; investigate any round-trip failure at the actual transport boundary, then rerun only after a fix. Expect all MCP tests pass and child processes exit.
+- [x] **Step 4:** Add the verified example and documentation: exact startup command, observed Node/SDK versions, policy authoring/restart instructions, the three supported declared primitives, read-only policy disclosure, and advisory limitations including Git hooks and the lack of observed execution evidence. Do not modify or claim a named coding-agent configuration.
 - [ ] **Step 5:** Wire `build:mcp` and `test:mcp` into the complete verify sequence once, retaining all existing gates. Run typecheck, lint, source/MCP tests, required source coverage, production build, E2E, and security analyzer. Reuse an unchanged completed 508-case analyzer run rather than rerun it solely for documentation; rerun it if analyzer/shared behavior changes.
-- [ ] **Step 6:** Check browser module receipts and built assets contain no integrations/mcp or MCP SDK imports. The existing security gate and offline browser tour must pass with zero forbidden/unknown production effects.
-- [ ] **Step 7:** Record exact commands, counts, versions, and observed client results in the changelog. Verify identity, commit `test: qualify local MCP authority interoperability`, and verify HEAD.
+- [x] **Step 6:** Check browser module receipts and built assets contain no integrations/mcp or MCP SDK imports. The existing security gate and offline browser tour must pass with zero forbidden/unknown production effects.
+- [x] **Step 7:** Record exact commands, counts, versions, and observed client results in the changelog. Verify identity, commit `test: qualify local MCP authority interoperability`, and verify HEAD.
 
 ## Review and execution handoff
 
 Review this plan before implementation. Native execution is recommended because all four tasks share the policy/action interfaces, and this version cannot execute real actions. Native means the primary worker implements the tasks in this session, followed by a fresh whole-branch reviewer through the execution skill. Subagent-driven execution uses a fresh implementer/reviewer for each task and costs more context.
 
-No MCP product code or dependencies have been added while writing this plan. A real client round trip, rather than a mock transport or configuration file alone, is the completion criterion.
+At plan handoff, no MCP product code or dependencies had been added. A real client round trip, rather than a mock transport or configuration file alone, was the completion criterion and has now passed. Execution rulings and final qualification are recorded in the improvement changelog and delivery report.

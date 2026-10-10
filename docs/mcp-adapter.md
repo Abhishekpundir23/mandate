@@ -54,6 +54,8 @@ Effects and exact resources are derived by the server. Extra fields, unknown IDs
 
 The policy is strict schemaVersion-1 JSON with a policyId, configured repository/remote IDs, and ordered canonical intent diffs. The empty bootstrap ledger is version 1; the first diff uses baseVersion 1. Each diff's source turn and clause provenance must agree, and clause IDs must remain unique, including generated replacement tombstones.
 
+An evidence rule may reference a grant introduced anywhere in the same atomic diff. Replacement and revocation targets must already exist in the preceding version; missing evidence targets are rejected.
+
 The process reads and freezes one policy at startup. After intent changes, edit the operator-owned policy and restart the process; clients must read the new digest before checking another action. There is no live conversation listener or automatic revocation propagation. A client cannot submit authority diffs or confirmation tokens. Confirmation requirements remain `CONFIRM` until the operator changes the policy through their own trusted process.
 
 Policy statements and source quotes are exposed by the authority tool. Keep credentials and secrets out of the policy. Neither the policy digest nor the existing engine fingerprint authenticates human approval.
@@ -66,7 +68,7 @@ Policy files are limited to 256 KiB, 100 diffs, and 500 resulting clauses. Input
 
 ## Observed validation
 
-Tested locally on Node 26.5.0 with official MCP server/client packages 2.3.1. The official client launched the built subprocess, listed both tools, obtained real ALLOW/BLOCK/CONFIRM decisions, rejected an old policy digest after restart, and closed the process. Raw-stream checks verified protocol-only stdout; EOF, SIGTERM, closed stdout, and oversized-input cases exited without hanging. The adapter suite currently contains 77 passing tests.
+Tested locally on Node 26.5.0 with official MCP server/client packages 2.3.1. The official client launched the built subprocess, listed both tools, obtained real ALLOW/BLOCK/CONFIRM decisions, rejected an old policy digest after restart, and closed the process. Raw-stream checks verified protocol-only stdout; EOF, SIGTERM, closed stdout, and oversized-input cases exited without hanging. The adapter suite currently contains 82 passing tests, including same-diff evidence references in both operation orders.
 
 The browser remains a deterministic fixture demo. Its production entry does not import the adapter or MCP SDK. Browser and Node builds have separate outputs and type checks; global typecheck covers both.
 
