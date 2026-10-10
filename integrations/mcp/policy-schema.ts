@@ -8,7 +8,7 @@ const selectorSchema = z.strictObject({
   resource: z.string().min(1).optional(),
   effect: z.enum(['READ', 'LOCAL_PERSIST', 'EXTERNAL_TRANSMIT']).optional(),
 }).refine((s) => Object.keys(s).length > 0, 'Empty selector');
-const clauseSchema = z.strictObject({
+export const clauseSchema = z.strictObject({
   id: z.string().min(1), kind: z.enum(['MUST', 'MUST_NOT', 'MAY', 'REVOKED', 'NEEDS_CONFIRMATION', 'EVIDENCE']),
   statement: z.string().min(1), source: sourceSchema,
   selector: selectorSchema.optional(), targetClauseIds: z.array(z.string().min(1)).optional(),

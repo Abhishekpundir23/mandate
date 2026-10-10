@@ -15,9 +15,9 @@ export interface AuthoritySnapshot {
 }
 const POLICY_BYTES = 256 * 1024;
 
-function freeze<T>(value: T): T {
+export function freezeData<T>(value: T): T {
   if (value !== null && typeof value === 'object') {
-    for (const child of Object.values(value)) freeze(child);
+    for (const child of Object.values(value)) freezeData(child);
     Object.freeze(value);
   }
   return value;
@@ -100,7 +100,7 @@ export function parsePolicyJson(text: string): AuthoritySnapshot {
     versions = appendVersion(versions, diff as unknown as IntentDiff);
   }
   const policyDigest = createHash('sha256').update(canonicalize(normalizeJsonValue(policy))).digest('hex');
-  return freeze({ policyId: policy.policyId, policyDigest, repositories: policy.repositories, versions, current: versions.at(-1)! });
+  return freezeData({ policyId: policy.policyId, policyDigest, repositories: policy.repositories, versions, current: versions.at(-1)! });
 }
 
 export async function loadPolicyFile(absolutePath: string): Promise<AuthoritySnapshot> {
