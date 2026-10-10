@@ -76,6 +76,7 @@ export function parsePolicyJson(text: string): AuthoritySnapshot {
     const latest = versions.at(-1)!;
     const knownIds = new Set(latest.clauses.map((c) => c.id));
     const newIds: string[] = [];
+    const evidenceTargets: string[] = [];
     for (const op of diff.ops) {
       if (op.op === 'NO_CHANGE') continue;
       const clause = op.op === 'ADD' ? op.clause : op.op === 'REPLACE' ? op.replacement : op.tombstone;
@@ -91,10 +92,13 @@ export function parsePolicyJson(text: string): AuthoritySnapshot {
       const targets = op.op === 'REPLACE' ? op.targetClauseIds : clause.targetClauseIds ?? [];
       if (new Set(targets).size !== targets.length || targets.some((id) => !knownIds.has(id))) throw new Error('Invalid targets');
       if (clause.kind === 'REVOKED' && targets.length === 0 && clause.revokedSelector === undefined) throw new Error('Empty revocation');
-      if (clause.evidenceRequirement !== undefined && !knownIds.has(clause.evidenceRequirement.forClauseId)) throw new Error('Invalid evidence target');
+      if (clause.evidenceRequirement !== undefined) evidenceTargets.push(clause.evidenceRequirement.forClauseId);
       newIds.push(clause.id, ...(op.op === 'REPLACE' ? targets.map((id) => diff.turnId + ':revoke:' + id) : []));
     }
     if (new Set(newIds).size !== newIds.length || newIds.some((id) => knownIds.has(id))) throw new Error('Duplicate clause ID');
+    // Evidence describes the resulting version, including grants in this atomic diff.
+    const resultingIds = new Set([...knownIds, ...newIds]);
+    if (evidenceTargets.some((id) => !resultingIds.has(id))) throw new Error('Invalid evidence target');
     if (latest.clauses.length + newIds.length > 500) throw new Error('Too many clauses');
     // Strict JSON parsing and the checks above establish the domain invariants;
     // Zod's optional-property types also include undefined under exactOptionalPropertyTypes.

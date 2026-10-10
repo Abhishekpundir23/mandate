@@ -49,6 +49,37 @@ test('rejects generated tombstone collisions and protected target replacement', 
   ] }))).toThrow();
 });
 
+test.each([false, true])('loads evidence for a grant in the same atomic diff, evidence first: %s', (evidenceFirst) => {
+  const grant = { op: 'ADD' as const, clause: clause('commit', 'MUST') };
+  const evidence = { op: 'ADD' as const, clause: clause('commit-evidence', 'EVIDENCE', {
+    evidenceRequirement: { forClauseId: 'commit', fact: 'commitCreated', equals: true },
+  }) };
+  const snapshot = parse(makePolicy({ diffs: [diff(1, 'turn-1', evidenceFirst ? [evidence, grant] : [grant, evidence])] }));
+  expect(snapshot.current.clauses.map((c) => c.id)).toEqual(evidenceFirst ? ['commit-evidence', 'commit'] : ['commit', 'commit-evidence']);
+  expect(snapshot.current.clauses.find((c) => c.id === 'commit-evidence')?.evidenceRequirement?.forClauseId).toBe('commit');
+});
+
+test('rejects evidence for a missing clause even when the diff introduces other clauses', () => {
+  expect(() => parse(makePolicy({ diffs: [diff(1, 'turn-1', [
+    { op: 'ADD', clause: clause('commit', 'MUST') },
+    { op: 'ADD', clause: clause('commit-evidence', 'EVIDENCE', {
+      evidenceRequirement: { forClauseId: 'absent', fact: 'commitCreated', equals: true },
+    }) },
+  ])] }))).toThrow('Invalid evidence target');
+});
+
+test.each(['REPLACE', 'REVOKE'] as const)('keeps %s targets restricted to the preceding version', (operation) => {
+  const change = operation === 'REPLACE'
+    ? { op: 'REPLACE' as const, targetClauseIds: ['commit'], replacement: clause('new') }
+    : { op: 'REVOKE' as const, tombstone: {
+      id: 'revoke', kind: 'REVOKED' as const, statement: 'Revoke commit',
+      source: { turnId: 'turn-1', quote: 'Synthetic policy' }, targetClauseIds: ['commit'],
+    } };
+  expect(() => parse(makePolicy({ diffs: [diff(1, 'turn-1', [
+    { op: 'ADD', clause: clause('commit', 'MUST') }, change,
+  ])] }))).toThrow('Invalid targets');
+});
+
 test('enforces UTF-8 byte and ledger limits', () => {
   expect(() => parse(makePolicy({ policyId: 'é'.repeat(131_073) }))).toThrow();
   expect(() => parse(makePolicy({ diffs: Array.from({ length: 101 }, (_, i) => diff(i + 1, 'turn-' + (i + 1), [])) }))).toThrow();
