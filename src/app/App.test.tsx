@@ -44,4 +44,23 @@ describe('App', () => {
     expect(screen.getByText(/Reproducible.*traces/)).toHaveTextContent(before!);
     expect(document.body).not.toHaveTextContent(/seed\s+42/i);
   });
+
+  it('opens the selected benchmark case as a fresh Live replay and retains benchmark selection', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Benchmark' }));
+    await user.click(screen.getByRole('button', { name: 'Select Preview is not deploy' }));
+    const openReplay = screen.queryByRole('button', { name: 'Open in Live run' });
+    expect(openReplay).toBeEnabled();
+    await user.click(openReplay!);
+
+    expect(screen.getByRole('combobox', { name: 'Scenario' })).toHaveValue('preview-is-not-deploy');
+    expect(screen.getByRole('status')).toHaveTextContent('Replay ready');
+    expect(screen.getByText('Receipt pending replay completion')).toBeVisible();
+    expect(screen.queryByText('Exact mandate satisfied')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Live run' }));
+    await user.click(screen.getByRole('button', { name: 'Benchmark' }));
+    expect(screen.getByRole('row', { name: /Preview is not deploy/ })).toHaveAttribute('aria-selected', 'true');
+  });
 });

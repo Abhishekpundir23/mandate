@@ -126,6 +126,55 @@ describe('LiveRunView', () => {
     expect(screen.getByText('Replay ready')).toBeVisible();
   });
 
+  it('lets a user pause, step, resume, and restart without exposing future receipts', () => {
+    vi.useFakeTimers();
+    useDesktopViewport();
+    render(<LiveRunView comparison={comparison} />);
+    const controls = screen.queryByRole('group', { name: 'Replay controls' });
+    expect(controls).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pause replay' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Restart replay' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run comparison' }));
+    act(() => vi.advanceTimersToNextTimer());
+    expect(screen.getByRole('button', { name: 'Next step' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Pause replay' }));
+    expect(screen.getByRole('status')).toHaveTextContent('Paused at 1 of');
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(screen.getByRole('status')).toHaveTextContent('Paused at 1 of');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
+    expect(screen.getByRole('status')).toHaveTextContent('Paused at 2 of');
+    expect(screen.getByText('Receipt pending replay completion')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Resume replay' }));
+    act(() => vi.advanceTimersToNextTimer());
+    expect(screen.getByRole('status')).toHaveTextContent('Replaying 3 of');
+    fireEvent.click(screen.getByRole('button', { name: 'Restart replay' }));
+    expect(screen.getByRole('status')).toHaveTextContent('Replay ready');
+    expect(screen.getByRole('heading', { name: 'Active authority · v0' })).toBeVisible();
+    expect(screen.queryByText('Exact mandate satisfied')).not.toBeInTheDocument();
+  });
+
+  it('disables stepping at completion and restarts the inspection on scenario change', () => {
+    vi.useFakeTimers();
+    useDesktopViewport();
+    render(<ScenarioHarness scenarios={scenarioCatalog.slice(0, 2)} />);
+    expect(screen.queryByRole('button', { name: 'Next step' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Run comparison' }));
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(screen.getByRole('button', { name: 'Next step' })).toBeDisabled();
+    expect(screen.getByText('Exact mandate satisfied')).toBeVisible();
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Scenario' }), {
+      target: { value: 'preview-is-not-deploy' },
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('Replay ready');
+    expect(screen.getByRole('button', { name: 'Restart replay' })).toBeDisabled();
+    expect(screen.getByText('Receipt pending replay completion')).toBeVisible();
+    expect(screen.queryByText('APPLICATION SUBMITTED')).not.toBeInTheDocument();
+  });
+
   it('switches the real Standard and Mandate trace tabs with arrow keys', async () => {
     const user = userEvent.setup();
     render(<LiveRunView comparison={comparison} replayMode="complete" />);

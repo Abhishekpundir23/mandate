@@ -108,13 +108,63 @@
 }
 
 .replay-progress {
-  position: absolute;
-  z-index: 3;
-  top: 92px;
-  right: 24px;
   margin: 0;
-  color: var(--muted);
+  color: var(--ink);
   font-size: 16px;
+}
+
+.app-shell.live-shell {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.replay-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 12px 28px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.replay-help {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.replay-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.replay-controls button,
+.open-replay-button {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--frame);
+  border-radius: 4px;
+  background: var(--canvas);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.replay-controls button:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.replay-controls button:not(:disabled):hover,
+.open-replay-button:hover {
+  border-color: var(--cobalt);
+  color: var(--cobalt);
+}
+
+.open-replay-button {
+  margin: 12px 0 4px;
+  border-color: var(--cobalt);
+  color: var(--cobalt);
 }
 
 .app-footer {

@@ -7,7 +7,7 @@ import {
 } from '../platform/browser-capabilities';
 import type { ReplayFrame } from '../runtime/replay';
 
-export type ReplayStatus = 'idle' | 'running' | 'complete';
+export type ReplayStatus = 'idle' | 'running' | 'paused' | 'complete';
 
 interface ReplayState {
   readonly step: number;
@@ -17,6 +17,9 @@ interface ReplayState {
 type ReplayAction =
   | { readonly type: 'RUN'; readonly reducedMotion: boolean; readonly finalStep: number }
   | { readonly type: 'RESET' }
+  | { readonly type: 'PAUSE' }
+  | { readonly type: 'RESUME'; readonly reducedMotion: boolean; readonly finalStep: number }
+  | { readonly type: 'STEP'; readonly finalStep: number }
   | { readonly type: 'ADVANCE'; readonly finalStep: number };
 
 function replayReducer(state: ReplayState, action: ReplayAction): ReplayState {
@@ -28,6 +31,20 @@ function replayReducer(state: ReplayState, action: ReplayAction): ReplayState {
     return action.reducedMotion
       ? { step: action.finalStep, status: 'complete' }
       : { step: 0, status: action.finalStep === 0 ? 'complete' : 'running' };
+  }
+  if (action.type === 'PAUSE') {
+    return state.status === 'running' ? { ...state, status: 'paused' } : state;
+  }
+  if (action.type === 'RESUME') {
+    if (state.status !== 'paused') return state;
+    return action.reducedMotion
+      ? { step: action.finalStep, status: 'complete' }
+      : { ...state, status: 'running' };
+  }
+  if (action.type === 'STEP') {
+    if (state.status === 'running' || state.status === 'complete') return state;
+    const step = Math.min(state.step + 1, action.finalStep);
+    return { step, status: step === action.finalStep ? 'complete' : 'paused' };
   }
   if (state.status !== 'running') return state;
   const step = Math.min(state.step + 1, action.finalStep);
@@ -43,6 +60,9 @@ export interface ReplayController {
   readonly step: number;
   readonly status: ReplayStatus;
   readonly run: () => void;
+  readonly pause: () => void;
+  readonly resume: () => void;
+  readonly next: () => void;
   readonly reset: () => void;
 }
 
@@ -76,7 +96,12 @@ export function useReplay(frames: readonly ReplayFrame[]): ReplayController {
     dispatch({ type: 'RUN', reducedMotion: prefersReducedMotion(), finalStep });
   }, [finalStep]);
   const reset = useCallback(() => dispatch({ type: 'RESET' }), []);
+  const pause = useCallback(() => dispatch({ type: 'PAUSE' }), []);
+  const resume = useCallback(() => {
+    dispatch({ type: 'RESUME', reducedMotion: prefersReducedMotion(), finalStep });
+  }, [finalStep]);
+  const next = useCallback(() => dispatch({ type: 'STEP', finalStep }), [finalStep]);
   const frame = frames[Math.min(state.step, finalStep)]!;
 
-  return { frame, step: state.step, status: state.status, run, reset };
+  return { frame, step: state.step, status: state.status, run, pause, resume, next, reset };
 }

@@ -124,9 +124,19 @@
     display: inline;
   }
 
-  .replay-progress {
-    top: 178px;
-    right: 32px;
+  .replay-toolbar {
+    padding: 12px 28px;
+  }
+
+  .replay-controls {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .replay-controls button {
+    padding: 8px;
+    font-size: 14px;
   }
 
   .history-rail,
@@ -223,8 +233,25 @@
   }
 }
 
+@media (min-width: 481px) and (max-width: 899px) {
+  .replay-toolbar {
+    padding-top: 3px;
+    padding-bottom: 3px;
+  }
+
+  .replay-controls {
+    display: flex;
+    width: auto;
+  }
+}
+
 @media (max-width: 480px) {
   .app-header {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .replay-toolbar {
     padding-right: 12px;
     padding-left: 12px;
   }
