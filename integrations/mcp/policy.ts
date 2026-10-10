@@ -37,6 +37,7 @@ function validateSelector(selector: ParsedSelector | undefined, repositories: Po
   if (candidates.length === 0) throw new Error('Inconsistent selector');
   if (selector.resource !== undefined) {
     const resource = selector.resource;
+    if (resource !== resource.trim() || resource !== resource.normalize('NFC')) throw new Error('Noncanonical resource');
     const matches = repositories.some(({ id, remotes }) =>
       (candidates.some((c) => c.operation === 'commit') && resource === 'repository:' + id)
       || (candidates.some((c) => c.operation === 'readFile') && resource.startsWith('repository:' + id + '/file:')
@@ -50,7 +51,7 @@ function validateSelector(selector: ParsedSelector | undefined, repositories: Po
 }
 
 export function validPath(path: string): boolean {
-  return path.length > 0 && path.length <= 1024 && path === path.normalize('NFC')
+  return path.length > 0 && path.length <= 1024 && path === path.normalize('NFC') && path === path.trim()
     && !/[\\\p{Cc}]/u.test(path)
     && path.split('/').every((part) => part.length > 0 && part !== '.' && part !== '..');
 }
@@ -60,7 +61,7 @@ export function validRef(ref: string): boolean {
     && !/[\\\p{Cc} ~^:?*[]/u.test(ref)
     && !ref.includes('..') && !ref.includes('@{')
     && ref.split('/').every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.') && !part.endsWith('.lock'))
-    && ref === ref.normalize('NFC');
+    && ref === ref.normalize('NFC') && ref === ref.trim();
 }
 
 export function parsePolicyJson(text: string): AuthoritySnapshot {

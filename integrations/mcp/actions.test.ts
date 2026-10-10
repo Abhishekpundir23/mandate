@@ -38,3 +38,13 @@ test('accepts only explicitly configured prototype-like IDs and bounded actions'
   expect(deriveAction(configured, { ...commit, args: { ...commit.args, repositoryId: 'constructor' } }).resource).toBe('repository:constructor');
   expect(() => deriveAction(snapshot, { ...commit, args: { ...commit.args, treeDigest: 'a'.repeat(16_385) } })).toThrow();
 });
+
+test('rejects paths whose resource spelling the engine would trim', () => {
+  expect(() => deriveAction(snapshot, { operation: 'workspace.readFile', args: { repositoryId: 'mandate', path: 'notes.md ' } })).toThrow();
+});
+
+test('rejects branch refs whose trailing Unicode whitespace would be trimmed', () => {
+  expect(() => deriveAction(snapshot, { operation: 'git.push', args: {
+    repositoryId: 'mandate', remoteId: 'origin', ref: 'refs/heads/feature\u00a0', commitOid: 'a'.repeat(40),
+  } })).toThrow();
+});

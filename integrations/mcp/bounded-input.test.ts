@@ -33,3 +33,7 @@ test('does not aggregate several valid messages into the frame limit', async () 
   const bytes = Buffer.from(('x'.repeat(100) + '\n').repeat(1000));
   expect(Buffer.concat(await collect([bytes], 100))).toEqual(bytes);
 });
+
+test('rejects invalid UTF-8 before any frame is emitted', async () => {
+  await expect(collect([Buffer.from([0xff, 10])])).rejects.toThrow();
+});

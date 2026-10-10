@@ -17,7 +17,9 @@ export function createBoundedInput(input: Readable, maxFrameBytes: number): Read
           if (payloadBytes > maxFrameBytes) throw new Error('Frame too large');
           parts.push(Buffer.from(segment)); size = total;
           if (newline !== -1) {
-            this.push(Buffer.concat([...parts, Buffer.from('\n')], size + 1));
+            const frame = Buffer.concat([...parts, Buffer.from('\n')], size + 1);
+            new TextDecoder('utf-8', { fatal: true }).decode(frame);
+            this.push(frame);
             parts = []; size = 0;
           }
           start = end + 1;

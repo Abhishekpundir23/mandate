@@ -67,3 +67,15 @@ test('bounded file loading rejects invalid UTF-8, relative paths, and missing fi
   await expect(loadPolicyFile('policy.json')).rejects.toThrow();
   await expect(loadPolicyFile(join(dir, 'missing.json'))).rejects.toThrow();
 });
+
+test('rejects file resources whose spelling the engine would trim', () => {
+  expect(() => parse(makePolicy({ diffs: [diff(1, 'turn-1', [{ op: 'ADD', clause: clause('read', 'MAY', {
+    selector: { tool: 'workspace', operation: 'readFile', resource: 'repository:mandate/file:notes.md ' },
+  }) }])] }))).toThrow();
+});
+
+test('rejects branch resources whose trailing Unicode whitespace would be trimmed', () => {
+  expect(() => parse(makePolicy({ diffs: [diff(1, 'turn-1', [{ op: 'ADD', clause: clause('push', 'MAY', {
+    selector: { tool: 'git', operation: 'push', resource: 'repository:mandate/remote:origin/ref:refs/heads/feature\u00a0' },
+  }) }])] }))).toThrow();
+});

@@ -82,6 +82,8 @@ npm run preview
 
 Open the local URL printed by Vite, normally `http://localhost:4173`. Select **Live run** and press **Run comparison**. The interface runs Standard and Mandate over the same flagship input and shows the complete paired trace and terminal receipt.
 
+Use **Pause replay** and **Resume replay** to inspect an intermediate decision, or **Next step** to advance one frame while paused or ready. **Restart replay** returns to the initial frame. The final receipt appears only when the replay reaches completion. With reduced motion enabled, Run and Resume complete immediately; manual stepping remains available.
+
 Expected flagship result:
 
 - Standard: `APPLICATION SUBMITTED`, unauthorized effect executed.
@@ -96,6 +98,8 @@ npm test -- --run src/benchmark
 ```
 
 Then select **Benchmark** in the application and press **Run benchmark**. Expected result: Standard `5/15`, Mandate `15/15`, unauthorized effects `8/0`, and false completion claims `3/0`. Re-running the unchanged catalog reproduces the seed, catalog, proposal-stream, and paired-trace checksums; the current trace checksum is `1c48b617`.
+
+Select a benchmark row and use **Open in Live run** in its inspector to replay that case from the initial frame. Returning to Benchmark preserves the selected row.
 
 Run the complete qualification gate:
 
@@ -115,9 +119,13 @@ OpenAI Codex was used as the primary coding agent, with delegated Codex roles fo
 
 ## Architecture and safety boundary
 
-Capabilities transform an immutable in-memory world and emit deterministic observations. They do not call an email service, deployment platform, calendar, checkout, filesystem, job site, or any other real integration. There is no authentication, credential entry, persistence, analytics, product network endpoint, form submit, or navigation API.
+The browser application's capabilities transform an immutable in-memory world and emit deterministic observations. They do not call an email service, deployment platform, calendar, checkout, filesystem, job site, or any other real integration. There is no authentication, credential entry, persistence, analytics, product network endpoint, form submit, or navigation API.
 
 The production graph is constrained by a closed-world origin/effect analyzer, strict CSP and local assets, built-module receipts, browser interception, and explicit effect budgets. This is a guarantee over the repository's supported production subset, not a claim to prove arbitrary JavaScript universally. See [Architecture](docs/architecture.md), [Fidelity ledger](docs/fidelity-ledger.md), and the [submission video script](docs/submission-video-script.md).
+
+## Local coding-agent integration
+
+The [local MCP adapter](docs/mcp-adapter.md) runs as a separate Node stdio process for inspecting operator-authored authority and checking declared coding actions. Build it with `npm run build:mcp` and validate it with `npm run test:mcp`. An official MCP client has exercised its subprocess tools locally. Decisions are advisory: the adapter performs no proposed action and cannot create confirmation. No named coding-agent configuration has been changed.
 
 ## Main failure mode and hot take
 
