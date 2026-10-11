@@ -35,6 +35,13 @@ Usage:
   mandate session verify --session FILE
   mandate session inspect --session FILE [--redacted]
   mandate session diff --before FILE --after FILE
+  mandate workspace create --policy FILE --workspace-id ID [--session FILE] [--cases FILE] [--trace FILE] [--campaign FILE] [--label TEXT]
+  mandate workspace verify --workspace FILE
+  mandate workspace inspect --workspace FILE [--kind KIND] [--search TEXT] [--page N] [--page-size N] [--redacted]
+  mandate workspace add --workspace FILE --entry FILE
+  mandate workspace replace --workspace FILE --entry FILE
+  mandate workspace remove --workspace FILE --entry-id ID [--cascade]
+  mandate workspace rename --workspace FILE --entry-id ID --new-id ID
   mandate campaign example
   mandate campaign validate --campaign FILE
   mandate campaign run --campaign FILE [--redacted]
