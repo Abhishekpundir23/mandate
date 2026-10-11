@@ -70,7 +70,7 @@ describe('object API data boundary', () => {
   });
 
   test('rejects holes and extra array fields', () => {
-    expect(() => normalizeBoundedJson([, 1], limits)).toThrow();
+    expect(() => normalizeBoundedJson(new Array(2), limits)).toThrow();
     const input = Object.assign([1], { extra: true });
     expect(() => normalizeBoundedJson(input, limits)).toThrow();
   });

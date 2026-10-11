@@ -1,0 +1,20 @@
+/** Public portable SDK. Product components import focused modules directly. */
+export { parsePolicyJson, validPath, validRef } from './parse';
+export { diagnosePolicy } from './diagnostics';
+export { getAuthority, checkAction, explainDecision, ActionCheckError } from './service';
+export { deriveAction, validateCodingCapability } from './actions';
+export { inspectVersion, listPolicyHistory } from './history';
+export { compareVersions } from './compare';
+export { analyzePolicy, selectorsOverlap, selectorIncludes } from './analysis';
+export { searchClauses } from './search';
+export { policyTemplates, getPolicyTemplate } from './templates';
+export { sha256 } from './sha256';
+export type { AuthoritySnapshot } from './types';
+export type { Policy } from './schema';
+export type { CodingAction, ActionCheckInput } from './actions';
+export type { ActionCheckResult, AuthorityResult, DecisionExplanation } from './service';
+export type { PolicyDiagnosis, PolicyDiagnostic } from './diagnostics';
+export type { VersionInspection, ClauseCounts } from './history';
+export type { VersionComparison } from './compare';
+export type { PolicyAnalysis, PolicyIssue } from './analysis';
+export type { ClauseQuery, ClauseSearchResult } from './search';
