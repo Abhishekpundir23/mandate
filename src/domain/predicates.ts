@@ -12,7 +12,7 @@ export function getAtPath(state: JsonValue, path: string): JsonValue | undefined
 
   let current: JsonValue | undefined = state;
   for (const segment of path.split('.')) {
-    if (current === undefined || !isJsonRecord(current)) {
+    if (current === undefined || !isJsonRecord(current) || !Object.hasOwn(current, segment)) {
       return undefined;
     }
     current = current[segment];

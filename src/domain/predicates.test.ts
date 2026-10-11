@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { evaluatePredicate, getAtPath } from './predicates';
+import type { JsonValue } from './types';
 
 describe('predicates', () => {
   it('evaluates exact set and scalar predicates independently of production builders', () => {
@@ -34,5 +35,29 @@ describe('predicates', () => {
     expect(evaluatePredicate(state, { op: 'setEquals', path: 'members', value: ['Priya', 'Ana'] })).toBe(true);
     expect(evaluatePredicate(state, { op: 'setEquals', path: 'scalar', value: [7] })).toBe(false);
     expect(evaluatePredicate(state, { op: 'lte', path: 'scalar', value: '7' })).toBe(false);
+  });
+
+  it.each(['constructor', '__proto__', 'toString', 'hasOwnProperty'])(
+    'does not accept inherited %s as observed evidence',
+    (path) => {
+      expect(getAtPath({}, path)).toBeUndefined();
+      expect(evaluatePredicate({}, { op: 'exists', path })).toBe(false);
+      expect(evaluatePredicate({}, { op: 'absent', path })).toBe(true);
+    },
+  );
+
+  it('requires an observed own property at every nested path segment', () => {
+    const state = { receipt: { saved: true } };
+    expect(getAtPath(state, 'receipt.__proto__')).toBeUndefined();
+    expect(evaluatePredicate(state, { op: 'exists', path: 'receipt.constructor' })).toBe(false);
+    expect(evaluatePredicate(state, { op: 'eq', path: 'receipt.saved', value: true })).toBe(true);
+  });
+
+  it('preserves explicitly observed fields even when their names match prototype properties', () => {
+    const state = JSON.parse('{"constructor":"observed","__proto__":{"verified":true},"toString":"receipt"}') as JsonValue;
+    expect(evaluatePredicate(state, { op: 'eq', path: 'constructor', value: 'observed' })).toBe(true);
+    expect(evaluatePredicate(state, { op: 'eq', path: '__proto__.verified', value: true })).toBe(true);
+    expect(evaluatePredicate(state, { op: 'eq', path: 'toString', value: 'receipt' })).toBe(true);
+    expect(getAtPath(state, '__proto__.constructor')).toBeUndefined();
   });
 });

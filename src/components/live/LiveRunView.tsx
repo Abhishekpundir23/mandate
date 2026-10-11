@@ -34,9 +34,13 @@ export function LiveRunView({
   const frame = replayMode === 'complete' ? frames.at(-1)! : replay.frame;
   const completedTrace = frame.complete ? frame.mandate : undefined;
   const flagship = comparison.scenarioId === draftIsNotSubmit.id;
-  const progress = replay.status === 'running'
+  const progress = replayMode === 'complete' || replay.status === 'complete'
+    ? 'Replay complete'
+    : replay.status === 'running'
     ? `Replaying ${frame.index} of ${frames.at(-1)!.index} milestones`
-    : replay.status === 'complete' ? 'Replay complete' : 'Replay ready';
+    : replay.status === 'paused'
+      ? `Paused at ${frame.index} of ${frames.at(-1)!.index} milestones`
+      : 'Replay ready';
 
   const changeScenario = (scenarioId: string): void => {
     replay.reset();
@@ -44,7 +48,7 @@ export function LiveRunView({
   };
 
   return (
-    <div className="app-shell">
+    <div className="app-shell live-shell">
       <AppHeader
         activeView="live"
         onViewChange={onNavigate}
@@ -54,7 +58,31 @@ export function LiveRunView({
         onRun={replay.run}
         running={replay.status === 'running'}
       />
-      <p className="replay-progress" role="status" aria-live="polite">{progress}</p>
+      <div className="replay-toolbar">
+        <div>
+          <p className="replay-progress" role="status" aria-live="polite">{progress}</p>
+          {replayMode === 'interactive' ? (
+            <p className="replay-help">Pause or step to inspect each decision.</p>
+          ) : null}
+        </div>
+        {replayMode === 'interactive' ? (
+          <div className="replay-controls" role="group" aria-label="Replay controls">
+            <button
+              type="button"
+              onClick={replay.status === 'paused' ? replay.resume : replay.pause}
+              disabled={replay.status === 'idle' || replay.status === 'complete'}
+            >{replay.status === 'paused' ? 'Resume replay' : 'Pause replay'}</button>
+            <button
+              type="button"
+              onClick={replay.next}
+              disabled={replay.status === 'running' || replay.status === 'complete'}
+            >Next step</button>
+            <button type="button" onClick={replay.reset} disabled={replay.status === 'idle'}>
+              Restart replay
+            </button>
+          </div>
+        ) : null}
+      </div>
       <main id="live-workspace" className="live-workspace" aria-label="Mandate workspace">
         <MandateHistory
           versions={frame.contractVersions}

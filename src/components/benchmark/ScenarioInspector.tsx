@@ -5,6 +5,7 @@ import { StatusIcon } from '../primitives/StatusIcon';
 
 interface ScenarioInspectorProps {
   readonly row: BenchmarkRow;
+  readonly onReplay?: () => void;
 }
 
 function FactValue({ value }: { readonly value: string | number | boolean | null }) {
@@ -12,11 +13,16 @@ function FactValue({ value }: { readonly value: string | number | boolean | null
 }
 
 export const ScenarioInspector = forwardRef<HTMLElement, ScenarioInspectorProps>(
-  function ScenarioInspector({ row }, ref) {
+  function ScenarioInspector({ row, onReplay }, ref) {
     const { inspector } = row;
     return (
       <aside ref={ref} className="scenario-inspector" aria-label="Selected scenario evidence" tabIndex={0}>
         <h2>{row.title}</h2>
+        {onReplay === undefined ? null : (
+          <button className="open-replay-button" type="button" onClick={onReplay}>
+            Open in Live run
+          </button>
+        )}
         <ol className="inspector-turns">
           {inspector.turns.map((turn) => (
             <li key={turn.version}>

@@ -82,6 +82,81 @@ describe('useReplay', () => {
     expect(result.current.status).toBe('running');
   });
 
+  it('holds the current milestone while paused and resumes from that milestone', () => {
+    const { result } = renderHook(() => useReplay(frames));
+    expect(result.current.pause).toBeTypeOf('function');
+    act(() => result.current.run());
+    act(() => vi.advanceTimersToNextTimer());
+    act(() => result.current.pause());
+
+    expect(result.current.status).toBe('paused');
+    expect(result.current.step).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(result.current.step).toBe(1);
+
+    act(() => result.current.resume());
+    act(() => vi.advanceTimersToNextTimer());
+    expect(result.current.step).toBe(2);
+    expect(result.current.status).toBe('running');
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('steps through milestones manually without revealing a completion receipt early', () => {
+    const { result } = renderHook(() => useReplay(frames));
+    expect(result.current.next).toBeTypeOf('function');
+
+    act(() => result.current.next());
+    expect(result.current.step).toBe(1);
+    expect(result.current.status).toBe('paused');
+    expect(result.current.frame.complete).toBe(false);
+    expect(result.current.frame.mandate).not.toHaveProperty('receipt');
+    expect(vi.getTimerCount()).toBe(0);
+
+    for (let step = 2; step < frames.length; step += 1) {
+      act(() => result.current.next());
+      expect(result.current.step).toBe(step);
+      expect(result.current.frame.complete).toBe(step === frames.length - 1);
+    }
+    expect(result.current.status).toBe('complete');
+    act(() => result.current.next());
+    expect(result.current.step).toBe(frames.length - 1);
+  });
+
+  it('ignores manual advancement during automatic replay', () => {
+    const { result } = renderHook(() => useReplay(frames));
+    expect(result.current.next).toBeTypeOf('function');
+    act(() => result.current.run());
+    act(() => result.current.next());
+    expect(result.current.step).toBe(0);
+    act(() => vi.advanceTimersToNextTimer());
+    expect(result.current.step).toBe(1);
+  });
+
+  it('restarts a paused inspection without leaving a timer or future evidence', () => {
+    const { result } = renderHook(() => useReplay(frames));
+    expect(result.current.next).toBeTypeOf('function');
+    act(() => result.current.next());
+    act(() => result.current.reset());
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(result.current.step).toBe(0);
+    expect(result.current.status).toBe('idle');
+    expect(result.current.frame.eventCount).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('respects reduced motion when resuming a manually stepped replay', () => {
+    setReducedMotion(true);
+    const { result } = renderHook(() => useReplay(frames));
+    expect(result.current.next).toBeTypeOf('function');
+    act(() => result.current.next());
+    expect(result.current.step).toBe(1);
+    act(() => result.current.resume());
+    expect(result.current.status).toBe('complete');
+    expect(result.current.step).toBe(frames.length - 1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('jumps directly to completion when reduced motion is requested', () => {
     setReducedMotion(true);
     const { result } = renderHook(() => useReplay(frames));

@@ -9,6 +9,7 @@ interface BenchmarkViewProps {
   readonly snapshot: BenchmarkSnapshot;
   readonly selectedScenarioId: string;
   readonly onSelectScenario: (scenarioId: string) => void;
+  readonly onReplayScenario?: (scenarioId: string) => void;
   readonly onNavigate: (view: 'live' | 'benchmark') => void;
   readonly onRun: () => void;
   readonly statusMessage?: string;
@@ -18,6 +19,7 @@ export function BenchmarkView({
   snapshot,
   selectedScenarioId,
   onSelectScenario,
+  onReplayScenario,
   onNavigate,
   onRun,
   statusMessage = '',
@@ -54,7 +56,13 @@ export function BenchmarkView({
           resultRangeLabel={snapshot.resultRangeLabel}
           onActivate={activate}
         />
-        <ScenarioInspector ref={inspectorRef} row={selected} />
+        <ScenarioInspector
+          ref={inspectorRef}
+          row={selected}
+          {...(onReplayScenario === undefined ? {} : {
+            onReplay: () => onReplayScenario(selected.id),
+          })}
+        />
       </main>
       <footer className="app-footer benchmark-footer">
         <span>Fixture mode · deterministic sandbox · No real external action</span>

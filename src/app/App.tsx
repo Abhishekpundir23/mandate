@@ -47,6 +47,10 @@ export function App() {
       snapshot={benchmarkSnapshot}
       selectedScenarioId={benchmarkScenarioId}
       onSelectScenario={setBenchmarkScenarioId}
+      onReplayScenario={(id) => {
+        setScenarioId(id);
+        setActiveView('live');
+      }}
       onNavigate={setActiveView}
       onRun={rerunBenchmark}
       statusMessage={benchmarkStatus}

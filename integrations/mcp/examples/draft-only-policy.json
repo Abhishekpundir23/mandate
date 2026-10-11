@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "policyId": "mandate-local-review",
+  "repositories": [
+    {
+      "id": "mandate",
+      "remotes": [
+        "origin"
+      ]
+    }
+  ],
+  "diffs": [
+    {
+      "baseVersion": 1,
+      "turnId": "policy-1",
+      "source": {
+        "turnId": "policy-1",
+        "quote": "Allow reading files and local commits in Mandate. Do not transmit repository data."
+      },
+      "ops": [
+        {
+          "op": "ADD",
+          "clause": {
+            "id": "read-files",
+            "kind": "MAY",
+            "statement": "May inspect files in the configured repository.",
+            "source": {
+              "turnId": "policy-1",
+              "quote": "Allow reading files and local commits in Mandate. Do not transmit repository data."
+            },
+            "selector": {
+              "tool": "workspace",
+              "operation": "readFile",
+              "effect": "READ"
+            }
+          }
+        },
+        {
+          "op": "ADD",
+          "clause": {
+            "id": "local-commit",
+            "kind": "MAY",
+            "statement": "May create a local commit in Mandate.",
+            "source": {
+              "turnId": "policy-1",
+              "quote": "Allow reading files and local commits in Mandate. Do not transmit repository data."
+            },
+            "selector": {
+              "tool": "git",
+              "operation": "commit",
+              "resource": "repository:mandate"
+            }
+          }
+        },
+        {
+          "op": "ADD",
+          "clause": {
+            "id": "deny-transmit",
+            "kind": "MUST_NOT",
+            "statement": "Do not transmit repository data.",
+            "source": {
+              "turnId": "policy-1",
+              "quote": "Allow reading files and local commits in Mandate. Do not transmit repository data."
+            },
+            "selector": {
+              "effect": "EXTERNAL_TRANSMIT"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
