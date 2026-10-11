@@ -45,8 +45,12 @@ describe('independently scored local scenarios', () => {
   });
 
   test('rejects duplicate scenario IDs and unbounded suites', () => {
-    expect(() => runLabSuite([scenarioCatalog[0]!, scenarioCatalog[0]!])).toThrow('Duplicate lab scenario ID');
-    expect(() => runLabSuite(Array.from({ length: 101 }, () => scenarioCatalog[0]!))).toThrow('Lab suite limit');
+    expect(() => runLabSuite([scenarioCatalog[0]!, scenarioCatalog[0]!])).toThrow(
+      'Duplicate lab scenario ID',
+    );
+    expect(() => runLabSuite(Array.from({ length: 101 }, () => scenarioCatalog[0]!))).toThrow(
+      'Lab suite limit',
+    );
   });
 
   test('empty lab summaries do not divide by zero or invent a success rate', () => {
@@ -59,7 +63,9 @@ describe('independently scored local scenarios', () => {
   test('reports outcome changes while binding comparisons to the same scenario ID', () => {
     const first = runLabScenario(scenarioCatalog[0]!);
     expect(compareLabReports(first, first).changed).toBe(false);
-    expect(() => compareLabReports(first, runLabScenario(scenarioCatalog[1]!))).toThrow('Lab scenario IDs differ');
+    expect(() => compareLabReports(first, runLabScenario(scenarioCatalog[1]!))).toThrow(
+      'Lab scenario IDs differ',
+    );
   });
 
   test('preserves the independently computed canonical benchmark', () => {

@@ -2,10 +2,14 @@ import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { verifyTraceBundle } from '../src/inspection/bundle';
 test.beforeEach(async ({ page }) => {
-  await page.goto('/'); await page.getByRole('button', { name: 'Workbench', exact: true }).click();
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Workbench', exact: true }).click();
   await page.getByRole('tab', { name: 'Traces', exact: true }).click();
 });
-test('reconstructs and filters a synthetic bundle with causal evidence and redacted output', async ({ page, context }) => {
+test('reconstructs and filters a synthetic bundle with causal evidence and redacted output', async ({
+  page,
+  context,
+}) => {
   await context.setOffline(true);
   await page.getByRole('button', { name: 'Generate sandbox bundle' }).click();
   await expect(page.getByRole('status')).toContainText('Verified internally · not authenticated');
@@ -14,7 +18,9 @@ test('reconstructs and filters a synthetic bundle with causal evidence and redac
   await page.getByRole('combobox', { name: 'Trace outcome', exact: true }).selectOption('BLOCK');
   await expect(page.getByRole('table', { name: 'Trace events' }).getByRole('row')).toHaveCount(2);
   await page.getByRole('combobox', { name: 'Trace outcome', exact: true }).selectOption('all');
-  await page.getByRole('combobox', { name: 'Trace event type', exact: true }).selectOption('TOOL_OBSERVATION');
+  await page
+    .getByRole('combobox', { name: 'Trace event type', exact: true })
+    .selectOption('TOOL_OBSERVATION');
   await page.getByRole('table', { name: 'Trace events' }).getByRole('button').first().click();
   await expect(page.getByLabel('Event world delta JSON')).toHaveValue(/fieldsFilled/);
   await expect(page.getByLabel('Event causal links JSON')).toHaveValue(/observation/);
@@ -22,9 +28,13 @@ test('reconstructs and filters a synthetic bundle with causal evidence and redac
   await expect(page.getByLabel('Trace report JSON')).not.toHaveValue(/fieldsFilled/);
   const audit = await new AxeBuilder({ page }).include('#workbench-workspace').analyze();
   expect(audit.violations).toEqual([]);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(
+    false,
+  );
 });
-test('import editing invalidates verification and rejects a forged observation', async ({ page }) => {
+test('import editing invalidates verification and rejects a forged observation', async ({
+  page,
+}) => {
   await page.getByRole('button', { name: 'Generate sandbox bundle' }).click();
   const original = await page.getByLabel('Trace bundle JSON', { exact: true }).inputValue();
   const forged = JSON.parse(original);

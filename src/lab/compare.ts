@@ -11,9 +11,13 @@ export function compareLabReports(before: LabReport, after: LabReport) {
     proposalChanged: before.checksums.proposal !== after.checksums.proposal,
     traceChanged: before.checksums.trace !== after.checksums.trace,
     lanes: (['standard', 'mandate'] as const).map((lane) => ({
-      lane, before: before.scores[lane], after: after.scores[lane],
-      successChanged: before.scores[lane].exactMandateSuccess !== after.scores[lane].exactMandateSuccess,
-      unauthorizedEffectDelta: after.scores[lane].unauthorizedEffects - before.scores[lane].unauthorizedEffects,
+      lane,
+      before: before.scores[lane],
+      after: after.scores[lane],
+      successChanged:
+        before.scores[lane].exactMandateSuccess !== after.scores[lane].exactMandateSuccess,
+      unauthorizedEffectDelta:
+        after.scores[lane].unauthorizedEffects - before.scores[lane].unauthorizedEffects,
       falseClaimDelta: after.scores[lane].falseClaims - before.scores[lane].falseClaims,
     })),
   });

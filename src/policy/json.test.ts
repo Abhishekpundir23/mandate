@@ -5,8 +5,10 @@ const limits = { bytes: 1024, depth: 4, nodes: 30 };
 
 describe('bounded JSON ingestion', () => {
   test('keeps JSON data and canonicalizes keys without altering array order', () => {
-    expect(parseBoundedJson('{"z":[true,null,2],"a":"ok"}', limits))
-      .toEqual({ a: 'ok', z: [true, null, 2] });
+    expect(parseBoundedJson('{"z":[true,null,2],"a":"ok"}', limits)).toEqual({
+      a: 'ok',
+      z: [true, null, 2],
+    });
   });
 
   test('accepts structural characters inside escaped strings', () => {
@@ -20,7 +22,9 @@ describe('bounded JSON ingestion', () => {
 
   test('accepts the exact depth and rejects the next nesting level', () => {
     expect(parseBoundedJson('[[[0]]]', { ...limits, depth: 3 })).toEqual([[[0]]]);
-    expect(() => parseBoundedJson('[[[[0]]]]', { ...limits, depth: 3 })).toThrow('JSON depth limit');
+    expect(() => parseBoundedJson('[[[[0]]]]', { ...limits, depth: 3 })).toThrow(
+      'JSON depth limit',
+    );
   });
 
   test('counts containers and primitive values against the node budget', () => {
@@ -28,8 +32,9 @@ describe('bounded JSON ingestion', () => {
     expect(() => parseBoundedJson('[1,2,3]', { ...limits, nodes: 3 })).toThrow('JSON node limit');
   });
 
-  test.each(['', '{', '[1,]', 'NaN', 'undefined', '{"x":1e999}', '\ufeff{}']) (
-    'rejects malformed or non-finite JSON %j', (text) => {
+  test.each(['', '{', '[1,]', 'NaN', 'undefined', '{"x":1e999}', '\ufeff{}'])(
+    'rejects malformed or non-finite JSON %j',
+    (text) => {
       expect(() => parseBoundedJson(text, limits)).toThrow();
     },
   );
@@ -58,13 +63,21 @@ describe('bounded JSON ingestion', () => {
 describe('object API data boundary', () => {
   test('rejects accessors without invoking them', () => {
     let reads = 0;
-    const input = Object.defineProperty({}, 'secret', { enumerable: true, get() { reads += 1; return 'x'; } });
+    const input = Object.defineProperty({}, 'secret', {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return 'x';
+      },
+    });
     expect(() => normalizeBoundedJson(input, limits)).toThrow('JSON data properties');
     expect(reads).toBe(0);
   });
 
   test('rejects non-enumerable properties, symbol keys and custom prototypes', () => {
-    expect(() => normalizeBoundedJson(Object.defineProperty({}, 'x', { value: 1 }), limits)).toThrow();
+    expect(() =>
+      normalizeBoundedJson(Object.defineProperty({}, 'x', { value: 1 }), limits),
+    ).toThrow();
     expect(() => normalizeBoundedJson({ [Symbol('x')]: 1 }, limits)).toThrow();
     expect(() => normalizeBoundedJson(Object.create({ inherited: 1 }), limits)).toThrow();
   });

@@ -11,7 +11,8 @@ import { verifySession } from './verify';
 import type { Session, SessionRecord } from './types';
 
 function bounded(session: Session): Session {
-  if (utf8Length(JSON.stringify(session)) > sessionLimits.bytes) throw new Error('Session byte limit');
+  if (utf8Length(JSON.stringify(session)) > sessionLimits.bytes)
+    throw new Error('Session byte limit');
   return freezeData(session);
 }
 
@@ -42,27 +43,49 @@ function appendValidated(session: Session, snapshot: AuthoritySnapshot, input: u
     previousHash: session.terminalHash,
   };
   const record: SessionRecord = { ...payload, hash: sessionRecordHash(payload) };
-  return bounded({ ...session, records: [...session.records, record], recordCount: record.sequence, terminalHash: record.hash });
+  return bounded({
+    ...session,
+    records: [...session.records, record],
+    recordCount: record.sequence,
+    terminalHash: record.hash,
+  });
 }
 
 export function appendSessionCheck(session: Session, action: unknown): Session {
-  const verified = verifySession(JSON.stringify(session));
+  const verified = verifySession(JSON.stringify(normalizeBoundedJson(session, sessionLimits)));
   if (!verified.ok) throw new Error('Invalid session');
   const snapshot = parsePolicyJson(JSON.stringify(verified.session.policy));
   return appendValidated(verified.session, snapshot, action);
 }
 
 /** Batch API avoids repeatedly replaying an already owned immutable prefix. */
-export function recordSession(policyText: string, actions: readonly unknown[], id: string, label = ''): Session {
+export function recordSession(
+  policyText: string,
+  actions: readonly unknown[],
+  id: string,
+  label = '',
+): Session {
   if (!Array.isArray(actions) || actions.length > 500) throw new Error('Session record limit');
+  if (
+    Object.getOwnPropertySymbols(actions).length > 0 ||
+    Object.getOwnPropertyNames(actions).length !== actions.length + 1
+  )
+    throw new Error('Invalid action list');
+  const ownedActions: unknown[] = [];
+  for (let index = 0; index < actions.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(actions, String(index));
+    if (descriptor === undefined || !('value' in descriptor) || !descriptor.enumerable)
+      throw new Error('Invalid action list');
+    ownedActions.push(normalizeBoundedJson(descriptor.value, actionJsonLimits));
+  }
   let session = createSession(policyText, id, label);
   const snapshot = parsePolicyJson(policyText);
-  for (const action of actions) session = appendValidated(session, snapshot, action);
+  for (const action of ownedActions) session = appendValidated(session, snapshot, action);
   return session;
 }
 
 export function serializeSession(session: Session): string {
-  const text = JSON.stringify(session);
+  const text = JSON.stringify(normalizeBoundedJson(session, sessionLimits));
   const verified = verifySession(text);
   if (!verified.ok) throw new Error('Invalid session');
   const readable = JSON.stringify(verified.session, null, 2);

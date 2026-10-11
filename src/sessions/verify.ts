@@ -17,7 +17,10 @@ export function verifySession(text: string): SessionVerification {
     session = sessionSchema.parse(parseBoundedJson(text, sessionLimits));
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
-    return failure({ code: /limit|too large/i.test(message) ? 'SIZE' : 'FORMAT', message: 'Session must match the bounded supported format.' });
+    return failure({
+      code: /limit|too large/i.test(message) ? 'SIZE' : 'FORMAT',
+      message: 'Session must match the bounded supported format.',
+    });
   }
   let snapshot;
   try {
@@ -39,18 +42,36 @@ export function verifySession(text: string): SessionVerification {
     const record = session.records[index]!;
     const sequence = index + 1;
     if (record.sequence !== sequence) {
-      return failure({ code: 'SEQUENCE', sequence, message: 'Session sequence is not contiguous.' });
+      return failure({
+        code: 'SEQUENCE',
+        sequence,
+        message: 'Session sequence is not contiguous.',
+      });
     }
     if (record.previousHash !== previousHash || record.hash !== sessionRecordHash(record)) {
       return failure({ code: 'RECORD', sequence, message: 'Record hash chain does not match.' });
     }
     try {
-      const expected = checkAction(snapshot, { expectedPolicyDigest: snapshot.policyDigest, action: record.action });
-      if (canonicalize(normalizeJsonValue(expected)) !== canonicalize(normalizeJsonValue(record.result))) {
-        return failure({ code: 'REPLAY', sequence, message: 'Recorded decision does not match independent policy replay.' });
+      const expected = checkAction(snapshot, {
+        expectedPolicyDigest: snapshot.policyDigest,
+        action: record.action,
+      });
+      if (
+        canonicalize(normalizeJsonValue(expected)) !==
+        canonicalize(normalizeJsonValue(record.result))
+      ) {
+        return failure({
+          code: 'REPLAY',
+          sequence,
+          message: 'Recorded decision does not match independent policy replay.',
+        });
       }
     } catch {
-      return failure({ code: 'REPLAY', sequence, message: 'Declared action cannot be replayed under the bundled policy.' });
+      return failure({
+        code: 'REPLAY',
+        sequence,
+        message: 'Declared action cannot be replayed under the bundled policy.',
+      });
     }
     previousHash = record.hash;
   }

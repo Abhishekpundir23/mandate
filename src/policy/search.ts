@@ -28,18 +28,30 @@ const querySchema = z.strictObject({
   pageSize: z.number().int().min(1).max(100).optional(),
 });
 
-export function searchClauses(snapshot: AuthoritySnapshot, query: ClauseQuery = {}): ClauseSearchResult {
+export function searchClauses(
+  snapshot: AuthoritySnapshot,
+  query: ClauseQuery = {},
+): ClauseSearchResult {
   const parsed = querySchema.safeParse(query);
   if (!parsed.success) throw new Error('Invalid clause query');
   const options = parsed.data;
   const view = inspectVersion(snapshot, options.version ?? snapshot.current.version);
   const candidates = options.includeRetired ? view.clauses : view.activeClauses;
   const text = options.text?.trim().toLowerCase() ?? '';
-  const matches = candidates.filter((clause) =>
-    (options.kind === undefined || clause.kind === options.kind)
-    && [clause.id, clause.statement, clause.source.turnId, clause.source.quote,
-      clause.selector?.resource ?? '', clause.selector?.tool ?? '', clause.selector?.operation ?? '']
-      .some((field) => field.toLowerCase().includes(text)))
+  const matches = candidates
+    .filter(
+      (clause) =>
+        (options.kind === undefined || clause.kind === options.kind) &&
+        [
+          clause.id,
+          clause.statement,
+          clause.source.turnId,
+          clause.source.quote,
+          clause.selector?.resource ?? '',
+          clause.selector?.tool ?? '',
+          clause.selector?.operation ?? '',
+        ].some((field) => field.toLowerCase().includes(text)),
+    )
     .sort((a, b) => a.id.localeCompare(b.id));
   const page = options.page ?? 1;
   const pageSize = options.pageSize ?? 20;

@@ -19,8 +19,12 @@ test('portable parser retains a validated immutable policy document', () => {
 });
 
 test('portable digest remains compatible with Node SHA-256 over canonical policy', () => {
-  const policy = JSON.parse(readFileSync('integrations/mcp/examples/draft-only-policy.json', 'utf8'));
-  const expected = createHash('sha256').update(canonicalize(normalizeJsonValue(policy))).digest('hex');
+  const policy = JSON.parse(
+    readFileSync('integrations/mcp/examples/draft-only-policy.json', 'utf8'),
+  );
+  const expected = createHash('sha256')
+    .update(canonicalize(normalizeJsonValue(policy)))
+    .digest('hex');
   expect(parse(policy).policyDigest).toBe(expected);
 });
 
@@ -28,7 +32,12 @@ test('policy digest ignores key order and whitespace but binds policy content', 
   const value = makePolicy();
   const compact = parse(value);
   const pretty = parsePolicyJson(JSON.stringify(value, null, 4));
-  const ordered = parse({ diffs: value.diffs, repositories: value.repositories, policyId: value.policyId, schemaVersion: 1 });
+  const ordered = parse({
+    diffs: value.diffs,
+    repositories: value.repositories,
+    policyId: value.policyId,
+    schemaVersion: 1,
+  });
   expect(pretty.policyDigest).toBe(compact.policyDigest);
   expect(ordered.policyDigest).toBe(compact.policyDigest);
   expect(parse({ ...value, policyId: 'different' }).policyDigest).not.toBe(compact.policyDigest);
@@ -37,9 +46,16 @@ test('policy digest ignores key order and whitespace but binds policy content', 
 test.each([false, true])('retains atomic evidence references, reverse order %s', (reverse) => {
   const ops = [
     { op: 'ADD' as const, clause: clause('commit', 'MUST') },
-    { op: 'ADD' as const, clause: clause('evidence', 'EVIDENCE', { evidenceRequirement: { forClauseId: 'commit', fact: 'created', equals: true } }) },
+    {
+      op: 'ADD' as const,
+      clause: clause('evidence', 'EVIDENCE', {
+        evidenceRequirement: { forClauseId: 'commit', fact: 'created', equals: true },
+      }),
+    },
   ];
-  const snapshot = parse(makePolicy({ diffs: [diff(1, 'turn-1', reverse ? [...ops].reverse() : ops)] }));
+  const snapshot = parse(
+    makePolicy({ diffs: [diff(1, 'turn-1', reverse ? [...ops].reverse() : ops)] }),
+  );
   expect(snapshot.current.clauses).toHaveLength(2);
 });
 
@@ -49,6 +65,28 @@ test('limits pathological depth before recursive policy validation', () => {
 });
 
 test('rejects duplicate repositories and selectors inconsistent with capabilities', () => {
-  expect(() => parse(makePolicy({ repositories: [{ id: 'mandate', remotes: [] }, { id: 'mandate', remotes: [] }] }))).toThrow();
-  expect(() => parse(makePolicy({ diffs: [diff(1, 'turn-1', [{ op: 'ADD', clause: clause('bad', 'MAY', { selector: { tool: 'workspace', operation: 'push' } }) }])] }))).toThrow();
+  expect(() =>
+    parse(
+      makePolicy({
+        repositories: [
+          { id: 'mandate', remotes: [] },
+          { id: 'mandate', remotes: [] },
+        ],
+      }),
+    ),
+  ).toThrow();
+  expect(() =>
+    parse(
+      makePolicy({
+        diffs: [
+          diff(1, 'turn-1', [
+            {
+              op: 'ADD',
+              clause: clause('bad', 'MAY', { selector: { tool: 'workspace', operation: 'push' } }),
+            },
+          ]),
+        ],
+      }),
+    ),
+  ).toThrow();
 });

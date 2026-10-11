@@ -56,3 +56,16 @@ MANDATE addresses this at the causal boundary: compile ordered user intent into 
 **A plan is not permission, memory is not authority, and fluent prose is not evidence.** The more capable a coding agent becomes, the less acceptable it is to leave authorization as an informal prompt-reading convention. Agent products should make authority a versioned runtime primitive, gate effects where they occur, and grade outcomes from observations—not from the agent's confidence.
 
 This claim is intentionally bounded. MANDATE demonstrates the approach over its current deterministic 15-scenario catalog and the production subset covered by its closed-world analyzer; it does not claim a proof over arbitrary JavaScript, arbitrary third-party behavior, or every real-world workflow.
+
+## 2026-10-11: Local authority developer workbench
+
+- Added portable bounded policy APIs shared by the browser, MCP and CLI, plus immutable revision authoring, history, diagnostics and action explanations.
+- Added policy-bound advisory sessions with independent decision replay, declared impact comparisons and qualification profiles with literal criteria.
+- Added strict custom sandbox runs, deterministic scenario recipes, paired trace reconstruction, causal inspection and adversarial campaigns with positive controls.
+- Added portable workspace bundles with nested validation, policy cross-references and reproducible manifests.
+- Added offline desktop/mobile journeys and accessible editors; the canonical benchmark remains Standard 5/15 and Mandate 15/15 with checksum `1c48b617`.
+- Standardized formatting of new maintained files and added an exact tracked-source counter. Counts distinguish tests from product and tooling code; dependencies and generated artifacts are excluded.
+
+Decision: retain these local developer workflows. Integrity results remain unauthenticated, all coding checks remain advisory, and sandbox evidence stays separate from external execution.
+
+Qualification: 1,392 root tests, 83 MCP tests, 75 CLI tests and 58 desktop/mobile browser checks pass. All six required coverage-directory gates pass; overall line coverage is 94.98%. The complete production security regression reports zero forbidden/unknown effects, and npm audit reports zero known vulnerabilities. See the [qualification record](workbench-validation.md) for commands, limits and counts.

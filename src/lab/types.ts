@@ -14,7 +14,11 @@ export interface LabReport {
   readonly title: string;
   readonly comparison: ComparisonRun;
   readonly scores: { readonly standard: ScenarioScore; readonly mandate: ScenarioScore };
-  readonly checksums: { readonly scenario: string; readonly proposal: string; readonly trace: string };
+  readonly checksums: {
+    readonly scenario: string;
+    readonly proposal: string;
+    readonly trace: string;
+  };
   readonly diagnostics: readonly LabDiagnostic[];
 }
 

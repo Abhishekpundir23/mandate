@@ -9,7 +9,12 @@ describe('bounded explicit data edits', () => {
       { operation: 'SET', path: ['new'], value: { exact: true } },
       { operation: 'DELETE', path: ['list', 0] },
     ]);
-    expect(result).toEqual({ nested: { value: false }, list: ['b'], keep: null, new: { exact: true } });
+    expect(result).toEqual({
+      nested: { value: false },
+      list: ['b'],
+      keep: null,
+      new: { exact: true },
+    });
     expect(JSON.stringify(source)).toBe(before);
     expect(Object.isFrozen(result)).toBe(true);
   });
@@ -32,12 +37,22 @@ describe('bounded explicit data edits', () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
   test('limits changes and path depth before applying anything', () => {
-    expect(() => applyDataEdits({}, Array.from({ length: 9 }, (_, i) => ({ operation: 'SET', path: ['k' + i], value: i })))).toThrow();
-    expect(() => applyDataEdits({}, [{ operation: 'SET', path: Array.from({ length: 17 }, () => 'inner'), value: true }])).toThrow();
+    expect(() =>
+      applyDataEdits(
+        {},
+        Array.from({ length: 9 }, (_, i) => ({ operation: 'SET', path: ['k' + i], value: i })),
+      ),
+    ).toThrow();
+    expect(() =>
+      applyDataEdits({}, [
+        { operation: 'SET', path: Array.from({ length: 17 }, () => 'inner'), value: true },
+      ]),
+    ).toThrow();
   });
   test('empty edits are a positive control and return independent owned data', () => {
     const source = { nested: { value: true } };
     const result = applyDataEdits(source, []);
-    expect(result).toEqual(source); expect(result).not.toBe(source);
+    expect(result).toEqual(source);
+    expect(result).not.toBe(source);
   });
 });

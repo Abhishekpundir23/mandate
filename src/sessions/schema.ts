@@ -4,7 +4,11 @@ import { policySchema } from '../policy/schema';
 import { actionCheckResultSchema } from '../policy/service';
 import type { JsonLimits } from '../policy/json';
 
-export const sessionLimits: JsonLimits = Object.freeze({ bytes: 1024 * 1024, depth: 32, nodes: 100_000 });
+export const sessionLimits: JsonLimits = Object.freeze({
+  bytes: 1024 * 1024,
+  depth: 32,
+  nodes: 100_000,
+});
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 export const sessionIdentitySchema = z.strictObject({
   sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),

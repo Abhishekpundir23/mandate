@@ -6,10 +6,26 @@ import { summarizeSession } from './summary';
 import { compareSessions } from './compare';
 import { redactSession } from './redact';
 
-const read = (path: string) => ({ operation: 'workspace.readFile', args: { repositoryId: 'mandate', path } });
-const push = { operation: 'git.push', args: { repositoryId: 'mandate', remoteId: 'origin', ref: 'refs/heads/main', commitOid: 'a'.repeat(40) } };
+const read = (path: string) => ({
+  operation: 'workspace.readFile',
+  args: { repositoryId: 'mandate', path },
+});
+const push = {
+  operation: 'git.push',
+  args: {
+    repositoryId: 'mandate',
+    remoteId: 'origin',
+    ref: 'refs/heads/main',
+    commitOid: 'a'.repeat(40),
+  },
+};
 const policy = JSON.stringify(getPolicyTemplate('draft-only').policy);
-const session = recordSession(policy, [read('README.md'), push, read('src/main.tsx')], 'query', 'A private label');
+const session = recordSession(
+  policy,
+  [read('README.md'), push, read('src/main.tsx')],
+  'query',
+  'A private label',
+);
 
 describe('session queries', () => {
   test('filters outcomes before paginating and preserves chronological order', () => {
@@ -20,13 +36,20 @@ describe('session queries', () => {
   });
 
   test('combines operation, repository, text and sequence filters', () => {
-    const result = querySession(session, { operation: 'workspace.readFile', repositoryId: 'mandate', text: 'src/', fromSequence: 2 });
+    const result = querySession(session, {
+      operation: 'workspace.readFile',
+      repositoryId: 'mandate',
+      text: 'src/',
+      fromSequence: 2,
+    });
     expect(result.items.map((item) => item.sequence)).toEqual([3]);
     expect(querySession(session, { repositoryId: 'other' }).total).toBe(0);
   });
 
   test('supports newest-first review without mutating the source', () => {
-    expect(querySession(session, { order: 'desc' }).items.map((item) => item.sequence)).toEqual([3, 2, 1]);
+    expect(querySession(session, { order: 'desc' }).items.map((item) => item.sequence)).toEqual([
+      3, 2, 1,
+    ]);
     expect(session.records.map((item) => item.sequence)).toEqual([1, 2, 3]);
   });
 
@@ -37,11 +60,15 @@ describe('session queries', () => {
     expect(result.pages).toBe(0);
   });
 
-  test.each([{ page: 0 }, { pageSize: 101 }, { page: 1.1 }, { text: 'x'.repeat(257) }, { fromSequence: 3, toSequence: 1 }])(
-    'rejects invalid query %#', (query) => {
-      expect(() => querySession(session, query)).toThrow('Invalid session query');
-    },
-  );
+  test.each([
+    { page: 0 },
+    { pageSize: 101 },
+    { page: 1.1 },
+    { text: 'x'.repeat(257) },
+    { fromSequence: 3, toSequence: 1 },
+  ])('rejects invalid query %#', (query) => {
+    expect(() => querySession(session, query)).toThrow('Invalid session query');
+  });
 });
 
 describe('session summaries and comparisons', () => {
@@ -56,16 +83,34 @@ describe('session summaries and comparisons', () => {
   });
 
   test('distinguishes decision changes for the same proposed action', () => {
-    const commit = { operation: 'git.commit', args: { repositoryId: 'mandate', treeDigest: 'a'.repeat(64), messageDigest: 'b'.repeat(64) } };
+    const commit = {
+      operation: 'git.commit',
+      args: { repositoryId: 'mandate', treeDigest: 'a'.repeat(64), messageDigest: 'b'.repeat(64) },
+    };
     const before = recordSession(policy, [commit], 'before', '');
-    const after = recordSession(JSON.stringify(getPolicyTemplate('review-required').policy), [commit], 'after', '');
+    const after = recordSession(
+      JSON.stringify(getPolicyTemplate('review-required').policy),
+      [commit],
+      'after',
+      '',
+    );
     const result = compareSessions(before, after);
     expect(result.policyChanged).toBe(true);
-    expect(result.changes[0]).toMatchObject({ sequence: 1, kind: 'DECISION_CHANGED', beforeOutcome: 'ALLOW', afterOutcome: 'CONFIRM' });
+    expect(result.changes[0]).toMatchObject({
+      sequence: 1,
+      kind: 'DECISION_CHANGED',
+      beforeOutcome: 'ALLOW',
+      afterOutcome: 'CONFIRM',
+    });
   });
 
   test('distinguishes edited actions from changed decisions and added records', () => {
-    const after = recordSession(policy, [read('different.txt'), push, read('src/main.tsx'), read('extra.txt')], 'after', '');
+    const after = recordSession(
+      policy,
+      [read('different.txt'), push, read('src/main.tsx'), read('extra.txt')],
+      'after',
+      '',
+    );
     const result = compareSessions(session, after);
     expect(result.changes.map((item) => item.kind)).toEqual(['ACTION_CHANGED', 'ADDED']);
     expect(result.unchangedCount).toBe(2);
@@ -73,7 +118,10 @@ describe('session summaries and comparisons', () => {
 
   test('reports removals and identical sessions deterministically', () => {
     const shorter = recordSession(policy, [read('README.md')], 'short', '');
-    expect(compareSessions(session, shorter).changes.map((item) => item.kind)).toEqual(['REMOVED', 'REMOVED']);
+    expect(compareSessions(session, shorter).changes.map((item) => item.kind)).toEqual([
+      'REMOVED',
+      'REMOVED',
+    ]);
     expect(compareSessions(session, session).changes).toEqual([]);
   });
 });
@@ -93,7 +141,12 @@ describe('redacted reports', () => {
   });
 
   test('gives repeated resources stable aliases while separating distinct resources', () => {
-    const repeated = recordSession(policy, [read('README.md'), read('README.md'), read('other.txt')], 'aliases', '');
+    const repeated = recordSession(
+      policy,
+      [read('README.md'), read('README.md'), read('other.txt')],
+      'aliases',
+      '',
+    );
     const report = redactSession(repeated);
     expect(report.entries[0]?.resourceAlias).toBe(report.entries[1]?.resourceAlias);
     expect(report.entries[0]?.resourceAlias).not.toBe(report.entries[2]?.resourceAlias);

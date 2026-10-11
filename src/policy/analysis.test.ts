@@ -4,9 +4,20 @@ import type { ActionSelector } from '../domain/types';
 import { parsePolicyJson } from './parse';
 import { analyzePolicy, selectorsOverlap, selectorIncludes } from './analysis';
 
-const parse = (clauses: ReturnType<typeof clause>[]) => parsePolicyJson(JSON.stringify(makePolicy({
-  diffs: [diff(1, 'turn-1', clauses.map((item) => ({ op: 'ADD', clause: item })))],
-})));
+const parse = (clauses: ReturnType<typeof clause>[]) =>
+  parsePolicyJson(
+    JSON.stringify(
+      makePolicy({
+        diffs: [
+          diff(
+            1,
+            'turn-1',
+            clauses.map((item) => ({ op: 'ADD', clause: item })),
+          ),
+        ],
+      }),
+    ),
+  );
 
 describe('selector relationships', () => {
   test.each([
@@ -18,10 +29,13 @@ describe('selector relationships', () => {
     [{ resource: 'repository:one' }, { resource: 'repository:two' }, false],
     [{ tool: 'git' }, { resource: 'repository:mandate' }, true],
     [{ operation: 'readFile' }, { effect: 'EXTERNAL_TRANSMIT' }, false],
-  ] as [ActionSelector, ActionSelector, boolean][])('finds realizable overlap %#', (left, right, expected) => {
-    expect(selectorsOverlap(left, right)).toBe(expected);
-    expect(selectorsOverlap(right, left)).toBe(expected);
-  });
+  ] as [ActionSelector, ActionSelector, boolean][])(
+    'finds realizable overlap %#',
+    (left, right, expected) => {
+      expect(selectorsOverlap(left, right)).toBe(expected);
+      expect(selectorsOverlap(right, left)).toBe(expected);
+    },
+  );
 
   test('distinguishes partial overlap from full inclusion', () => {
     expect(selectorIncludes({ tool: 'git' }, { tool: 'git', operation: 'commit' })).toBe(true);
@@ -37,13 +51,21 @@ describe('advisory policy analysis', () => {
     const analysis = analyzePolicy(snapshot);
     expect(analysis.issues.map((issue) => issue.code)).toContain('DENIAL_OVERRIDES_GRANT');
     expect(analysis.issues.map((issue) => issue.code)).toContain('UNREACHABLE_GRANT');
-    expect(analysis.issues.find((issue) => issue.code === 'DENIAL_OVERRIDES_GRANT')?.clauseIds).toEqual(['allow', 'deny']);
+    expect(
+      analysis.issues.find((issue) => issue.code === 'DENIAL_OVERRIDES_GRANT')?.clauseIds,
+    ).toEqual(['allow', 'deny']);
   });
 
   test('does not call a broad grant unreachable after one exact-resource denial', () => {
     const snapshot = parse([
       clause('broad', 'MAY', { selector: { tool: 'workspace', operation: 'readFile' } }),
-      clause('specific', 'MUST_NOT', { selector: { tool: 'workspace', operation: 'readFile', resource: 'repository:mandate/file:private.txt' } }),
+      clause('specific', 'MUST_NOT', {
+        selector: {
+          tool: 'workspace',
+          operation: 'readFile',
+          resource: 'repository:mandate/file:private.txt',
+        },
+      }),
     ]);
     const analysis = analyzePolicy(snapshot);
     expect(analysis.issues.some((issue) => issue.code === 'DENIAL_OVERRIDES_GRANT')).toBe(true);
@@ -53,14 +75,18 @@ describe('advisory policy analysis', () => {
   test('identifies overlapping duplicate authority without combining distinct kinds', () => {
     const analysis = analyzePolicy(parse([clause('one'), clause('two'), clause('must', 'MUST')]));
     expect(analysis.issues.filter((issue) => issue.code === 'REDUNDANT_AUTHORITY')).toHaveLength(1);
-    expect(analysis.issues.find((issue) => issue.code === 'REDUNDANT_AUTHORITY')?.clauseIds).toEqual(['one', 'two']);
+    expect(
+      analysis.issues.find((issue) => issue.code === 'REDUNDANT_AUTHORITY')?.clauseIds,
+    ).toEqual(['one', 'two']);
   });
 
   test('keeps confirmation visible rather than upgrading it to permission', () => {
-    const analysis = analyzePolicy(parse([
-      clause('grant'),
-      clause('confirm', 'NEEDS_CONFIRMATION', { afterConfirmation: 'MAY' }),
-    ]));
+    const analysis = analyzePolicy(
+      parse([
+        clause('grant'),
+        clause('confirm', 'NEEDS_CONFIRMATION', { afterConfirmation: 'MAY' }),
+      ]),
+    );
     expect(analysis.issues.some((issue) => issue.code === 'CONFIRMATION_REQUIRED')).toBe(true);
     expect(analysis.counts.NEEDS_CONFIRMATION).toBe(1);
   });
@@ -73,10 +99,14 @@ describe('advisory policy analysis', () => {
   });
 
   test('separates evidence obligations from effect grants', () => {
-    const analysis = analyzePolicy(parse([
-      clause('grant'),
-      clause('proof', 'EVIDENCE', { evidenceRequirement: { forClauseId: 'grant', fact: 'created', equals: true } }),
-    ]));
+    const analysis = analyzePolicy(
+      parse([
+        clause('grant'),
+        clause('proof', 'EVIDENCE', {
+          evidenceRequirement: { forClauseId: 'grant', fact: 'created', equals: true },
+        }),
+      ]),
+    );
     expect(analysis.counts.EVIDENCE).toBe(1);
     expect(analysis.issues).toEqual([]);
   });

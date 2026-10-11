@@ -13,11 +13,23 @@ export function validateWorkspaceEntry(input: unknown): WorkspaceEntry {
   let payload: unknown;
   if (entry.kind === 'POLICY') payload = parsePolicyJson(text).document;
   else if (entry.kind === 'SESSION') {
-    const verified = verifySession(text); if (!verified.ok) throw new Error('INVALID_ENTRY'); payload = verified.session;
+    const verified = verifySession(text);
+    if (!verified.ok) throw new Error('INVALID_ENTRY');
+    payload = verified.session;
   } else if (entry.kind === 'CASES') payload = parseCaseSuite(text);
   else if (entry.kind === 'TRACE') {
-    const verified = verifyTraceBundle(text); if (!verified.ok) throw new Error('INVALID_ENTRY'); payload = verified.bundle;
+    const verified = verifyTraceBundle(text);
+    if (!verified.ok) throw new Error('INVALID_ENTRY');
+    payload = verified.bundle;
   } else payload = parseCampaign(text);
-  return freezeData({ id: entry.id, label: entry.label, kind: entry.kind, references: entry.references, payload });
+  return freezeData({
+    id: entry.id,
+    label: entry.label,
+    kind: entry.kind,
+    references: entry.references,
+    payload,
+  });
 }
-export function parseWorkspaceEntry(text: string): WorkspaceEntry { return validateWorkspaceEntry(parseBoundedJson(text, workspaceLimits)); }
+export function parseWorkspaceEntry(text: string): WorkspaceEntry {
+  return validateWorkspaceEntry(parseBoundedJson(text, workspaceLimits));
+}

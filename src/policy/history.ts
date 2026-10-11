@@ -30,7 +30,8 @@ export function countClauseKinds(clauses: readonly Clause[]): ClauseCounts {
 
 export function inspectVersion(snapshot: AuthoritySnapshot, number: number): VersionInspection {
   const version = snapshot.versions.find((item) => item.version === number);
-  if (version === undefined || !Number.isSafeInteger(number)) throw new Error('Unknown policy version');
+  if (version === undefined || !Number.isSafeInteger(number))
+    throw new Error('Unknown policy version');
   const active = [...activeClauses(version)].sort((a, b) => a.id.localeCompare(b.id));
   const ids = new Set(active.map((item) => item.id));
   return freezeData({
@@ -41,8 +42,14 @@ export function inspectVersion(snapshot: AuthoritySnapshot, number: number): Ver
     hash: version.hash,
     clauses: version.clauses,
     activeClauses: active,
-    introducedClauseIds: version.clauses.filter((item) => item.introducedIn === number).map((item) => item.id).sort(),
-    retiredClauseIds: version.clauses.filter((item) => !ids.has(item.id)).map((item) => item.id).sort(),
+    introducedClauseIds: version.clauses
+      .filter((item) => item.introducedIn === number)
+      .map((item) => item.id)
+      .sort(),
+    retiredClauseIds: version.clauses
+      .filter((item) => !ids.has(item.id))
+      .map((item) => item.id)
+      .sort(),
     counts: countClauseKinds(active),
   });
 }

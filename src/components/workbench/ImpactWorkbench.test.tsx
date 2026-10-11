@@ -7,7 +7,9 @@ const snapshot = parsePolicyJson(JSON.stringify(getPolicyTemplate('draft-only').
 describe('policy impact workbench', () => {
   test('compares explicit candidates and shows expected outcome transitions', () => {
     render(<ImpactWorkbench snapshot={snapshot} />);
-    fireEvent.change(screen.getByLabelText('Candidate policy JSON'), { target: { value: JSON.stringify(getPolicyTemplate('review-required').policy) } });
+    fireEvent.change(screen.getByLabelText('Candidate policy JSON'), {
+      target: { value: JSON.stringify(getPolicyTemplate('review-required').policy) },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Compare declared cases' }));
     const table = screen.getByRole('table', { name: 'Declared action impact' });
     expect(within(table).getAllByRole('row')).toHaveLength(4);

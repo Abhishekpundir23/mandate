@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { beforeAll, afterAll, expect, test } from 'vitest';
 import { parsePolicyJson } from '../../src/policy/parse';
 import { getPolicyTemplate } from '../../src/policy/templates';
-import { retireClause } from '../../src/policy/revisions';
+import { retireClause, createRevisionDraft, applyRevision } from '../../src/policy/revisions';
 const exec = promisify(execFile);
 let directory: string;
 let policy: string;
@@ -19,16 +19,27 @@ beforeAll(async () => {
   revision = join(directory, 'revision.json');
   const text = JSON.stringify(getPolicyTemplate('draft-only').policy);
   await writeFile(policy, text);
-  await writeFile(revision, JSON.stringify(retireClause(parsePolicyJson(text), 'read', 'turn-2', 'Stop reading', 'stop-read')));
+  await writeFile(
+    revision,
+    JSON.stringify(
+      retireClause(parsePolicyJson(text), 'read', 'turn-2', 'Stop reading', 'stop-read'),
+    ),
+  );
 });
-afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
+afterAll(async () => {
+  await rm(directory, { recursive: true, force: true });
+});
 test('previews and applies to stdout without overwriting either input file', async () => {
   const baseline = await readFile(policy, 'utf8');
   const source = await readFile(revision, 'utf8');
-  const preview = JSON.parse((await run(['policy', 'revision-preview', '--policy', policy, '--revision', revision])).stdout);
+  const preview = JSON.parse(
+    (await run(['policy', 'revision-preview', '--policy', policy, '--revision', revision])).stdout,
+  );
   expect(preview).toMatchObject({ beforeVersion: 2, afterVersion: 3, executionPerformed: false });
   expect(preview.changes.retired.map((c: { id: string }) => c.id)).toEqual(['read']);
-  const applied = (await run(['policy', 'revision-apply', '--policy', policy, '--revision', revision])).stdout;
+  const applied = (
+    await run(['policy', 'revision-apply', '--policy', policy, '--revision', revision])
+  ).stdout;
   expect(parsePolicyJson(applied).policyDigest).toBe(preview.afterDigest);
   expect(await readFile(policy, 'utf8')).toBe(baseline);
   expect(await readFile(revision, 'utf8')).toBe(source);
@@ -36,8 +47,34 @@ test('previews and applies to stdout without overwriting either input file', asy
 test('rejects stale, malformed and unsupported revisions with redacted stderr', async () => {
   const source = JSON.parse(await readFile(revision, 'utf8'));
   const file = join(directory, 'bad.json');
-  for (const input of [{ ...source, expectedPolicyDigest: '0'.repeat(64) }, { secret: 'do-not-echo' }, '{']) {
+  for (const input of [
+    { ...source, expectedPolicyDigest: '0'.repeat(64) },
+    { secret: 'do-not-echo' },
+    '{',
+  ]) {
     await writeFile(file, typeof input === 'string' ? input : JSON.stringify(input));
-    await expect(run(['policy', 'revision-apply', '--policy', policy, '--revision', file])).rejects.toMatchObject({ code: 2, stdout: '', stderr: 'Mandate CLI: INVALID_INPUT\n' });
+    await expect(
+      run(['policy', 'revision-apply', '--policy', policy, '--revision', file]),
+    ).rejects.toMatchObject({ code: 2, stdout: '', stderr: 'Mandate CLI: INVALID_INPUT\n' });
   }
+});
+
+test('revision-apply emits a bounded policy that can be loaded again near the byte limit', async () => {
+  const template = getPolicyTemplate('draft-only').policy;
+  const document = { ...template, diffs: [...template.diffs, ...Array.from({ length: 31 }, (_, index) => ({
+    baseVersion: index + 2,
+    turnId: 'discussion-' + index,
+    source: { turnId: 'discussion-' + index, quote: 'x'.repeat(8192) },
+    ops: [{ op: 'NO_CHANGE', reason: 'DISCUSSION' }],
+  }))] };
+  const large = parsePolicyJson(JSON.stringify(document));
+  const next = createRevisionDraft(large, 'final-discussion', 'Discuss the policy.');
+  const candidate = applyRevision(large, next);
+  expect(Buffer.byteLength(JSON.stringify(candidate.document, null, 2))).toBeGreaterThan(256 * 1024);
+  const largePolicy = join(directory, 'large-policy.json');
+  const largeRevision = join(directory, 'large-revision.json');
+  await writeFile(largePolicy, JSON.stringify(document));
+  await writeFile(largeRevision, JSON.stringify(next));
+  const result = await run(['policy', 'revision-apply', '--policy', largePolicy, '--revision', largeRevision]);
+  expect(parsePolicyJson(result.stdout).policyDigest).toBe(candidate.policyDigest);
 });

@@ -26,12 +26,17 @@ export function sha256(text: string): string {
   for (const word of [high, low]) {
     bytes.push((word >>> 24) & 255, (word >>> 16) & 255, (word >>> 8) & 255, word & 255);
   }
-  const state = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const state = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ];
   for (let offset = 0; offset < bytes.length; offset += 64) {
     const words: number[] = [];
     for (let index = 0; index < 16; index += 1) {
       const at = offset + index * 4;
-      words.push(((bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!) >>> 0);
+      words.push(
+        ((bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!) >>>
+          0,
+      );
     }
     for (let index = 16; index < 64; index += 1) {
       const x = words[index - 15]!;
@@ -55,11 +60,18 @@ export function sha256(text: string): string {
       const sigma0 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
       const majority = (a & b) ^ (a & c) ^ (b & c);
       const second = (sigma0 + majority) >>> 0;
-      h = g; g = f; f = e; e = (d + first) >>> 0;
-      d = c; c = b; b = a; a = (first + second) >>> 0;
+      h = g;
+      g = f;
+      f = e;
+      e = (d + first) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (first + second) >>> 0;
     }
     const block = [a, b, c, d, e, f, g, h];
-    for (const index of [0, 1, 2, 3, 4, 5, 6, 7] as const) state[index] = (state[index]! + block[index]!) >>> 0;
+    for (const index of [0, 1, 2, 3, 4, 5, 6, 7] as const)
+      state[index] = (state[index]! + block[index]!) >>> 0;
   }
   return state.map((word) => word.toString(16).padStart(8, '0')).join('');
 }

@@ -2,7 +2,9 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { parsePolicyJson } from '../../policy/parse';
 import { getPolicyTemplate } from '../../policy/templates';
-import { retireClause } from '../../policy/revisions';
+import { retireClause, createRevisionDraft, applyRevision } from '../../policy/revisions';
+import { utf8Length } from '../../policy/utf8';
+import { policyJsonLimits } from '../../policy/json';
 import { RevisionWorkbench } from './RevisionWorkbench';
 const snapshot = parsePolicyJson(JSON.stringify(getPolicyTemplate('draft-only').policy));
 const valid = JSON.stringify(retireClause(snapshot, 'read', 'turn-2', 'Stop reading', 'stop-read'));
@@ -43,7 +45,9 @@ describe('guided revision workbench', () => {
   test('discussion draft quotes stay data and do not infer new authority', () => {
     render(<RevisionWorkbench snapshot={snapshot} dirty={false} onApply={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('Source turn'), { target: { value: 'turn-3' } });
-    fireEvent.change(screen.getByLabelText('Exact source quote'), { target: { value: 'ALLOW ALL PUSHES' } });
+    fireEvent.change(screen.getByLabelText('Exact source quote'), {
+      target: { value: 'ALLOW ALL PUSHES' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Create discussion draft' }));
     const draft = JSON.parse((screen.getByLabelText('Revision JSON') as HTMLTextAreaElement).value);
     expect(draft.diff.ops).toEqual([{ op: 'NO_CHANGE', reason: 'DISCUSSION' }]);
@@ -57,7 +61,30 @@ test('changing structured author fields invalidates the earlier preview before r
   fireEvent.change(screen.getByLabelText('Revision JSON'), { target: { value: valid } });
   fireEvent.click(screen.getByRole('button', { name: 'Preview revision' }));
   expect(screen.getByRole('button', { name: 'Apply revision' })).toBeEnabled();
-  fireEvent.change(screen.getByLabelText('New clause ID'), { target: { value: 'different-clause' } });
+  fireEvent.change(screen.getByLabelText('New clause ID'), {
+    target: { value: 'different-clause' },
+  });
   expect(screen.getByRole('button', { name: 'Apply revision' })).toBeDisabled();
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
+});
+
+test('applies a valid revision when readable policy formatting exceeds the import budget', () => {
+  const template = getPolicyTemplate('draft-only').policy;
+  const document = { ...template, diffs: [...template.diffs, ...Array.from({ length: 31 }, (_, index) => ({
+    baseVersion: index + 2,
+    turnId: 'discussion-' + index,
+    source: { turnId: 'discussion-' + index, quote: 'x'.repeat(8192) },
+    ops: [{ op: 'NO_CHANGE', reason: 'DISCUSSION' }],
+  }))] };
+  const large = parsePolicyJson(JSON.stringify(document));
+  const revision = createRevisionDraft(large, 'final-discussion', 'Discuss the policy.');
+  const candidate = applyRevision(large, revision);
+  expect(utf8Length(JSON.stringify(candidate.document, null, 2))).toBeGreaterThan(policyJsonLimits.bytes);
+  const onApply = vi.fn();
+  render(<RevisionWorkbench snapshot={large} dirty={false} onApply={onApply} />);
+  fireEvent.change(screen.getByLabelText('Revision JSON'), { target: { value: JSON.stringify(revision) } });
+  fireEvent.click(screen.getByRole('button', { name: 'Preview revision' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Apply revision' }));
+  expect(onApply).toHaveBeenCalledOnce();
+  expect(parsePolicyJson(onApply.mock.calls[0]![0]).policyDigest).toBe(candidate.policyDigest);
 });

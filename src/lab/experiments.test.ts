@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'vitest';
-import { policyExperiments, getPolicyExperiment, runPolicyExperiment, runExperimentSuite } from './experiments';
+import {
+  policyExperiments,
+  getPolicyExperiment,
+  runPolicyExperiment,
+  runExperimentSuite,
+} from './experiments';
 
-const commitOutcomes = (id: string) => runPolicyExperiment(getPolicyExperiment(id)).steps.map((step) => step.actualOutcome);
+const commitOutcomes = (id: string) =>
+  runPolicyExperiment(getPolicyExperiment(id)).steps.map((step) => step.actualOutcome);
 
 describe('authority experiment lab', () => {
   test('pins grant and revocation across historical versions', () => {
@@ -25,13 +31,20 @@ describe('authority experiment lab', () => {
   test('runs the complete maintained experiment suite with real gate decisions', () => {
     const reports = runExperimentSuite(policyExperiments);
     expect(reports.every((report) => report.passed)).toBe(true);
-    expect(reports.flatMap((report) => report.steps).every((step) => step.result.executionPerformed === false)).toBe(true);
+    expect(
+      reports
+        .flatMap((report) => report.steps)
+        .every((step) => step.result.executionPerformed === false),
+    ).toBe(true);
     expect(new Set(policyExperiments.map((item) => item.category)).size).toBeGreaterThanOrEqual(6);
   });
 
   test('reports a mistaken expected outcome instead of blindly trusting the fixture', () => {
     const original = getPolicyExperiment('grant-then-revoke');
-    const experiment = { ...original, steps: original.steps.map((step) => ({ ...step, expected: 'CONFIRM' as const })) };
+    const experiment = {
+      ...original,
+      steps: original.steps.map((step) => ({ ...step, expected: 'CONFIRM' as const })),
+    };
     const report = runPolicyExperiment(experiment);
     expect(report.passed).toBe(false);
     expect(report.steps.map((step) => step.actualOutcome)).toEqual(['ALLOW', 'BLOCK']);

@@ -13,7 +13,11 @@ async function temporary() {
   directories.push(directory);
   return directory;
 }
-afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
+afterEach(async () => {
+  await Promise.all(
+    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
 
 test('accepts exact byte limits and rejects the next byte', async () => {
   const file = join(await temporary(), 'input');
@@ -46,12 +50,19 @@ test('rejects directories and broken links without returning partial content', a
   await expect(readBoundedFile(link, 32)).rejects.toThrow();
 });
 
-test.skipIf(process.platform === 'win32')('rejects a FIFO without waiting for a writer', async () => {
-  const file = join(await temporary(), 'fifo');
-  await exec('mkfifo', [file]);
-  await expect(readBoundedFile(file, 32)).rejects.toThrow();
-}, 1000);
+test.skipIf(process.platform === 'win32')(
+  'rejects a FIFO without waiting for a writer',
+  async () => {
+    const file = join(await temporary(), 'fifo');
+    await exec('mkfifo', [file]);
+    await expect(readBoundedFile(file, 32)).rejects.toThrow();
+  },
+  1000,
+);
 
-test.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid file budget %s', async (limit) => {
-  await expect(readBoundedFile('unused', limit)).rejects.toThrow();
-});
+test.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+  'rejects invalid file budget %s',
+  async (limit) => {
+    await expect(readBoundedFile('unused', limit)).rejects.toThrow();
+  },
+);

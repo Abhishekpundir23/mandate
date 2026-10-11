@@ -2,21 +2,43 @@ import { describe, expect, test } from 'vitest';
 import { getPolicyTemplate } from './templates';
 import { parsePolicyJson } from './parse';
 import { checkAction } from './service';
-import { createRevisionDraft, parseRevision, previewRevision, applyRevision, reviseClause, retireClause } from './revisions';
+import {
+  createRevisionDraft,
+  parseRevision,
+  previewRevision,
+  applyRevision,
+  reviseClause,
+  retireClause,
+} from './revisions';
 
 const policy = () => parsePolicyJson(JSON.stringify(getPolicyTemplate('draft-only').policy));
-const read = { operation: 'workspace.readFile', args: { repositoryId: 'mandate', path: 'README.md' } };
-const push = { operation: 'git.push', args: { repositoryId: 'mandate', remoteId: 'origin', ref: 'refs/heads/main', commitOid: 'a'.repeat(40) } };
+const read = {
+  operation: 'workspace.readFile',
+  args: { repositoryId: 'mandate', path: 'README.md' },
+};
+const push = {
+  operation: 'git.push',
+  args: {
+    repositoryId: 'mandate',
+    remoteId: 'origin',
+    ref: 'refs/heads/main',
+    commitOid: 'a'.repeat(40),
+  },
+};
 function outcome(snapshot: ReturnType<typeof policy>, action: unknown = read) {
-  return checkAction(snapshot, { expectedPolicyDigest: snapshot.policyDigest, action }).decision.outcome;
+  return checkAction(snapshot, { expectedPolicyDigest: snapshot.policyDigest, action }).decision
+    .outcome;
 }
 
 describe('explicit policy revisions', () => {
   test('draft is immutable, digest-bound and discussion never grants authority', () => {
     const original = policy();
     const draft = createRevisionDraft(original, 'turn-2', 'Please discuss pushing changes');
-    expect(draft).toMatchObject({ schemaVersion: 1, expectedPolicyDigest: original.policyDigest,
-      diff: { baseVersion: 2, turnId: 'turn-2', ops: [{ op: 'NO_CHANGE', reason: 'DISCUSSION' }] } });
+    expect(draft).toMatchObject({
+      schemaVersion: 1,
+      expectedPolicyDigest: original.policyDigest,
+      diff: { baseVersion: 2, turnId: 'turn-2', ops: [{ op: 'NO_CHANGE', reason: 'DISCUSSION' }] },
+    });
     expect(Object.isFrozen(draft.diff.ops)).toBe(true);
     const next = applyRevision(original, draft);
     expect(outcome(next, push)).toBe('BLOCK');
@@ -42,7 +64,10 @@ describe('explicit policy revisions', () => {
   test('replacement keeps permanent same-selector tombstones visible', () => {
     const original = policy();
     const draft = reviseClause(original, 'read', 'turn-2', 'Use a narrower rule', {
-      id: 'read-new', kind: 'MAY', statement: 'Read with renewed source', selector: { operation: 'readFile' },
+      id: 'read-new',
+      kind: 'MAY',
+      statement: 'Read with renewed source',
+      selector: { operation: 'readFile' },
     });
     const next = applyRevision(original, draft);
     expect(outcome(next)).toBe('BLOCK');
@@ -52,44 +77,128 @@ describe('explicit policy revisions', () => {
 
   test.each(['deny-push'])('protected clause %s cannot be replaced', (id) => {
     const original = policy();
-    expect(() => reviseClause(original, id, 'turn-2', 'Replace', {
-      id: 'allow-push', kind: 'MAY', statement: 'Push', selector: { operation: 'push' },
-    })).toThrow();
+    expect(() =>
+      reviseClause(original, id, 'turn-2', 'Replace', {
+        id: 'allow-push',
+        kind: 'MAY',
+        statement: 'Push',
+        selector: { operation: 'push' },
+      }),
+    ).toThrow();
   });
 
   test('retiring a denial requires an explicit revocation and does not create a grant', () => {
     const original = policy();
-    const retired = applyRevision(original, retireClause(original, 'deny-push', 'turn-2', 'Retire push denial', 'retire-denial'));
+    const retired = applyRevision(
+      original,
+      retireClause(original, 'deny-push', 'turn-2', 'Retire push denial', 'retire-denial'),
+    );
     expect(outcome(retired, push)).toBe('BLOCK');
-    const cleared = applyRevision(retired, retireClause(retired, 'retire-denial', 'turn-3', 'Retire the denial tombstone explicitly', 'retire-tombstone'));
+    const cleared = applyRevision(
+      retired,
+      retireClause(
+        retired,
+        'retire-denial',
+        'turn-3',
+        'Retire the denial tombstone explicitly',
+        'retire-tombstone',
+      ),
+    );
     const draft = createRevisionDraft(cleared, 'turn-4', 'Allow declared push');
-    const next = applyRevision(cleared, { ...draft, diff: { ...draft.diff, ops: [{ op: 'ADD', clause: {
-      id: 'push', kind: 'MAY', statement: 'Allow push', selector: { operation: 'push' }, source: { ...draft.diff.source },
-    } }] } });
+    const next = applyRevision(cleared, {
+      ...draft,
+      diff: {
+        ...draft.diff,
+        ops: [
+          {
+            op: 'ADD',
+            clause: {
+              id: 'push',
+              kind: 'MAY',
+              statement: 'Allow push',
+              selector: { operation: 'push' },
+              source: { ...draft.diff.source },
+            },
+          },
+        ],
+      },
+    });
     expect(outcome(next, push)).toBe('ALLOW');
   });
 
   test.each([
-    ['digest', (draft: ReturnType<typeof createRevisionDraft>) => ({ ...draft, expectedPolicyDigest: '0'.repeat(64) })],
-    ['version', (draft: ReturnType<typeof createRevisionDraft>) => ({ ...draft, diff: { ...draft.diff, baseVersion: 1 } })],
-    ['provenance', (draft: ReturnType<typeof createRevisionDraft>) => ({ ...draft, diff: { ...draft.diff, source: { turnId: 'wrong', quote: 'quote' } } })],
-    ['duplicate turn', (draft: ReturnType<typeof createRevisionDraft>) => ({ ...draft, diff: { ...draft.diff, turnId: 'turn-1', source: { turnId: 'turn-1', quote: 'quote' } } })],
-    ['unknown property', (draft: ReturnType<typeof createRevisionDraft>) => ({ ...draft, grant: true })],
+    [
+      'digest',
+      (draft: ReturnType<typeof createRevisionDraft>) => ({
+        ...draft,
+        expectedPolicyDigest: '0'.repeat(64),
+      }),
+    ],
+    [
+      'version',
+      (draft: ReturnType<typeof createRevisionDraft>) => ({
+        ...draft,
+        diff: { ...draft.diff, baseVersion: 1 },
+      }),
+    ],
+    [
+      'provenance',
+      (draft: ReturnType<typeof createRevisionDraft>) => ({
+        ...draft,
+        diff: { ...draft.diff, source: { turnId: 'wrong', quote: 'quote' } },
+      }),
+    ],
+    [
+      'duplicate turn',
+      (draft: ReturnType<typeof createRevisionDraft>) => ({
+        ...draft,
+        diff: { ...draft.diff, turnId: 'turn-1', source: { turnId: 'turn-1', quote: 'quote' } },
+      }),
+    ],
+    [
+      'unknown property',
+      (draft: ReturnType<typeof createRevisionDraft>) => ({ ...draft, grant: true }),
+    ],
   ] as const)('rejects %s without mutating the baseline', (_label, alter) => {
     const original = policy();
     const before = JSON.stringify(original);
-    expect(() => applyRevision(original, alter(createRevisionDraft(original, 'turn-2', 'quote')))).toThrow();
+    expect(() =>
+      applyRevision(original, alter(createRevisionDraft(original, 'turn-2', 'quote'))),
+    ).toThrow();
     expect(JSON.stringify(original)).toBe(before);
   });
 
   test('rejects duplicate IDs and mismatched clause quotes atomically', () => {
     const original = policy();
     const draft = createRevisionDraft(original, 'turn-2', 'New quote');
-    const clause = { id: 'read', kind: 'MAY', statement: 'Read', source: { ...draft.diff.source }, selector: { operation: 'readFile' } };
-    expect(() => applyRevision(original, { ...draft, diff: { ...draft.diff, ops: [{ op: 'ADD', clause }] } })).toThrow();
-    expect(() => applyRevision(original, { ...draft, diff: { ...draft.diff, ops: [{ op: 'ADD', clause: {
-      ...clause, id: 'new-read', source: { ...draft.diff.source, quote: 'Other quote' },
-    } }] } })).toThrow();
+    const clause = {
+      id: 'read',
+      kind: 'MAY',
+      statement: 'Read',
+      source: { ...draft.diff.source },
+      selector: { operation: 'readFile' },
+    };
+    expect(() =>
+      applyRevision(original, { ...draft, diff: { ...draft.diff, ops: [{ op: 'ADD', clause }] } }),
+    ).toThrow();
+    expect(() =>
+      applyRevision(original, {
+        ...draft,
+        diff: {
+          ...draft.diff,
+          ops: [
+            {
+              op: 'ADD',
+              clause: {
+                ...clause,
+                id: 'new-read',
+                source: { ...draft.diff.source, quote: 'Other quote' },
+              },
+            },
+          ],
+        },
+      }),
+    ).toThrow();
     expect(outcome(original)).toBe('ALLOW');
   });
 
@@ -108,7 +217,13 @@ describe('explicit policy revisions', () => {
     const draft = createRevisionDraft(policy(), 'turn-2', 'quote');
     let calls = 0;
     const evil = { ...draft };
-    Object.defineProperty(evil, 'diff', { get() { calls++; return draft.diff; }, enumerable: true });
+    Object.defineProperty(evil, 'diff', {
+      get() {
+        calls++;
+        return draft.diff;
+      },
+      enumerable: true,
+    });
     expect(() => applyRevision(policy(), evil)).toThrow();
     expect(calls).toBe(0);
   });

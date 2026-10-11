@@ -26,13 +26,30 @@ export function compareSessions(left: Session, right: Session): SessionCompariso
   for (let index = 0; index < length; index += 1) {
     const before = left.records[index];
     const after = right.records[index];
-    const actionChanged = before !== undefined && after !== undefined
-      && canonicalize(normalizeJsonValue(before.action)) !== canonicalize(normalizeJsonValue(after.action));
-    const decisionChanged = before !== undefined && after !== undefined
-      && canonicalize(normalizeJsonValue(before.result.decision)) !== canonicalize(normalizeJsonValue(after.result.decision));
-    const kind = before === undefined ? 'ADDED' : after === undefined ? 'REMOVED'
-      : actionChanged ? 'ACTION_CHANGED' : decisionChanged ? 'DECISION_CHANGED' : undefined;
-    if (kind === undefined) { unchangedCount += 1; continue; }
+    const actionChanged =
+      before !== undefined &&
+      after !== undefined &&
+      canonicalize(normalizeJsonValue(before.action)) !==
+        canonicalize(normalizeJsonValue(after.action));
+    const decisionChanged =
+      before !== undefined &&
+      after !== undefined &&
+      canonicalize(normalizeJsonValue(before.result.decision)) !==
+        canonicalize(normalizeJsonValue(after.result.decision));
+    const kind =
+      before === undefined
+        ? 'ADDED'
+        : after === undefined
+          ? 'REMOVED'
+          : actionChanged
+            ? 'ACTION_CHANGED'
+            : decisionChanged
+              ? 'DECISION_CHANGED'
+              : undefined;
+    if (kind === undefined) {
+      unchangedCount += 1;
+      continue;
+    }
     changes.push({
       sequence: index + 1,
       kind,
@@ -42,5 +59,11 @@ export function compareSessions(left: Session, right: Session): SessionCompariso
       afterFingerprint: after?.result.proposal.fingerprint ?? null,
     });
   }
-  return freezeData({ policyChanged: left.policyDigest !== right.policyDigest, beforeCount: left.records.length, afterCount: right.records.length, unchangedCount, changes });
+  return freezeData({
+    policyChanged: left.policyDigest !== right.policyDigest,
+    beforeCount: left.records.length,
+    afterCount: right.records.length,
+    unchangedCount,
+    changes,
+  });
 }

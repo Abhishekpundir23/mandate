@@ -10,12 +10,18 @@ async function open() {
   await user.click(screen.getByRole('button', { name: 'Workbench' }));
   return user;
 }
-const edit = (text: string) => fireEvent.change(screen.getByRole('textbox', { name: 'Policy JSON' }), { target: { value: text } });
+const edit = (text: string) =>
+  fireEvent.change(screen.getByRole('textbox', { name: 'Policy JSON' }), {
+    target: { value: text },
+  });
 
 describe('policy workbench', () => {
   test('navigates to the third view and labels the advisory boundary', async () => {
     await open();
-    expect(screen.getByRole('button', { name: 'Workbench' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('button', { name: 'Workbench' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
     expect(screen.getByRole('heading', { name: 'Authority workbench' })).toBeVisible();
     expect(screen.getByText('Advisory checks only. No declared action is executed.')).toBeVisible();
     expect(screen.getByRole('textbox', { name: 'Policy JSON' })).toBeVisible();
@@ -33,7 +39,10 @@ describe('policy workbench', () => {
   });
   test('loads a template as a draft and applies it explicitly', async () => {
     const user = await open();
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Policy template' }), 'review-required');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Policy template' }),
+      'review-required',
+    );
     await user.click(screen.getByRole('button', { name: 'Load template' }));
     expect(screen.getByText('Applied policy: draft-only')).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Apply policy' }));
@@ -55,13 +64,17 @@ describe('policy workbench', () => {
   test('clears a result when an action argument changes', async () => {
     const user = await open();
     await user.click(screen.getByRole('button', { name: 'Check action' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'File path' }), { target: { value: 'src/main.tsx' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'File path' }), {
+      target: { value: 'src/main.tsx' },
+    });
     expect(screen.queryByRole('status', { name: 'Action decision' })).not.toBeInTheDocument();
     expect(screen.getByText('1 recorded check')).toBeVisible();
   });
   test('invalid arguments surface an error without inventing a decision', async () => {
     const user = await open();
-    fireEvent.change(screen.getByRole('textbox', { name: 'File path' }), { target: { value: '../private' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'File path' }), {
+      target: { value: '../private' },
+    });
     await user.click(screen.getByRole('button', { name: 'Check action' }));
     expect(screen.getByRole('alert')).toHaveTextContent('valid');
     expect(screen.queryByRole('status', { name: 'Action decision' })).not.toBeInTheDocument();
@@ -79,7 +92,9 @@ describe('policy workbench', () => {
     const user = await open();
     await user.click(screen.getByRole('tab', { name: 'History' }));
     expect(screen.getByRole('combobox', { name: 'Inspect version' })).toHaveValue('2');
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search clauses' }), { target: { value: 'deny-push' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search clauses' }), {
+      target: { value: 'deny-push' },
+    });
     expect(screen.getByText('1 matching clause')).toBeVisible();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Inspect version' }), '1');
     expect(screen.getByText('No clauses match this view.')).toBeVisible();
@@ -98,7 +113,11 @@ describe('policy workbench', () => {
     const user = await open();
     edit('bad');
     await user.click(screen.getByRole('button', { name: 'Reset draft' }));
-    expect(JSON.parse((screen.getByRole('textbox', { name: 'Policy JSON' }) as HTMLTextAreaElement).value)).toEqual(getPolicyTemplate('draft-only').policy);
+    expect(
+      JSON.parse(
+        (screen.getByRole('textbox', { name: 'Policy JSON' }) as HTMLTextAreaElement).value,
+      ),
+    ).toEqual(getPolicyTemplate('draft-only').policy);
     expect(screen.getByRole('button', { name: 'Check action' })).toBeEnabled();
   });
   test('keyboard arrow navigation exposes the analysis panel', async () => {
@@ -148,7 +167,9 @@ describe('independent workbench tools', () => {
     await user.click(screen.getByRole('button', { name: 'Check action' }));
     await user.click(screen.getByRole('tab', { name: 'Sessions' }));
     expect(screen.getByRole('heading', { name: 'Current session' })).toBeVisible();
-    expect(screen.getByRole('table', { name: 'Recorded action checks' })).toHaveTextContent('ALLOW');
+    expect(screen.getByRole('table', { name: 'Recorded action checks' })).toHaveTextContent(
+      'ALLOW',
+    );
     await user.click(screen.getByRole('button', { name: 'Start new session' }));
     expect(screen.getByText('0 recorded checks')).toBeVisible();
     await user.click(screen.getByRole('tab', { name: 'Policy' }));
@@ -158,7 +179,9 @@ describe('independent workbench tools', () => {
     const user = await open();
     await user.click(screen.getByRole('button', { name: 'Check action' }));
     await user.click(screen.getByRole('tab', { name: 'Lab' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Scenario JSON' }), { target: { value: '{' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Scenario JSON' }), {
+      target: { value: '{' },
+    });
     await user.click(screen.getByRole('button', { name: 'Run sandbox scenario' }));
     expect(screen.getByRole('alert')).toHaveTextContent('Scenario validation failed');
     await user.click(screen.getByRole('tab', { name: 'Policy' }));

@@ -11,7 +11,10 @@ export interface ImpactCaseResult {
   readonly authorityChanged: boolean;
   readonly reasonsChanged: boolean;
   readonly policyChanged: boolean;
-  readonly expected: { readonly before?: Outcome | undefined; readonly after?: Outcome | undefined } | null;
+  readonly expected: {
+    readonly before?: Outcome | undefined;
+    readonly after?: Outcome | undefined;
+  } | null;
   readonly passed: boolean | null;
 }
 export interface ImpactReport {

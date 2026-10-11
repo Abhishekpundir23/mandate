@@ -24,5 +24,7 @@ test('renders nested report values without collapsing booleans and empty collect
 });
 
 test('bounds emitted output before passing it to stdout', () => {
-  expect(() => formatCliOutput({ value: 'x'.repeat(8 * 1024 * 1024) }, 'json')).toThrow('OUTPUT_LIMIT');
+  expect(() => formatCliOutput({ value: 'x'.repeat(8 * 1024 * 1024) }, 'json')).toThrow(
+    'OUTPUT_LIMIT',
+  );
 });

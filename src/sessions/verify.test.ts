@@ -7,18 +7,45 @@ import { verifySession } from './verify';
 import type { Session } from './types';
 
 const policyText = JSON.stringify(getPolicyTemplate('draft-only').policy);
-const read = { operation: 'workspace.readFile', args: { repositoryId: 'mandate', path: 'README.md' } };
-const push = { operation: 'git.push', args: { repositoryId: 'mandate', remoteId: 'origin', ref: 'refs/heads/main', commitOid: 'a'.repeat(40) } };
+const read = {
+  operation: 'workspace.readFile',
+  args: { repositoryId: 'mandate', path: 'README.md' },
+};
+const push = {
+  operation: 'git.push',
+  args: {
+    repositoryId: 'mandate',
+    remoteId: 'origin',
+    ref: 'refs/heads/main',
+    commitOid: 'a'.repeat(40),
+  },
+};
 const original = recordSession(policyText, [read, push], 'audit', 'Reproducible');
 const clone = () => JSON.parse(serializeSession(original)) as Session;
-const hash = (value: unknown) => createHash('sha256').update(canonicalize(normalizeJsonValue(value))).digest('hex');
+const hash = (value: unknown) =>
+  createHash('sha256')
+    .update(canonicalize(normalizeJsonValue(value)))
+    .digest('hex');
 
 /** Simulate an attacker who knows the public hash algorithm, not a trusted signer. */
 function reseal(session: Session): Session {
-  const rootHash = hash({ schemaVersion: 1, mode: 'advisory', executionPerformed: false, sessionId: session.sessionId, label: session.label, policy: session.policy, policyDigest: session.policyDigest });
+  const rootHash = hash({
+    schemaVersion: 1,
+    mode: 'advisory',
+    executionPerformed: false,
+    sessionId: session.sessionId,
+    label: session.label,
+    policy: session.policy,
+    policyDigest: session.policyDigest,
+  });
   let previousHash = rootHash;
   const records = session.records.map((record, index) => {
-    const payload = { sequence: index + 1, action: record.action, result: record.result, previousHash };
+    const payload = {
+      sequence: index + 1,
+      action: record.action,
+      result: record.result,
+      previousHash,
+    };
     const sealed = { ...payload, hash: hash(payload) };
     previousHash = sealed.hash;
     return sealed;
@@ -54,10 +81,21 @@ describe('session integrity and independent replay', () => {
 
   test('rejects a forged ALLOW even when every public hash is correctly recomputed', () => {
     const input = clone();
-    const records = input.records.map((record, index) => index === 1 ? {
-      ...record,
-      result: { ...record.result, decision: { ...record.result.decision, outcome: 'ALLOW' as const, reasons: ['Matching active authority'] } },
-    } : record);
+    const records = input.records.map((record, index) =>
+      index === 1
+        ? {
+            ...record,
+            result: {
+              ...record.result,
+              decision: {
+                ...record.result.decision,
+                outcome: 'ALLOW' as const,
+                reasons: ['Matching active authority'],
+              },
+            },
+          }
+        : record,
+    );
     const forged = reseal({ ...input, records });
     const result = verifySession(JSON.stringify(forged));
     expect(result.ok).toBe(false);
@@ -67,20 +105,39 @@ describe('session integrity and independent replay', () => {
   test('binds the complete derived action metadata, not only its displayed outcome', () => {
     const input = clone();
     const first = input.records[0]!;
-    const record = { ...first, result: { ...first.result, proposal: { ...first.result.proposal, resource: 'repository:other' } } };
-    const result = verifySession(JSON.stringify(reseal({ ...input, records: [record, input.records[1]!] })));
+    const record = {
+      ...first,
+      result: {
+        ...first.result,
+        proposal: { ...first.result.proposal, resource: 'repository:other' },
+      },
+    };
+    const result = verifySession(
+      JSON.stringify(reseal({ ...input, records: [record, input.records[1]!] })),
+    );
     expect(result.ok).toBe(false);
   });
 
   test('rejects a stale record policy digest even after hashes are repaired', () => {
     const input = clone();
-    const records = input.records.map((record) => ({ ...record, result: { ...record.result, policyDigest: 'f'.repeat(64) } }));
+    const records = input.records.map((record) => ({
+      ...record,
+      result: { ...record.result, policyDigest: 'f'.repeat(64) },
+    }));
     expect(verifySession(JSON.stringify(reseal({ ...input, records }))).ok).toBe(false);
   });
 
   test('a wholly replaced internally valid session remains explicitly unauthenticated', () => {
-    const replacement = recordSession(JSON.stringify(getPolicyTemplate('read-only').policy), [read], 'replacement', 'Operator supplied');
-    expect(verifySession(serializeSession(replacement))).toMatchObject({ ok: true, authenticated: false });
+    const replacement = recordSession(
+      JSON.stringify(getPolicyTemplate('read-only').policy),
+      [read],
+      'replacement',
+      'Operator supplied',
+    );
+    expect(verifySession(serializeSession(replacement))).toMatchObject({
+      ok: true,
+      authenticated: false,
+    });
   });
 
   test.each([
@@ -108,6 +165,8 @@ describe('session integrity and independent replay', () => {
 
   test('cannot append to a forged imported session', () => {
     const input = clone();
-    expect(() => appendSessionCheck({ ...input, terminalHash: '0'.repeat(64) }, read)).toThrow('Invalid session');
+    expect(() => appendSessionCheck({ ...input, terminalHash: '0'.repeat(64) }, read)).toThrow(
+      'Invalid session',
+    );
   });
 });

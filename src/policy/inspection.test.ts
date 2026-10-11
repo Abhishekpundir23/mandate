@@ -7,14 +7,26 @@ import { searchClauses } from './search';
 import { diagnosePolicy } from './diagnostics';
 
 function historyPolicy() {
-  return makePolicy({ diffs: [
-    diff(1, 'turn-1', [{ op: 'ADD', clause: clause('first') }]),
-    diff(2, 'turn-2', [{ op: 'REPLACE', targetClauseIds: ['first'], replacement: clause('second', 'MAY', {
-      source: { turnId: 'turn-2', quote: 'Synthetic policy' },
-      selector: { tool: 'workspace', operation: 'readFile', resource: 'repository:mandate/file:README.md' },
-    }) }]),
-    diff(3, 'turn-3', [{ op: 'NO_CHANGE', reason: 'DISCUSSION' }]),
-  ] });
+  return makePolicy({
+    diffs: [
+      diff(1, 'turn-1', [{ op: 'ADD', clause: clause('first') }]),
+      diff(2, 'turn-2', [
+        {
+          op: 'REPLACE',
+          targetClauseIds: ['first'],
+          replacement: clause('second', 'MAY', {
+            source: { turnId: 'turn-2', quote: 'Synthetic policy' },
+            selector: {
+              tool: 'workspace',
+              operation: 'readFile',
+              resource: 'repository:mandate/file:README.md',
+            },
+          }),
+        },
+      ]),
+      diff(3, 'turn-3', [{ op: 'NO_CHANGE', reason: 'DISCUSSION' }]),
+    ],
+  });
 }
 
 const snapshot = parsePolicyJson(JSON.stringify(historyPolicy()));
@@ -97,14 +109,24 @@ describe('version comparisons', () => {
 
 describe('bounded clause search', () => {
   test('searches IDs, statements and provenance case-insensitively', () => {
-    expect(searchClauses(snapshot, { text: 'SECOND' }).items.map((item) => item.id)).toEqual(['second']);
-    expect(searchClauses(snapshot, { text: 'turn-2', kind: 'MAY' }).items.map((item) => item.id)).toEqual(['second']);
+    expect(searchClauses(snapshot, { text: 'SECOND' }).items.map((item) => item.id)).toEqual([
+      'second',
+    ]);
+    expect(
+      searchClauses(snapshot, { text: 'turn-2', kind: 'MAY' }).items.map((item) => item.id),
+    ).toEqual(['second']);
   });
 
   test('defaults to current active clauses while supporting historical review', () => {
-    expect(searchClauses(snapshot, { text: 'first' }).items.map((item) => item.id)).toEqual(['turn-2:revoke:first']);
-    expect(searchClauses(snapshot, { text: 'first', includeRetired: true }).items.map((item) => item.id)).toEqual(['first', 'turn-2:revoke:first']);
-    expect(searchClauses(snapshot, { version: 2, text: 'first' }).items.map((item) => item.id)).toEqual(['first']);
+    expect(searchClauses(snapshot, { text: 'first' }).items.map((item) => item.id)).toEqual([
+      'turn-2:revoke:first',
+    ]);
+    expect(
+      searchClauses(snapshot, { text: 'first', includeRetired: true }).items.map((item) => item.id),
+    ).toEqual(['first', 'turn-2:revoke:first']);
+    expect(
+      searchClauses(snapshot, { version: 2, text: 'first' }).items.map((item) => item.id),
+    ).toEqual(['first']);
   });
 
   test('paginates after filtering and reports total matches', () => {
@@ -116,11 +138,15 @@ describe('bounded clause search', () => {
     expect(searchClauses(snapshot, { page: 3, pageSize: 1 }).items).toEqual([]);
   });
 
-  test.each([{ page: 0 }, { pageSize: 0 }, { pageSize: 101 }, { page: 1.5 }, { text: 'x'.repeat(257) }])(
-    'rejects invalid query %#', (query) => {
-      expect(() => searchClauses(snapshot, query)).toThrow('Invalid clause query');
-    },
-  );
+  test.each([
+    { page: 0 },
+    { pageSize: 0 },
+    { pageSize: 101 },
+    { page: 1.5 },
+    { text: 'x'.repeat(257) },
+  ])('rejects invalid query %#', (query) => {
+    expect(() => searchClauses(snapshot, query)).toThrow('Invalid clause query');
+  });
 });
 
 describe('policy diagnostics', () => {
@@ -131,7 +157,9 @@ describe('policy diagnostics', () => {
   });
 
   test('reports schema paths without a stack or raw invalid values', () => {
-    const result = diagnosePolicy(JSON.stringify({ ...historyPolicy(), schemaVersion: 9, secret: 'never-echo-this' }));
+    const result = diagnosePolicy(
+      JSON.stringify({ ...historyPolicy(), schemaVersion: 9, secret: 'never-echo-this' }),
+    );
     expect(result.ok).toBe(false);
     expect(result.diagnostics.some((item) => item.path === '$.schemaVersion')).toBe(true);
     expect(JSON.stringify(result)).not.toContain('never-echo-this');
@@ -150,12 +178,20 @@ describe('policy diagnostics', () => {
 });
 
 test('same-selector replacement preserves the existing denial precedence', () => {
-  const policy = makePolicy({ diffs: [
-    diff(1, 'turn-1', [{ op: 'ADD', clause: clause('first') }]),
-    diff(2, 'turn-2', [{ op: 'REPLACE', targetClauseIds: ['first'], replacement: clause('second', 'MAY', {
-      source: { turnId: 'turn-2', quote: 'Synthetic policy' },
-    }) }]),
-  ] });
+  const policy = makePolicy({
+    diffs: [
+      diff(1, 'turn-1', [{ op: 'ADD', clause: clause('first') }]),
+      diff(2, 'turn-2', [
+        {
+          op: 'REPLACE',
+          targetClauseIds: ['first'],
+          replacement: clause('second', 'MAY', {
+            source: { turnId: 'turn-2', quote: 'Synthetic policy' },
+          }),
+        },
+      ]),
+    ],
+  });
   const view = inspectVersion(parsePolicyJson(JSON.stringify(policy)), 3);
   expect(view.activeClauses.map((item) => item.id)).toEqual(['turn-2:revoke:first']);
   expect(view.retiredClauseIds).toEqual(['first', 'second']);

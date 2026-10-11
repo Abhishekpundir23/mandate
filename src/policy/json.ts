@@ -9,11 +9,23 @@ export interface JsonLimits {
   readonly nodes: number;
 }
 
-export const policyJsonLimits: JsonLimits = Object.freeze({ bytes: 256 * 1024, depth: 32, nodes: 20_000 });
-export const actionJsonLimits: JsonLimits = Object.freeze({ bytes: 16 * 1024, depth: 8, nodes: 100 });
+export const policyJsonLimits: JsonLimits = Object.freeze({
+  bytes: 256 * 1024,
+  depth: 32,
+  nodes: 20_000,
+});
+export const actionJsonLimits: JsonLimits = Object.freeze({
+  bytes: 16 * 1024,
+  depth: 8,
+  nodes: 100,
+});
 
 function validateLimits(limits: JsonLimits): void {
-  if (![limits.bytes, limits.depth, limits.nodes].every((value) => Number.isSafeInteger(value) && value > 0)) {
+  if (
+    ![limits.bytes, limits.depth, limits.nodes].every(
+      (value) => Number.isSafeInteger(value) && value > 0,
+    )
+  ) {
     throw new TypeError('Invalid JSON limits');
   }
 }
@@ -29,7 +41,10 @@ function checkData(value: unknown, limits: JsonLimits): void {
     const current = item.value;
     if (current === null || typeof current === 'boolean') continue;
     // The runtime guard proves this reflected value is a primitive scalar.
-    if (typeof current === 'string') { utf8Length(String(current)); continue; }
+    if (typeof current === 'string') {
+      utf8Length(String(current));
+      continue;
+    }
     if (typeof current === 'number') {
       if (!Number.isFinite(current)) throw new TypeError('Non-finite JSON number');
       continue;
@@ -40,15 +55,21 @@ function checkData(value: unknown, limits: JsonLimits): void {
     seen.add(current);
     const array = Array.isArray(current);
     const prototype = Object.getPrototypeOf(current) as object | null;
-    if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) {
+    if (
+      array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null
+    ) {
       throw new TypeError('JSON plain objects only');
     }
-    if (Object.getOwnPropertySymbols(current).length > 0) throw new TypeError('JSON string keys only');
+    if (Object.getOwnPropertySymbols(current).length > 0)
+      throw new TypeError('JSON string keys only');
     const descriptors = Object.getOwnPropertyDescriptors(current);
     const names = Object.keys(descriptors);
     if (array) {
       const length = (current as unknown[]).length;
-      if (names.length !== length + 1 || names.some((key) => key !== 'length' && !/^(0|[1-9][0-9]*)$/.test(key))) {
+      if (
+        names.length !== length + 1 ||
+        names.some((key) => key !== 'length' && !/^(0|[1-9][0-9]*)$/.test(key))
+      ) {
         throw new TypeError('JSON dense arrays only');
       }
     }
@@ -56,7 +77,8 @@ function checkData(value: unknown, limits: JsonLimits): void {
       if (array && key === 'length') continue;
       utf8Length(key);
       const descriptor = descriptors[key]!;
-      if (!('value' in descriptor) || !descriptor.enumerable) throw new TypeError('JSON data properties only');
+      if (!('value' in descriptor) || !descriptor.enumerable)
+        throw new TypeError('JSON data properties only');
       pending.push({ value: descriptor.value, depth: item.depth + 1 });
     }
   }
@@ -71,6 +93,7 @@ export function normalizeBoundedJson(value: unknown, limits: JsonLimits): JsonVa
 }
 
 export function parseBoundedJson(text: string, limits: JsonLimits): JsonValue {
+  if (typeof text !== 'string') throw new TypeError('JSON text must be a string');
   validateLimits(limits);
   if (utf8Length(text) > limits.bytes) throw new TypeError('JSON byte limit');
   // Bound structural depth before invoking recursive normalizers or schemas.
@@ -88,5 +111,5 @@ export function parseBoundedJson(text: string, limits: JsonLimits): JsonValue {
       if (depth > limits.depth) throw new TypeError('JSON depth limit');
     } else if (char === ']' || char === '}') depth -= 1;
   }
-  return normalizeBoundedJson(JSON.parse(text), limits);
+  return normalizeBoundedJson(JSON.parse(String(text)), limits);
 }

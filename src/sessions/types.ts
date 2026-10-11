@@ -25,7 +25,8 @@ export interface Session {
 }
 
 export interface SessionError {
-  readonly code: 'FORMAT' | 'SIZE' | 'POLICY' | 'ROOT' | 'SEQUENCE' | 'RECORD' | 'REPLAY' | 'TERMINAL';
+  readonly code:
+    'FORMAT' | 'SIZE' | 'POLICY' | 'ROOT' | 'SEQUENCE' | 'RECORD' | 'REPLAY' | 'TERMINAL';
   readonly message: string;
   readonly sequence?: number;
 }

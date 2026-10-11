@@ -25,14 +25,21 @@ export function summarizeSession(session: Session): SessionSummary {
     outcomes: {
       ALLOW: session.records.filter((record) => record.result.decision.outcome === 'ALLOW').length,
       BLOCK: session.records.filter((record) => record.result.decision.outcome === 'BLOCK').length,
-      CONFIRM: session.records.filter((record) => record.result.decision.outcome === 'CONFIRM').length,
+      CONFIRM: session.records.filter((record) => record.result.decision.outcome === 'CONFIRM')
+        .length,
     },
     operations: {
-      'workspace.readFile': session.records.filter((record) => record.action.operation === 'workspace.readFile').length,
-      'git.commit': session.records.filter((record) => record.action.operation === 'git.commit').length,
+      'workspace.readFile': session.records.filter(
+        (record) => record.action.operation === 'workspace.readFile',
+      ).length,
+      'git.commit': session.records.filter((record) => record.action.operation === 'git.commit')
+        .length,
       'git.push': session.records.filter((record) => record.action.operation === 'git.push').length,
     },
-    distinctResources: new Set(session.records.map((record) => record.result.proposal.resource)).size,
-    contractVersions: [...new Set(session.records.map((record) => record.result.contractVersion))].sort((a, b) => a - b),
+    distinctResources: new Set(session.records.map((record) => record.result.proposal.resource))
+      .size,
+    contractVersions: [
+      ...new Set(session.records.map((record) => record.result.contractVersion)),
+    ].sort((a, b) => a - b),
   });
 }

@@ -2,7 +2,7 @@ import { z } from '../domain/zod';
 import { canonicalize, normalizeJsonValue } from '../domain/canonical';
 import { activeClauses } from '../mandate/ledger';
 import { evaluateAction } from '../mandate/gate';
-import { actionCheckInputSchema, deriveAction, validateCodingCapability } from './actions';
+import { actionCheckInputSchema, deriveAction, validateCodingProposal } from './actions';
 import { clauseSchema } from './schema';
 import { freezeData } from './freeze';
 import type { AuthoritySnapshot } from './types';
@@ -10,9 +10,12 @@ import type { Clause } from '../domain/types';
 import { normalizeBoundedJson, actionJsonLimits } from './json';
 
 const common = {
-  mode: z.literal('advisory'), executionPerformed: z.literal(false),
-  policyId: z.string(), policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  contractVersion: z.number().int().positive(), engineHash: z.string(),
+  mode: z.literal('advisory'),
+  executionPerformed: z.literal(false),
+  policyId: z.string(),
+  policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  contractVersion: z.number().int().positive(),
+  engineHash: z.string(),
 };
 const supportedOperations = [
   { operation: 'workspace.readFile', effect: 'READ' },
@@ -27,13 +30,21 @@ export const authorityResultSchema = z.strictObject({
 export const actionCheckResultSchema = z.strictObject({
   ...common,
   proposal: z.strictObject({
-    id: z.string(), stepId: z.string(), tool: z.string(), operation: z.string(),
-    args: z.record(z.string(), z.string()), effect: z.enum(['READ', 'LOCAL_PERSIST', 'EXTERNAL_TRANSMIT']),
-    resource: z.string(), fingerprint: z.string(),
+    id: z.string(),
+    stepId: z.string(),
+    tool: z.string(),
+    operation: z.string(),
+    args: z.record(z.string(), z.string()),
+    effect: z.enum(['READ', 'LOCAL_PERSIST', 'EXTERNAL_TRANSMIT']),
+    resource: z.string(),
+    fingerprint: z.string(),
   }),
   decision: z.strictObject({
-    outcome: z.enum(['ALLOW', 'BLOCK', 'CONFIRM']), contractVersion: z.number().int().positive(),
-    actionFingerprint: z.string(), matchedClauseIds: z.array(z.string()), reasons: z.array(z.string()),
+    outcome: z.enum(['ALLOW', 'BLOCK', 'CONFIRM']),
+    contractVersion: z.number().int().positive(),
+    actionFingerprint: z.string(),
+    matchedClauseIds: z.array(z.string()),
+    reasons: z.array(z.string()),
   }),
 });
 export type AuthorityResult = z.infer<typeof authorityResultSchema>;
@@ -45,19 +56,34 @@ export class ActionCheckError extends Error {
   }
 }
 function metadata(snapshot: AuthoritySnapshot) {
-  return { mode: 'advisory' as const, executionPerformed: false as const, policyId: snapshot.policyId,
-    policyDigest: snapshot.policyDigest, contractVersion: snapshot.current.version, engineHash: snapshot.current.hash };
+  return {
+    mode: 'advisory' as const,
+    executionPerformed: false as const,
+    policyId: snapshot.policyId,
+    policyDigest: snapshot.policyDigest,
+    contractVersion: snapshot.current.version,
+    engineHash: snapshot.current.hash,
+  };
 }
 export function getAuthority(snapshot: AuthoritySnapshot): AuthorityResult {
-  return freezeData(authorityResultSchema.parse({ ...metadata(snapshot), supportedOperations, clauses: activeClauses(snapshot.current) }));
+  return freezeData(
+    authorityResultSchema.parse({
+      ...metadata(snapshot),
+      supportedOperations,
+      clauses: activeClauses(snapshot.current),
+    }),
+  );
 }
 export function checkAction(snapshot: AuthoritySnapshot, input: unknown): ActionCheckResult {
   try {
     const parsed = actionCheckInputSchema.parse(normalizeBoundedJson(input, actionJsonLimits));
-    if (parsed.expectedPolicyDigest !== snapshot.policyDigest) throw new ActionCheckError('POLICY_MISMATCH');
+    if (parsed.expectedPolicyDigest !== snapshot.policyDigest)
+      throw new ActionCheckError('POLICY_MISMATCH');
     const proposal = deriveAction(snapshot, parsed.action);
     const { decision } = evaluateAction({
-      version: snapshot.current, proposal, validateCapability: validateCodingCapability(snapshot),
+      version: snapshot.current,
+      proposal,
+      validateCapability: (candidate) => validateCodingProposal(snapshot, candidate),
       confirmationStore: { issuedTokens: [], consumedTokenIds: [] },
     });
     return freezeData(actionCheckResultSchema.parse({ ...metadata(snapshot), proposal, decision }));
@@ -78,10 +104,21 @@ export interface DecisionExplanation {
 }
 
 /** Re-evaluate supplied results before presenting them as explanations. */
-export function explainDecision(snapshot: AuthoritySnapshot, result: ActionCheckResult): DecisionExplanation {
-  const action = { operation: result.proposal.tool + '.' + result.proposal.operation, args: result.proposal.args };
-  const reconstructed = checkAction(snapshot, { expectedPolicyDigest: snapshot.policyDigest, action });
-  if (canonicalize(normalizeJsonValue(reconstructed)) !== canonicalize(normalizeJsonValue(result))) {
+export function explainDecision(
+  snapshot: AuthoritySnapshot,
+  result: ActionCheckResult,
+): DecisionExplanation {
+  const action = {
+    operation: result.proposal.tool + '.' + result.proposal.operation,
+    args: result.proposal.args,
+  };
+  const reconstructed = checkAction(snapshot, {
+    expectedPolicyDigest: snapshot.policyDigest,
+    action,
+  });
+  if (
+    canonicalize(normalizeJsonValue(reconstructed)) !== canonicalize(normalizeJsonValue(result))
+  ) {
     throw new Error('Result does not match policy');
   }
   const ids = new Set(result.decision.matchedClauseIds);
@@ -91,7 +128,9 @@ export function explainDecision(snapshot: AuthoritySnapshot, result: ActionCheck
     policyDigest: snapshot.policyDigest,
     contractVersion: snapshot.current.version,
     reasons: result.decision.reasons,
-    matchedClauses: activeClauses(snapshot.current).filter((clause) => ids.has(clause.id)).sort((a, b) => a.id.localeCompare(b.id)),
+    matchedClauses: activeClauses(snapshot.current)
+      .filter((clause) => ids.has(clause.id))
+      .sort((a, b) => a.id.localeCompare(b.id)),
     limitations: [
       'This is a check of a declared action. No action was executed.',
       'A digest identifies policy content; it does not authenticate human approval.',

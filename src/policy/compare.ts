@@ -15,7 +15,11 @@ export interface VersionComparison {
   readonly appended: readonly Clause[];
 }
 
-export function compareVersions(snapshot: AuthoritySnapshot, before: number, after: number): VersionComparison {
+export function compareVersions(
+  snapshot: AuthoritySnapshot,
+  before: number,
+  after: number,
+): VersionComparison {
   const left = inspectVersion(snapshot, before);
   const right = inspectVersion(snapshot, after);
   const leftActive = new Set(left.activeClauses.map((item) => item.id));
@@ -27,10 +31,14 @@ export function compareVersions(snapshot: AuthoritySnapshot, before: number, aft
     beforeVersion: before,
     afterVersion: after,
     authorityChanged: activated.length > 0 || retired.length > 0,
-    sourceChanged: canonicalize(normalizeJsonValue(left.source)) !== canonicalize(normalizeJsonValue(right.source)),
+    sourceChanged:
+      canonicalize(normalizeJsonValue(left.source)) !==
+      canonicalize(normalizeJsonValue(right.source)),
     activated,
     retired,
     unchanged: right.activeClauses.filter((item) => leftActive.has(item.id)),
-    appended: right.clauses.filter((item) => !leftAll.has(item.id)).sort((a, b) => a.id.localeCompare(b.id)),
+    appended: right.clauses
+      .filter((item) => !leftAll.has(item.id))
+      .sort((a, b) => a.id.localeCompare(b.id)),
   });
 }

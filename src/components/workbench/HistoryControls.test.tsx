@@ -9,11 +9,20 @@ import { VersionCompare } from './VersionCompare';
 
 function manyClauses() {
   const value = JSON.parse(JSON.stringify(getPolicyTemplate('draft-only').policy));
-  value.diffs[0].ops = Array.from({ length: 23 }, (_, index) => ({ op: 'ADD', clause: {
-    id: 'read-' + String(index).padStart(2, '0'), kind: 'MAY', statement: 'Inspect file ' + index,
-    selector: { tool: 'workspace', operation: 'readFile', resource: 'repository:mandate/file:file-' + index },
-    source: value.diffs[0].source,
-  } }));
+  value.diffs[0].ops = Array.from({ length: 23 }, (_, index) => ({
+    op: 'ADD',
+    clause: {
+      id: 'read-' + String(index).padStart(2, '0'),
+      kind: 'MAY',
+      statement: 'Inspect file ' + index,
+      selector: {
+        tool: 'workspace',
+        operation: 'readFile',
+        resource: 'repository:mandate/file:file-' + index,
+      },
+      source: value.diffs[0].source,
+    },
+  }));
   return parsePolicyJson(JSON.stringify(value));
 }
 
@@ -30,7 +39,9 @@ describe('authority inspection controls', () => {
     await user.click(screen.getByRole('button', { name: 'Next clauses' }));
     expect(screen.getAllByRole('article')).toHaveLength(3);
     expect(screen.getByRole('button', { name: 'Next clauses' })).toBeDisabled();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search clauses' }), { target: { value: 'file-22' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search clauses' }), {
+      target: { value: 'file-22' },
+    });
     expect(screen.getByText('Page 1 of 1')).toBeVisible();
     expect(screen.getAllByRole('article')).toHaveLength(1);
   });
@@ -41,7 +52,9 @@ describe('authority inspection controls', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Clause kind' }), 'MUST_NOT');
     expect(screen.getByText('1 matching clause')).toBeVisible();
     expect(screen.getByText('deny-push')).toBeVisible();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search clauses' }), { target: { value: 'no-such-clause' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search clauses' }), {
+      target: { value: 'no-such-clause' },
+    });
     expect(screen.getByText('No clauses match this view.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Next clauses' })).toBeDisabled();
   });
@@ -50,15 +63,25 @@ describe('authority inspection controls', () => {
     render(<AuthorityTimeline snapshot={manyClauses()} />);
     const card = screen.getAllByRole('article')[0]!;
     await user.click(within(card).getByText(/Source · turn-1/));
-    expect(within(card).getByText('Inspect files and prepare local commits. Do not push.')).toBeVisible();
+    expect(
+      within(card).getByText('Inspect files and prepare local commits. Do not push.'),
+    ).toBeVisible();
   });
   test('reverse comparisons distinguish retired authority from activated authority', async () => {
     const user = userEvent.setup();
-    render(<VersionCompare snapshot={parsePolicyJson(JSON.stringify(getPolicyTemplate('draft-only').policy))} />);
+    render(
+      <VersionCompare
+        snapshot={parsePolicyJson(JSON.stringify(getPolicyTemplate('draft-only').policy))}
+      />,
+    );
     await user.selectOptions(screen.getByRole('combobox', { name: 'Before version' }), '2');
     await user.selectOptions(screen.getByRole('combobox', { name: 'After version' }), '1');
-    expect(screen.getByRole('region', { name: 'Activated clauses' })).toHaveTextContent('0 activated clauses');
-    expect(screen.getByRole('region', { name: 'Retired clauses' })).toHaveTextContent('3 retired clauses');
+    expect(screen.getByRole('region', { name: 'Activated clauses' })).toHaveTextContent(
+      '0 activated clauses',
+    );
+    expect(screen.getByRole('region', { name: 'Retired clauses' })).toHaveTextContent(
+      '3 retired clauses',
+    );
   });
   test('applying a different policy starts inspection at its latest version', async () => {
     const user = userEvent.setup();
@@ -67,7 +90,10 @@ describe('authority inspection controls', () => {
     await user.click(screen.getByRole('tab', { name: 'History' }));
     await user.selectOptions(screen.getByRole('combobox', { name: 'Inspect version' }), '1');
     await user.click(screen.getByRole('tab', { name: 'Policy' }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Policy template' }), 'read-only');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Policy template' }),
+      'read-only',
+    );
     await user.click(screen.getByRole('button', { name: 'Load template' }));
     await user.click(screen.getByRole('button', { name: 'Apply policy' }));
     await user.click(screen.getByRole('tab', { name: 'History' }));

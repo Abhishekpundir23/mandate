@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'vitest';
 import { getPolicyTemplate } from '../policy/templates';
-import { applyPolicy, checkWorkbenchAction, createWorkbenchState, editActionField, editPolicy, loadTemplateDraft, resetPolicyDraft } from './workbench-model';
+import {
+  applyPolicy,
+  checkWorkbenchAction,
+  createWorkbenchState,
+  editActionField,
+  editPolicy,
+  loadTemplateDraft,
+  resetPolicyDraft,
+} from './workbench-model';
 
 describe('workbench state transitions', () => {
   test('starts with a valid applied policy and an empty advisory session', () => {
@@ -19,14 +27,24 @@ describe('workbench state transitions', () => {
   });
   test('editing any action field invalidates the displayed result immediately', () => {
     const checked = checkWorkbenchAction(createWorkbenchState());
-    for (const field of ['path', 'repositoryId', 'treeDigest', 'messageDigest', 'remoteId', 'ref', 'commitOid'] as const) {
+    for (const field of [
+      'path',
+      'repositoryId',
+      'treeDigest',
+      'messageDigest',
+      'remoteId',
+      'ref',
+      'commitOid',
+    ] as const) {
       const next = editActionField(checked, field, 'changed');
       expect(next.result).toBeNull();
       expect(next.session.recordCount).toBe(1);
     }
   });
   test('changing operation invalidates the result and computes a fresh BLOCK', () => {
-    const next = checkWorkbenchAction(editActionField(checkWorkbenchAction(createWorkbenchState()), 'operation', 'git.push'));
+    const next = checkWorkbenchAction(
+      editActionField(checkWorkbenchAction(createWorkbenchState()), 'operation', 'git.push'),
+    );
     expect(next.result?.decision.outcome).toBe('BLOCK');
     expect(next.session.recordCount).toBe(2);
   });
@@ -78,7 +96,11 @@ describe('workbench state transitions', () => {
     expect(next.diagnostics).toEqual([]);
   });
   test('a confirmation policy reports CONFIRM without satisfying it', () => {
-    const state = editActionField(createWorkbenchState('review-required'), 'operation', 'git.commit');
+    const state = editActionField(
+      createWorkbenchState('review-required'),
+      'operation',
+      'git.commit',
+    );
     const next = checkWorkbenchAction(state);
     expect(next.result?.decision.outcome).toBe('CONFIRM');
     expect(next.result?.executionPerformed).toBe(false);
@@ -91,17 +113,35 @@ describe('workbench state transitions', () => {
     expect(next.session.recordCount).toBe(0);
   });
   test('unknown repositories cannot inherit another repository authority', () => {
-    const next = checkWorkbenchAction(editActionField(createWorkbenchState(), 'repositoryId', 'unknown'));
+    const next = checkWorkbenchAction(
+      editActionField(createWorkbenchState(), 'repositoryId', 'unknown'),
+    );
     expect(next.result).toBeNull();
     expect(next.session.recordCount).toBe(0);
   });
   test('checks the latest applied authority regardless of inspected historical versions', () => {
     const value = JSON.parse(JSON.stringify(getPolicyTemplate('draft-only').policy));
-    value.diffs.push({ baseVersion: 2, turnId: 'withdraw', source: { turnId: 'withdraw', quote: 'Stop reading.' }, ops: [
-      { op: 'REVOKE', tombstone: { id: 'stop', kind: 'REVOKED', statement: 'Stop reading', targetClauseIds: ['read'],
-        revokedSelector: { tool: 'workspace', operation: 'readFile' }, source: { turnId: 'withdraw', quote: 'Stop reading.' } } },
-    ] });
-    const next = checkWorkbenchAction(applyPolicy(editPolicy(createWorkbenchState(), JSON.stringify(value))));
+    value.diffs.push({
+      baseVersion: 2,
+      turnId: 'withdraw',
+      source: { turnId: 'withdraw', quote: 'Stop reading.' },
+      ops: [
+        {
+          op: 'REVOKE',
+          tombstone: {
+            id: 'stop',
+            kind: 'REVOKED',
+            statement: 'Stop reading',
+            targetClauseIds: ['read'],
+            revokedSelector: { tool: 'workspace', operation: 'readFile' },
+            source: { turnId: 'withdraw', quote: 'Stop reading.' },
+          },
+        },
+      ],
+    });
+    const next = checkWorkbenchAction(
+      applyPolicy(editPolicy(createWorkbenchState(), JSON.stringify(value))),
+    );
     expect(next.result?.contractVersion).toBe(3);
     expect(next.result?.decision.outcome).toBe('BLOCK');
   });
