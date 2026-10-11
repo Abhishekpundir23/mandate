@@ -43,7 +43,7 @@ Execution rulings, in order:
 5. Separated browser/MCP build projects while explicitly checking both through global typecheck. Cost if wrong: a build-specific type error could be missed; both builds and typecheck pass.
 6. Overlapped the read-only final review with full-suite qualification, retaining full-suite success as the completion gate. Cost if wrong: stale review evidence; the only later production change was the documented, regression-tested single fix pass.
 
-Fresh review found no Critical or Minor issues and declined no judgments. The one Important finding was fixed with failing-then-passing tests. Deferred minors: none. Work paused at the user-requested [GitHub checkpoint](checkpoints/2026-10-10.md); the final full 828-test qualification was still pending when the checkpoint was written.
+Fresh review found no Critical or Minor issues and declined no judgments. The one Important finding was fixed with failing-then-passing tests. Deferred minors: none. The user-requested [GitHub checkpoint](checkpoints/2026-10-10.md) left full qualification pending on October 10. Resumed October 11: all **828/828** source/analyzer tests passed across 28 files, and the final adapter gate passed **82/82** across 7 files. Fresh typecheck, zero-warning lint, adapter build, and npm audit also passed. Browser build, 18 E2E passes / 6 intentional skips, six-directory coverage above 90%, and zero forbidden/unknown production effects retain their October 10 evidence against unchanged browser inputs. The complete verify wrapper was not invoked.
 
 ## Main failure mode
 

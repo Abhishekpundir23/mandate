@@ -10,7 +10,7 @@
 
 **Spec:** [Approved design](../specs/2026-10-10-local-mcp-adapter-design.md).
 
-**Status:** Implementation and fresh-review fix complete; paused at the user-requested GitHub checkpoint. Final full-suite qualification remains pending.
+**Status:** Completed and qualified on 2026-10-11. All four tasks and the single fresh-review fix are complete.
 
 ## Global Constraints
 
@@ -117,7 +117,7 @@
 - [x] **Step 2:** Add a restart test: read digest A, modify policy and restart, then assert old digest A errors and fresh digest B obtains the changed decision. Add raw-stream capture coverage proving stdout contains protocol lines only and stderr omits a recognizable synthetic policy marker.
 - [x] **Step 3:** Run `npm run build:mcp && npm run test:mcp`; investigate any round-trip failure at the actual transport boundary, then rerun only after a fix. Expect all MCP tests pass and child processes exit.
 - [x] **Step 4:** Add the verified example and documentation: exact startup command, observed Node/SDK versions, policy authoring/restart instructions, the three supported declared primitives, read-only policy disclosure, and advisory limitations including Git hooks and the lack of observed execution evidence. Do not modify or claim a named coding-agent configuration.
-- [ ] **Step 5:** Wire `build:mcp` and `test:mcp` into the complete verify sequence once, retaining all existing gates. Run typecheck, lint, source/MCP tests, required source coverage, production build, E2E, and security analyzer. Reuse an unchanged completed 508-case analyzer run rather than rerun it solely for documentation; rerun it if analyzer/shared behavior changes.
+- [x] **Step 5:** Wire `build:mcp` and `test:mcp` into the complete verify sequence once, retaining all existing gates. Run typecheck, lint, source/MCP tests, required source coverage, production build, E2E, and security analyzer. Reuse an unchanged completed 508-case analyzer run rather than rerun it solely for documentation; rerun it if analyzer/shared behavior changes.
 - [x] **Step 6:** Check browser module receipts and built assets contain no integrations/mcp or MCP SDK imports. The existing security gate and offline browser tour must pass with zero forbidden/unknown production effects.
 - [x] **Step 7:** Record exact commands, counts, versions, and observed client results in the changelog. Verify identity, commit `test: qualify local MCP authority interoperability`, and verify HEAD.
 

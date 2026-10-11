@@ -73,3 +73,5 @@ Tested locally on Node 26.5.0 with official MCP server/client packages 2.3.1. Th
 The browser remains a deterministic fixture demo. Its production entry does not import the adapter or MCP SDK. Browser and Node builds have separate outputs and type checks; global typecheck covers both.
 
 See the [approved design](superpowers/specs/2026-10-10-local-mcp-adapter-design.md) and [implementation plan](superpowers/plans/2026-10-10-local-mcp-adapter.md) for the full contract. The [official SDK](https://github.com/modelcontextprotocol/typescript-sdk) supplies MCP transport and protocol handling.
+
+The resumed full source/analyzer qualification passed 828 tests on 2026-10-11; the final adapter qualification passed 82 tests. See the [completed checkpoint](checkpoints/2026-10-10.md) for the per-gate evidence dates and remaining integration decision.
