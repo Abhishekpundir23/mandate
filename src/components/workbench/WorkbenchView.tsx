@@ -1,3 +1,4 @@
+import { QualificationWorkbench } from './QualificationWorkbench';
 import { RecipeWorkbench } from './RecipeWorkbench';
 import { useState } from 'react';
 import { applyPolicy, checkWorkbenchAction, createWorkbenchState, editActionField, editPolicy,
@@ -59,6 +60,7 @@ export function WorkbenchView({ onNavigate }: { readonly onNavigate: (view: AppV
         { id: 'workspaces', label: 'Workspaces', content: <WorkspaceWorkbench snapshot={state.snapshot} session={state.session}
           onStagePolicy={(text) => setState((current) => editPolicy(current, text))} /> },
         { id: 'recipes', label: 'Recipes', content: <RecipeWorkbench /> },
+        { id: 'qualification', label: 'Qualification', content: <QualificationWorkbench /> },
         { id: 'analysis', label: 'Analysis', content: <PolicyAnalysis snapshot={state.snapshot} /> },
       ]} />
     </main>

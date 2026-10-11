@@ -1,3 +1,4 @@
+import { executeQualificationCommand } from './qualification-commands';
 import { executeRecipeCommand } from './recipe-commands';
 import { executeWorkspaceCommand } from './workspace-commands';
 import { maintainedCampaign } from '../../src/campaigns/catalog';
@@ -45,6 +46,7 @@ async function loadSession(file: string): Promise<Session> {
 
 export async function executeCommand(input: CliCommand): Promise<CommandResult> {
   const options = input.options;
+  if (input.group === 'qualification') return executeQualificationCommand(input);
   if (input.group === 'recipe') return executeRecipeCommand(input);
   if (input.group === 'workspace') return executeWorkspaceCommand(input);
   if (input.group === 'campaign') {
