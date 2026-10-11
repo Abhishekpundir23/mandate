@@ -8,12 +8,14 @@ import { CampaignResults } from './CampaignResults';
 export function CampaignWorkbench() {
   const [text, setText] = useState(() => serializeCampaign(maintainedCampaign));
   const [report, setReport] = useState<CampaignReport | null>(null);
+  const [lastSuccessful, setLastSuccessful] = useState<CampaignReport | null>(null);
   const [previous, setPrevious] = useState<CampaignReport | null>(null);
   const [error, setError] = useState('');
   function run() {
     try {
       const next = runCampaign(parseCampaign(text));
-      setPrevious(report);
+      setPrevious(lastSuccessful);
+      setLastSuccessful(next);
       setReport(next);
       setError('');
     } catch {
@@ -39,6 +41,7 @@ export function CampaignWorkbench() {
           setText(serializeCampaign(maintainedCampaign));
           setReport(null);
           setPrevious(null);
+          setLastSuccessful(null);
           setError('');
         }}
       >

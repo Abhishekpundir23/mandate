@@ -5,9 +5,16 @@ import { comparePolicyImpact, policyAtVersion } from '../../impact/compare';
 import type { ImpactReport } from '../../impact/types';
 import type { AuthoritySnapshot } from '../../policy/types';
 import { parsePolicyJson } from '../../policy/parse';
+import { policyJsonLimits } from '../../policy/json';
+import { utf8Length } from '../../policy/utf8';
 import { ImpactResults } from './ImpactResults';
 export function ImpactWorkbench({ snapshot }: { readonly snapshot: AuthoritySnapshot }) {
-  const [policyText, setPolicyText] = useState(() => JSON.stringify(snapshot.document, null, 2));
+  const [policyText, setPolicyText] = useState(() => {
+    const readable = JSON.stringify(snapshot.document, null, 2);
+    return utf8Length(readable) <= policyJsonLimits.bytes
+      ? readable
+      : JSON.stringify(snapshot.document);
+  });
   const [caseText, setCaseText] = useState(() => JSON.stringify(exampleCaseSuite, null, 2));
   const [source, setSource] = useState('candidate');
   const [beforeVersion, setBeforeVersion] = useState(snapshot.versions[0]!.version);

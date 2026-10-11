@@ -171,3 +171,16 @@ describe('independent report reconstruction and baseline comparison', () => {
       expect(text).not.toContain(secret);
   });
 });
+
+test('rejects generated qualification output exceeding the report byte budget', () => {
+  const profile = clone();
+  profile.policy.diffs[0].ops[0].clause.id = 'read-' + 'x'.repeat(50000);
+  profile.cases.cases = Array.from({ length: 100 }, (_, index) => ({
+    ...profile.cases.cases[0],
+    id: 'read-' + index,
+  }));
+  profile.criteria.requiredCaseIds = [];
+  profile.criteria.maximumOutcomes.ALLOW = 100;
+  const accepted = parseQualificationProfile(JSON.stringify(profile));
+  expect(() => runQualification(accepted)).toThrow('JSON byte limit');
+});

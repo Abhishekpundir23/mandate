@@ -2,6 +2,8 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { getPolicyTemplate } from '../../policy/templates';
 import { parsePolicyJson } from '../../policy/parse';
+import { policyJsonLimits } from '../../policy/json';
+import { utf8Length } from '../../policy/utf8';
 import { ImpactWorkbench } from './ImpactWorkbench';
 const snapshot = parsePolicyJson(JSON.stringify(getPolicyTemplate('draft-only').policy));
 describe('policy impact workbench', () => {
@@ -45,4 +47,21 @@ describe('policy impact workbench', () => {
     expect(text).not.toContain('README.md');
     expect(text).not.toContain('Inspect files and');
   });
+});
+
+test('compares accepted near-limit policies without editing the generated candidate', () => {
+  const policy = JSON.parse(JSON.stringify(getPolicyTemplate('draft-only').policy));
+  policy.policyId = 'x'.repeat(
+    262000 - utf8Length(JSON.stringify(policy)) + policy.policyId.length,
+  );
+  const accepted = parsePolicyJson(JSON.stringify(policy));
+  expect(utf8Length(JSON.stringify(accepted.document, null, 2))).toBeGreaterThan(
+    policyJsonLimits.bytes,
+  );
+  render(<ImpactWorkbench snapshot={accepted} />);
+  const candidate = (screen.getByLabelText('Candidate policy JSON') as HTMLTextAreaElement).value;
+  expect(parsePolicyJson(candidate).policyDigest).toBe(accepted.policyDigest);
+  fireEvent.click(screen.getByRole('button', { name: 'Compare declared cases' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByRole('status')).toHaveTextContent('0 outcomes changed');
 });

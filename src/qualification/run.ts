@@ -5,7 +5,8 @@ import { sha256 } from '../policy/sha256';
 import { checkAction } from '../policy/service';
 import type { ActionCheckResult } from '../policy/service';
 import type { Outcome } from '../impact/types';
-import { validateQualificationProfile } from './profile';
+import { normalizeBoundedJson } from '../policy/json';
+import { validateQualificationProfile, qualificationReportLimits } from './profile';
 export function qualificationDigest(input: unknown): string {
   return sha256(canonicalize(normalizeJsonValue(input)));
 }
@@ -89,6 +90,8 @@ export function runQualification(input: unknown) {
     criteria,
     cases,
   };
-  return freezeData({ ...content, reportDigest: qualificationDigest(content) });
+  const report = { ...content, reportDigest: qualificationDigest(content) };
+  normalizeBoundedJson(report, qualificationReportLimits);
+  return freezeData(report);
 }
 export type QualificationReport = ReturnType<typeof runQualification>;

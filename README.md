@@ -129,7 +129,7 @@ Select **Workbench** for policy editing, guided revisions, authority history, ac
 
 See the [Workbench guide](docs/workbench.md) for workflows and limits, the [CLI guide](docs/cli.md) for runnable local examples, and the [qualification record](docs/workbench-validation.md) for measured validation. Build the command-line tool with `npm run build:cli` and inspect `node dist-cli/mandate.mjs --help`. Coding checks remain advisory; only the synthetic sandbox transforms world state.
 
-Run `npm run count:source` to measure Git-tracked TypeScript, JavaScript, CSS and HTML, with a separate test/source breakdown. Dependencies, generated output, documentation and JSON are excluded. The October 11 workbench measures **40,560 physical lines / 38,168 nonblank lines** across 305 files, including **15,144 test lines**; the remaining **25,416 lines** are browser, SDK, integration and tooling code.
+Run `npm run count:source` to measure Git-tracked TypeScript, JavaScript, CSS and HTML, with a separate test/source breakdown. Dependencies, generated output, documentation and JSON are excluded. The October 11 workbench measures **40,681 physical lines / 38,285 nonblank lines** across 305 files, including **15,251 test lines**; the remaining **25,430 lines** are browser, SDK, integration and tooling code.
 
 ## Local coding-agent integration
 

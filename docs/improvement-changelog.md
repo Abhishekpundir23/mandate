@@ -68,4 +68,7 @@ This claim is intentionally bounded. MANDATE demonstrates the approach over its 
 
 Decision: retain these local developer workflows. Integrity results remain unauthenticated, all coding checks remain advisory, and sandbox evidence stays separate from external execution.
 
-Qualification: 1,392 root tests, 83 MCP tests, 75 CLI tests and 58 desktop/mobile browser checks pass. All six required coverage-directory gates pass; overall line coverage is 94.98%. The complete production security regression reports zero forbidden/unknown effects, and npm audit reports zero known vulnerabilities. See the [qualification record](workbench-validation.md) for commands, limits and counts.
+Qualification: 1,396 root tests, 83 MCP tests, 75 CLI tests and 58 desktop/mobile browser checks pass. All six required coverage-directory gates pass; overall line coverage is 95.20%. The complete production security regression reports zero forbidden/unknown effects, and npm audit reports zero known vulnerabilities. See the [qualification record](workbench-validation.md) for commands, limits and counts.
+
+
+Final workbench review fixes: oversized qualification outputs fail recoverably before state publication; edited campaigns retain their successful comparison baseline, including across rejected drafts; near-limit accepted policies round-trip through Impact with compact formatting. The resource-only selector overlap diagnostic remains a documented minor limitation.

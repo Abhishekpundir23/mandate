@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
+import { maintainedCampaign } from '../../campaigns/catalog';
 import { CampaignWorkbench } from './CampaignWorkbench';
 describe('adversarial campaign workbench', () => {
   test('runs the maintained invariants and distinguishes expected rejections from failures', () => {
@@ -40,4 +41,35 @@ describe('adversarial campaign workbench', () => {
     expect(text).not.toContain('Caller-chosen evidence');
     expect(text).not.toContain('scenario-control');
   });
+});
+
+test('changed campaigns compare with the last successful run across rejected drafts', () => {
+  const campaign = JSON.parse(
+    JSON.stringify({
+      ...maintainedCampaign,
+      scenarios: [],
+      cases: [maintainedCampaign.cases.find((item) => item.kind === 'POLICY')],
+    }),
+  );
+  render(<CampaignWorkbench />);
+  const editor = screen.getByLabelText('Campaign JSON');
+  const run = screen.getByRole('button', { name: 'Run campaign' });
+  fireEvent.change(editor, { target: { value: JSON.stringify(campaign) } });
+  fireEvent.click(run);
+  expect(screen.getByRole('status')).toHaveTextContent('0 failed');
+  fireEvent.change(editor, { target: { value: '{}' } });
+  expect(screen.queryByRole('status')).toBeNull();
+  fireEvent.click(run);
+  expect(screen.getByRole('alert')).toHaveTextContent('Campaign rejected');
+  campaign.cases[0].expected.passed = false;
+  fireEvent.change(editor, { target: { value: JSON.stringify(campaign) } });
+  fireEvent.click(run);
+  expect(screen.getByRole('status')).toHaveTextContent('1 failed');
+  expect(screen.getByText('Compared with previous run: 1 changed cases.')).toBeInTheDocument();
+  fireEvent.click(run);
+  expect(screen.getByText('Compared with previous run: 0 changed cases.')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Load maintained campaign' }));
+  fireEvent.change(editor, { target: { value: JSON.stringify(campaign) } });
+  fireEvent.click(run);
+  expect(screen.queryByText(/Compared with previous run:/)).toBeNull();
 });

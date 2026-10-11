@@ -28,12 +28,13 @@ export function QualificationWorkbench() {
     setError('');
     try {
       const next = runQualification(parseQualificationProfile(text));
+      const serialized = serializeQualificationReport(next);
       setReport(next);
-      setSaved(serializeQualificationReport(next));
+      setSaved(serialized);
     } catch {
       setSaved('');
       setError(
-        'Profile rejected. Check bounded policy, unique action cases and explicit acceptance criteria.',
+        'Profile rejected. Check policy, unique action cases, explicit acceptance criteria and the report size limit.',
       );
     }
   }

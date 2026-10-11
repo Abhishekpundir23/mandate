@@ -26,7 +26,7 @@ The coding boundary supports exactly `workspace.readFile`, `git.commit` and `git
 
 **Traces** creates or verifies a paired trace bundle, reconstructs each lane, and exposes event queries, world deltas, causal links and receipt diagnostics. A checksum mismatch and an independently reconstructed execution mismatch are distinct failures.
 
-**Campaigns** runs maintained positive controls and adversarial policy, scenario and trace mutations against literal invariants. Mutations operate only on bounded data; unsupported paths are errors rather than successful rejections. Campaign reports declare `canonicalBenchmark: false` and never modify the maintained benchmark catalog.
+**Campaigns** runs maintained positive controls and adversarial policy, scenario and trace mutations against literal invariants. Mutations operate only on bounded data; unsupported paths are errors rather than successful rejections. Editing hides the current result while preserving the last successful run for comparison. Loading the maintained campaign explicitly resets that baseline. Campaign reports declare `canonicalBenchmark: false` and never modify the maintained benchmark catalog.
 
 ## Portable workspaces
 
@@ -49,7 +49,7 @@ Create from the applied policy and current session, or paste a saved workspace a
 | Qualification profile | 1 MiB | 40 | 100,000 | 100 unique action cases |
 | Qualification report | 4 MiB | 48 | 300,000 | Reconstructed profile and checks |
 
-Parsing bounds bytes and nesting before recursive validation. Object APIs reject accessors, cycles, unsupported prototypes and ambiguous values. Serialized recipes, sessions and browser revision results fall back to compact JSON when indentation would exceed the import limit. CLI revision output is compact JSON.
+Parsing bounds bytes and nesting before recursive validation. Object APIs reject accessors, cycles, unsupported prototypes and ambiguous values. Generated qualification reports must fit the report envelope before they are returned or published in the browser. Serialized recipes, sessions, Impact candidates and browser revision results fall back to compact JSON when indentation would exceed the import limit. CLI revision output is compact JSON.
 
 Hashes identify content and internal consistency. They are not signatures, proof of human approval, authenticated identity or authorization to execute. Redacted outputs preserve useful counts and outcomes while omitting source prose and action arguments; they are explicitly non-replayable reports.
 
