@@ -13,6 +13,10 @@ import { sessionLimits } from '../../src/sessions/schema';
 import type { Session } from '../../src/sessions/types';
 import { positiveVersion, type CliCommand } from './args';
 import { readBoundedFile } from './io';
+import { parseLabScenario, labLimits } from '../../src/lab/parse';
+import { runLabScenario } from '../../src/lab/run';
+import { getPolicyExperiment, policyExperiments, runPolicyExperiment } from '../../src/lab/experiments';
+import { scenarioCatalog } from '../../src/scenarios/catalog';
 
 export interface CommandResult {
   readonly value: unknown;
@@ -28,6 +32,21 @@ async function loadSession(file: string): Promise<Session> {
 
 export async function executeCommand(input: CliCommand): Promise<CommandResult> {
   const options = input.options;
+  if (input.group === 'lab') {
+    if (input.command === 'list') return { code: 0, value: {
+      scenarios: scenarioCatalog.map(({ id, title, domain }) => ({ id, title, domain })),
+      experiments: policyExperiments.map(({ id, title, category, description }) => ({ id, title, category, description })),
+    } };
+    if (input.command === 'run' && options.experiment !== undefined) {
+      const report = runPolicyExperiment(getPolicyExperiment(options.experiment));
+      return { code: report.passed ? 0 : 5, value: report };
+    }
+    const scenario = parseLabScenario(await readBoundedFile(options.scenario!, labLimits.bytes));
+    if (input.command === 'validate') return { code: 0, value: {
+      valid: true, scenarioId: scenario.id, mode: 'deterministic-sandbox', externalActionsPerformed: false,
+    } };
+    if (input.command === 'run') return { code: 0, value: runLabScenario(scenario) };
+  }
   if (input.group === 'policy') {
     const snapshot = parsePolicyJson(await readBoundedFile(options.policy!, 256 * 1024));
     if (input.command === 'validate') return { code: 0, value: {

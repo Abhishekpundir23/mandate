@@ -1,6 +1,6 @@
 export interface CliCommand {
   readonly kind: 'command';
-  readonly group: 'policy' | 'session';
+  readonly group: 'policy' | 'session' | 'lab';
   readonly command: string;
   readonly format: 'json' | 'text';
   readonly options: Readonly<Record<string, string>>;
@@ -23,6 +23,9 @@ const definitions: Readonly<Record<string, Definition>> = Object.freeze({
   'session.verify': { required: ['session'], optional: [] },
   'session.inspect': { required: ['session'], optional: [], switches: ['redacted'] },
   'session.diff': { required: ['before', 'after'], optional: [] },
+  'lab.list': { required: [], optional: [] },
+  'lab.validate': { required: ['scenario'], optional: [] },
+  'lab.run': { required: [], optional: ['scenario', 'experiment'] },
 });
 
 export function parseCliArguments(argv: readonly string[]): CliArguments {
@@ -30,7 +33,7 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
   if (argv.length > 50 || argv.some((value) => value.length > 16 * 1024)) throw new Error('INVALID_ARGUMENTS');
   const group = argv[0];
   const command = argv[1];
-  if ((group !== 'policy' && group !== 'session') || command === undefined) throw new Error('INVALID_ARGUMENTS');
+  if ((group !== 'policy' && group !== 'session' && group !== 'lab') || command === undefined) throw new Error('INVALID_ARGUMENTS');
   const key = group + '.' + command;
   if (!Object.hasOwn(definitions, key)) throw new Error('INVALID_ARGUMENTS');
   const definition = definitions[key]!;
@@ -56,6 +59,7 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
   const format = options.format ?? 'json';
   if (format !== 'json' && format !== 'text') throw new Error('INVALID_ARGUMENTS');
   if (key === 'policy.check' && seen.has('action') === seen.has('action-file')) throw new Error('INVALID_ARGUMENTS');
+  if (key === 'lab.run' && seen.has('scenario') === seen.has('experiment')) throw new Error('INVALID_ARGUMENTS');
   return { kind: 'command', group, command, format, options: Object.freeze(options) };
 }
 

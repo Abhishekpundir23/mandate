@@ -33,10 +33,14 @@ Usage:
   mandate session verify --session FILE
   mandate session inspect --session FILE [--redacted]
   mandate session diff --before FILE --after FILE
+  mandate lab list
+  mandate lab validate --scenario FILE
+  mandate lab run (--scenario FILE | --experiment ID)
 
 Add --format json (default) or --format text to any command.
 Paths identify explicit local input files. Results go to stdout; errors go to stderr.
-Exit codes: 0 success/ALLOW, 2 invalid input, 3 BLOCK, 4 CONFIRM, 5 invalid session integrity.
+Exit codes: 0 success/ALLOW, 2 invalid input, 3 BLOCK, 4 CONFIRM, 5 integrity/experiment failure.
 All decisions are advisory. No declared action is executed.
+Lab scenarios execute only in the deterministic in-memory sandbox.
 Session hashes verify internal consistency; they do not authenticate human approval.
 `;
