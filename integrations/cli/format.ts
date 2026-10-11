@@ -35,6 +35,11 @@ Usage:
   mandate session verify --session FILE
   mandate session inspect --session FILE [--redacted]
   mandate session diff --before FILE --after FILE
+  mandate trace create --scenario FILE
+  mandate trace verify --bundle FILE
+  mandate trace inspect --bundle FILE [--lane mandate|standard] [--redacted]
+    [--type EVENT_TYPE] [--outcome OUTCOME] [--search TEXT] [--page N] [--page-size N]
+    [--from-step N] [--to-step N] [--order asc|desc]
   mandate impact validate --cases FILE
   mandate impact run --before FILE --after FILE --cases FILE [--redacted]
   mandate impact history --policy FILE --before N --after N --cases FILE [--redacted]

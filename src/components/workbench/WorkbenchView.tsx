@@ -10,6 +10,7 @@ import { PolicyAnalysis } from './PolicyAnalysis';
 import { PolicyEditor } from './PolicyEditor';
 import { VersionCompare } from './VersionCompare';
 import { SessionWorkbench } from './SessionWorkbench';
+import { TraceWorkbench } from './TraceWorkbench';
 import { ImpactWorkbench } from './ImpactWorkbench';
 import { RevisionWorkbench } from './RevisionWorkbench';
 import { LabWorkbench } from './LabWorkbench';
@@ -50,6 +51,7 @@ export function WorkbenchView({ onNavigate }: { readonly onNavigate: (view: AppV
         { id: 'impact', label: 'Impact', content: <ImpactWorkbench key={state.snapshot.policyDigest} snapshot={state.snapshot} /> },
         { id: 'sessions', label: 'Sessions', content: <SessionWorkbench session={state.session} onReset={() => setState(resetWorkbenchSession)} /> },
         { id: 'lab', label: 'Lab', content: <LabWorkbench /> },
+        { id: 'traces', label: 'Traces', content: <TraceWorkbench /> },
         { id: 'analysis', label: 'Analysis', content: <PolicyAnalysis snapshot={state.snapshot} /> },
       ]} />
     </main>

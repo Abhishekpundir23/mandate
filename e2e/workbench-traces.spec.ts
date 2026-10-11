@@ -1,0 +1,40 @@
+import { expect, test } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import { verifyTraceBundle } from '../src/inspection/bundle';
+test.beforeEach(async ({ page }) => {
+  await page.goto('/'); await page.getByRole('button', { name: 'Workbench', exact: true }).click();
+  await page.getByRole('tab', { name: 'Traces', exact: true }).click();
+});
+test('reconstructs and filters a synthetic bundle with causal evidence and redacted output', async ({ page, context }) => {
+  await context.setOffline(true);
+  await page.getByRole('button', { name: 'Generate sandbox bundle' }).click();
+  await expect(page.getByRole('status')).toContainText('Verified internally · not authenticated');
+  const bundle = await page.getByLabel('Trace bundle JSON', { exact: true }).inputValue();
+  expect(verifyTraceBundle(bundle).ok).toBe(true);
+  await page.getByRole('combobox', { name: 'Trace outcome', exact: true }).selectOption('BLOCK');
+  await expect(page.getByRole('table', { name: 'Trace events' }).getByRole('row')).toHaveCount(2);
+  await page.getByRole('combobox', { name: 'Trace outcome', exact: true }).selectOption('all');
+  await page.getByRole('combobox', { name: 'Trace event type', exact: true }).selectOption('TOOL_OBSERVATION');
+  await page.getByRole('table', { name: 'Trace events' }).getByRole('button').first().click();
+  await expect(page.getByLabel('Event world delta JSON')).toHaveValue(/fieldsFilled/);
+  await expect(page.getByLabel('Event causal links JSON')).toHaveValue(/observation/);
+  await page.getByLabel('Redact trace output', { exact: true }).check();
+  await expect(page.getByLabel('Trace report JSON')).not.toHaveValue(/fieldsFilled/);
+  const audit = await new AxeBuilder({ page }).include('#workbench-workspace').analyze();
+  expect(audit.violations).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+});
+test('import editing invalidates verification and rejects a forged observation', async ({ page }) => {
+  await page.getByRole('button', { name: 'Generate sandbox bundle' }).click();
+  const original = await page.getByLabel('Trace bundle JSON', { exact: true }).inputValue();
+  const forged = JSON.parse(original);
+  forged.comparison.mandate.events[0].world.secret = true;
+  await page.getByLabel('Trace bundle JSON', { exact: true }).fill(JSON.stringify(forged));
+  await expect(page.getByRole('status')).toHaveCount(0);
+  await expect(page.getByRole('table', { name: 'Trace events' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Verify trace bundle' }).click();
+  await expect(page.getByRole('alert')).toContainText('DIGEST_MISMATCH');
+  await page.getByLabel('Trace bundle JSON', { exact: true }).fill(original);
+  await page.getByRole('button', { name: 'Verify trace bundle' }).click();
+  await expect(page.getByRole('status')).toContainText('Verified internally');
+});

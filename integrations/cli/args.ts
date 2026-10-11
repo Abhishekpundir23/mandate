@@ -1,6 +1,6 @@
 export interface CliCommand {
   readonly kind: 'command';
-  readonly group: 'policy' | 'session' | 'lab' | 'impact';
+  readonly group: 'policy' | 'session' | 'lab' | 'impact' | 'trace';
   readonly command: string;
   readonly format: 'json' | 'text';
   readonly options: Readonly<Record<string, string>>;
@@ -25,6 +25,9 @@ const definitions: Readonly<Record<string, Definition>> = Object.freeze({
   'session.verify': { required: ['session'], optional: [] },
   'session.inspect': { required: ['session'], optional: [], switches: ['redacted'] },
   'session.diff': { required: ['before', 'after'], optional: [] },
+  'trace.create': { required: ['scenario'], optional: [] },
+  'trace.verify': { required: ['bundle'], optional: [] },
+  'trace.inspect': { required: ['bundle'], optional: ['lane', 'type', 'outcome', 'search', 'page', 'page-size', 'from-step', 'to-step', 'order'], switches: ['redacted'] },
   'impact.validate': { required: ['cases'], optional: [] },
   'impact.run': { required: ['before', 'after', 'cases'], optional: [], switches: ['redacted'] },
   'impact.history': { required: ['policy', 'before', 'after', 'cases'], optional: [], switches: ['redacted'] },
@@ -38,7 +41,7 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
   if (argv.length > 50 || argv.some((value) => value.length > 16 * 1024)) throw new Error('INVALID_ARGUMENTS');
   const group = argv[0];
   const command = argv[1];
-  if ((group !== 'policy' && group !== 'session' && group !== 'lab' && group !== 'impact') || command === undefined) throw new Error('INVALID_ARGUMENTS');
+  if ((group !== 'policy' && group !== 'session' && group !== 'lab' && group !== 'impact' && group !== 'trace') || command === undefined) throw new Error('INVALID_ARGUMENTS');
   const key = group + '.' + command;
   if (!Object.hasOwn(definitions, key)) throw new Error('INVALID_ARGUMENTS');
   const definition = definitions[key]!;

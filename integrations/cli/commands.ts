@@ -1,3 +1,6 @@
+import { createTraceBundle, serializeTraceBundle, verifyTraceBundle, traceBundleLimits } from '../../src/inspection/bundle';
+import { queryTraceEvents, summarizeTrace, redactTrace } from '../../src/inspection/query';
+import { buildCausalGraph, receiptDiagnostics } from '../../src/inspection/causal';
 import { parseCaseSuite, caseSuiteLimits } from '../../src/impact/cases';
 import { comparePolicyImpact, compareHistoricalImpact } from '../../src/impact/compare';
 import { redactImpact } from '../../src/impact/report';
@@ -36,6 +39,35 @@ async function loadSession(file: string): Promise<Session> {
 
 export async function executeCommand(input: CliCommand): Promise<CommandResult> {
   const options = input.options;
+  if (input.group === 'trace') {
+    if (input.command === 'create') {
+      const bundle = createTraceBundle(parseLabScenario(await readBoundedFile(options.scenario!, labLimits.bytes)));
+      return { code: 0, value: bundle, json: serializeTraceBundle(bundle) };
+    }
+    const verified = verifyTraceBundle(await readBoundedFile(options.bundle!, traceBundleLimits.bytes));
+    if (input.command === 'verify') return { code: verified.ok ? 0 : 5, value: verified.ok
+      ? { valid: true, authenticated: false, bundleDigest: verified.bundle.bundleDigest }
+      : { valid: false, authenticated: false, code: verified.code } };
+    if (!verified.ok) throw new Error('INVALID_TRACE');
+    const lane = options.lane ?? 'mandate';
+    if (lane !== 'mandate' && lane !== 'standard') throw new Error('INVALID_INPUT');
+    const trace = lane === 'mandate' ? verified.bundle.comparison.mandate : verified.bundle.comparison.standard;
+    const query = {
+        ...(options.type === undefined ? {} : { type: options.type }),
+        ...(options.outcome === undefined ? {} : { outcome: options.outcome }),
+        ...(options.search === undefined ? {} : { text: options.search }),
+        ...(options.order === undefined ? {} : { order: options.order }),
+        ...(options.page === undefined ? {} : { page: positiveVersion(options.page) }),
+        ...(options['page-size'] === undefined ? {} : { pageSize: positiveVersion(options['page-size']) }),
+        ...(options['from-step'] === undefined ? {} : { fromStep: positiveVersion(options['from-step']) }),
+        ...(options['to-step'] === undefined ? {} : { toStep: positiveVersion(options['to-step']) }),
+    };
+    const events = queryTraceEvents(trace, query);
+    return { code: 0, value: options.redacted === 'true' ? redactTrace(trace, query) : {
+      authenticated: false, externalActionsPerformed: false, summary: summarizeTrace(trace), events,
+      diagnostics: receiptDiagnostics(trace), graph: buildCausalGraph(trace), receipt: trace.receipt,
+    } };
+  }
   if (input.group === 'impact') {
     const suite = parseCaseSuite(await readBoundedFile(options.cases!, caseSuiteLimits.bytes));
     if (input.command === 'validate') return { code: 0, value: { valid: true, caseCount: suite.cases.length, executionPerformed: false } };
