@@ -7,7 +7,7 @@
     "dev": "vite",
     "preview": "vite preview",
     "build": "tsc -b tsconfig.app.json tsconfig.node.json && vite build",
-    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.mcp.json --pretty false",
+    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.mcp.json --pretty false && tsc -p tsconfig.cli.json --pretty false",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest",
     "test:coverage": "vitest run --coverage && node scripts/coverage-directories.mjs",
@@ -15,9 +15,11 @@
     "test:e2e:built": "playwright test",
     "test:security": "npm run build && npm run test:security:built",
     "test:security:built": "node scripts/security-gate.mjs",
-    "verify": "npm run typecheck && npm run lint && npm test -- --run && npm run test:coverage && npm run build && npm run build:mcp && npm run test:mcp && npm run test:e2e:built && npm run test:security:built",
+    "verify": "npm run typecheck && npm run lint && npm test -- --run && npm run test:coverage && npm run build && npm run build:mcp && npm run test:mcp && npm run test:cli && npm run test:e2e:built && npm run test:security:built",
     "test:mcp": "vitest run --config vitest.mcp.config.ts",
-    "build:mcp": "tsc -p tsconfig.mcp.json --noEmit && node scripts/build-mcp.mjs"
+    "build:mcp": "tsc -p tsconfig.mcp.json --noEmit && node scripts/build-mcp.mjs",
+    "build:cli": "tsc -p tsconfig.cli.json --noEmit && node scripts/build-cli.mjs",
+    "test:cli": "npm run build:cli && vitest run --config vitest.cli.config.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "5.3.0",

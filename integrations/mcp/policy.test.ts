@@ -110,3 +110,10 @@ test('rejects branch resources whose trailing Unicode whitespace would be trimme
     selector: { tool: 'git', operation: 'push', resource: 'repository:mandate/remote:origin/ref:refs/heads/feature\u00a0' },
   }) }])] }))).toThrow();
 });
+
+test('does not silently strip a file BOM before portable policy validation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mandate-policy-')); paths.push(dir);
+  const file = join(dir, 'bom.json');
+  await writeFile(file, '\ufeff' + JSON.stringify(makePolicy()));
+  await expect(loadPolicyFile(file)).rejects.toThrow();
+});
