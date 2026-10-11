@@ -23,6 +23,8 @@ export function formatCliOutput(value: unknown, format: 'json' | 'text'): string
 export const cliHelp = `Mandate local authority workbench
 
 Usage:
+  mandate policy revision-preview --policy FILE --revision FILE
+  mandate policy revision-apply --policy FILE --revision FILE
   mandate policy validate --policy FILE
   mandate policy inspect --policy FILE [--version N]
   mandate policy history --policy FILE

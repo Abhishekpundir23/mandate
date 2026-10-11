@@ -10,6 +10,7 @@ import { PolicyAnalysis } from './PolicyAnalysis';
 import { PolicyEditor } from './PolicyEditor';
 import { VersionCompare } from './VersionCompare';
 import { SessionWorkbench } from './SessionWorkbench';
+import { RevisionWorkbench } from './RevisionWorkbench';
 import { LabWorkbench } from './LabWorkbench';
 
 export function WorkbenchView({ onNavigate }: { readonly onNavigate: (view: AppView) => void }) {
@@ -41,6 +42,8 @@ export function WorkbenchView({ onNavigate }: { readonly onNavigate: (view: AppV
             <DecisionExplanation snapshot={state.snapshot} result={state.result} />
           </div>
         </div> },
+        { id: 'revisions', label: 'Revisions', content: <RevisionWorkbench key={state.snapshot.policyDigest} snapshot={state.snapshot} dirty={dirty}
+          onApply={(text) => setState((current) => applyPolicy(editPolicy(current, text)))} /> },
         { id: 'history', label: 'History', content: <AuthorityTimeline key={state.snapshot.policyDigest} snapshot={state.snapshot} /> },
         { id: 'compare', label: 'Compare', content: <VersionCompare key={state.snapshot.policyDigest} snapshot={state.snapshot} /> },
         { id: 'sessions', label: 'Sessions', content: <SessionWorkbench session={state.session} onReset={() => setState(resetWorkbenchSession)} /> },

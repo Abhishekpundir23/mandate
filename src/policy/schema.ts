@@ -17,7 +17,7 @@ export const clauseSchema = z.strictObject({
     forClauseId: z.string().min(1), fact: z.string().min(1), equals: z.union([z.string(), z.number(), z.boolean()]),
   }).optional(),
 });
-const diffSchema = z.strictObject({
+export const diffSchema = z.strictObject({
   baseVersion: z.number().int().positive(), turnId: z.string().min(1), source: sourceSchema,
   ops: z.array(z.discriminatedUnion('op', [
     z.strictObject({ op: z.literal('ADD'), clause: clauseSchema }),

@@ -1,3 +1,4 @@
+import { parseRevision, previewRevision, applyRevision, revisionLimits } from '../../src/policy/revisions';
 import { parsePolicyJson } from '../../src/policy/parse';
 import { getAuthority, checkAction } from '../../src/policy/service';
 import { inspectVersion, listPolicyHistory } from '../../src/policy/history';
@@ -49,6 +50,10 @@ export async function executeCommand(input: CliCommand): Promise<CommandResult> 
   }
   if (input.group === 'policy') {
     const snapshot = parsePolicyJson(await readBoundedFile(options.policy!, 256 * 1024));
+    if (input.command === 'revision-preview' || input.command === 'revision-apply') {
+      const revision = parseRevision(await readBoundedFile(options.revision!, revisionLimits.bytes));
+      return { code: 0, value: input.command === 'revision-preview' ? previewRevision(snapshot, revision) : applyRevision(snapshot, revision).document };
+    }
     if (input.command === 'validate') return { code: 0, value: {
       valid: true,
       mode: 'advisory',

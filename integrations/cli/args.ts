@@ -13,6 +13,8 @@ interface Definition {
   readonly switches?: readonly string[];
 }
 const definitions: Readonly<Record<string, Definition>> = Object.freeze({
+  'policy.revision-preview': { required: ['policy', 'revision'], optional: [] },
+  'policy.revision-apply': { required: ['policy', 'revision'], optional: [] },
   'policy.validate': { required: ['policy'], optional: [] },
   'policy.inspect': { required: ['policy'], optional: ['version'] },
   'policy.history': { required: ['policy'], optional: [] },
