@@ -80,7 +80,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    exclude: [...configDefaults.exclude, 'e2e/**', 'integrations/mcp/**'],
+    exclude: [...configDefaults.exclude, 'e2e/**', 'integrations/**'],
     setupFiles: './src/test/setup.ts',
     globals: true,
     coverage: {

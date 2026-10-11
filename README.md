@@ -61,7 +61,7 @@ npm run preview
 - Vitest `4.1.11`
 - Playwright `1.62.1` with Chromium
 
-The application uses only the synthetic fixtures tracked under `src/scenarios`; no external dataset, API key, account, model call, or paid service is required. Product runtime cost is **$0**. Internet access is needed only to install npm and Playwright packages on a clean machine.
+The canonical benchmark uses the synthetic fixtures tracked under `src/scenarios`; the workbench also accepts bounded local declarations. No external dataset, API key, account, model call, or paid service is required. Product runtime cost is **$0**. Internet access is needed only to install npm and Playwright packages on a clean machine.
 
 ### Setup from a clean environment
 
@@ -122,6 +122,14 @@ OpenAI Codex was used as the primary coding agent, with delegated Codex roles fo
 The browser application's capabilities transform an immutable in-memory world and emit deterministic observations. They do not call an email service, deployment platform, calendar, checkout, filesystem, job site, or any other real integration. There is no authentication, credential entry, persistence, analytics, product network endpoint, form submit, or navigation API.
 
 The production graph is constrained by a closed-world origin/effect analyzer, strict CSP and local assets, built-module receipts, browser interception, and explicit effect budgets. This is a guarantee over the repository's supported production subset, not a claim to prove arbitrary JavaScript universally. See [Architecture](docs/architecture.md), [Fidelity ledger](docs/fidelity-ledger.md), and the [submission video script](docs/submission-video-script.md).
+
+## Local developer workbench
+
+Select **Workbench** for policy editing, guided revisions, authority history, action explanations, reproducible sessions, historical impact comparisons, custom sandbox scenarios, trace inspection and adversarial campaigns. Portable workspaces collect independently validated artifacts. Scenario recipes derive redundant metadata from explicit declarations; qualification profiles evaluate literal acceptance criteria and independently reconstruct saved reports.
+
+See the [Workbench guide](docs/workbench.md) for workflows and limits, the [CLI guide](docs/cli.md) for runnable local examples, and the [qualification record](docs/workbench-validation.md) for measured validation. Build the command-line tool with `npm run build:cli` and inspect `node dist-cli/mandate.mjs --help`. Coding checks remain advisory; only the synthetic sandbox transforms world state.
+
+Run `npm run count:source` to measure Git-tracked TypeScript, JavaScript, CSS and HTML, with a separate test/source breakdown. Dependencies, generated output, documentation and JSON are excluded. The October 11 workbench measures **40,681 physical lines / 38,285 nonblank lines** across 305 files, including **15,251 test lines**; the remaining **25,430 lines** are browser, SDK, integration and tooling code.
 
 ## Local coding-agent integration
 

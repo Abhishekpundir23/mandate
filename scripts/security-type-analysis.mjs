@@ -3894,7 +3894,7 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
         continue;
       }
       if (entry.kind === 'zod') {
-        if (['lazy', 'superRefine'].includes(entry.name)
+        if (['lazy', 'superRefine', 'refine'].includes(entry.name)
           && !callableArgumentIsResolved(argumentsList[0])) {
           effects.add('HOST_UNKNOWN');
           argumentsList.forEach((value) => escapeOwned(value, `escaped through unresolved Zod ${entry.name} callback`));
@@ -4241,6 +4241,25 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
             ordinaryData: name === 'Object.create' && node.arguments?.[0]?.kind === ts.SyntaxKind.NullKeyword,
           }));
         } else if (pureGlobalCalls.has(name)) {
+          if (name === 'JSON.parse') {
+            const argumentNode = node.arguments?.[0];
+            const input = argumentsList[0];
+            const facts = input === undefined ? undefined : transitiveSecurityFacts(input);
+            const safeInput = argumentNode !== undefined && isPrimitiveLikeType(unwrapExpression(argumentNode), checker)
+              && facts !== undefined && facts.callableCount === 0
+              && ![ORIGIN.AMBIENT, ORIGIN.OPAQUE, ORIGIN.ESCAPED, ORIGIN.UNKNOWN, ORIGIN.UI_CELL].some((tag) => facts.tags.has(tag));
+            // Revivers can return capabilities or mutate an arbitrary graph. The
+            // portable boundary needs only one-argument parsing of scalar text.
+            if (argumentsList.length !== 1 || !safeInput) {
+              effects.add('HOST_UNKNOWN');
+              outcomes.push(origin(ORIGIN.UNKNOWN, 'JSON.parse requires scalar input and no reviver'));
+            } else {
+              outcomes.push(freshOwned(node, allocationProvenance(node, 'JSON.parse data result'), {
+                ordinaryData: true, content: origin(ORIGIN.BORROWED, 'JSON data contains no callable capabilities'),
+              }));
+            }
+            continue;
+          }
           if (name === 'Array.from' && node.arguments?.[1] !== undefined
             && !callableArgumentIsResolved(argumentsList[1])) {
             effects.add('HOST_UNKNOWN');
@@ -4254,7 +4273,11 @@ export function createOriginAnalysis({ checker, sourceFiles, ir }) {
           }
           outcomes.push(['Object.entries', 'Object.keys', 'Object.values', 'Array.from'].includes(name)
             ? freshOwned(node, allocationProvenance(node, `${name} result`), {
-              content: argumentsList[0]?.content ?? origin(ORIGIN.BORROWED, `${name} content`),
+              // Keys cannot retain a descriptor's opaque value or a host handle.
+              // Values and entries must keep their input's transitive authority.
+              content: name === 'Object.keys'
+                ? origin(ORIGIN.BORROWED, 'Object.keys string key', { surfaces: new Set([SURFACE.SCALAR]) })
+                : argumentsList[0]?.content ?? origin(ORIGIN.BORROWED, `${name} content`),
             })
             : origin(ORIGIN.BORROWED, `pure standard result ${name}`));
         } else {

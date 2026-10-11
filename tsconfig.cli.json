@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.mcp.json",
+  "compilerOptions": { "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.cli.tsbuildinfo" },
+  "include": ["integrations/cli", "vitest.cli.config.ts"]
+}

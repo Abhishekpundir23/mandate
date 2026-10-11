@@ -6,7 +6,7 @@ import type { ComparisonRun } from '../../runtime/runner';
 import { draftIsNotSubmit } from '../../scenarios/fixtures/application';
 import { useReplay } from '../../app/useReplay';
 import { AppFooter } from '../AppFooter';
-import { AppHeader } from '../AppHeader';
+import { AppHeader, type AppView } from '../AppHeader';
 import { AuthorityMatrix } from './AuthorityMatrix';
 import { ComparisonPanel } from './ComparisonPanel';
 import { CompletionReceipt } from './CompletionReceipt';
@@ -18,7 +18,7 @@ interface LiveRunViewProps {
   readonly selectedScenarioId?: string;
   readonly onScenarioChange?: (scenarioId: string) => void;
   readonly replayMode?: 'interactive' | 'complete';
-  readonly onNavigate?: (view: 'live' | 'benchmark') => void;
+  readonly onNavigate?: (view: AppView) => void;
 }
 
 export function LiveRunView({

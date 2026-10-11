@@ -1,8 +1,9 @@
 import type { ScenarioDefinition } from '../domain/types';
+export type AppView = 'live' | 'benchmark' | 'workbench';
 
 interface AppHeaderProps {
-  readonly activeView: 'live' | 'benchmark';
-  readonly onViewChange: (view: 'live' | 'benchmark') => void;
+  readonly activeView: AppView;
+  readonly onViewChange: (view: AppView) => void;
   readonly scenarios: readonly ScenarioDefinition[];
   readonly selectedScenarioId: string;
   readonly onScenarioChange: (scenarioId: string) => void;
@@ -24,14 +25,15 @@ export function AppHeader({
   benchmarkStatus = 'Benchmark ready',
 }: AppHeaderProps) {
   const benchmark = activeView === 'benchmark';
+  const workbench = activeView === 'workbench';
   return (
     <header className="app-header">
-      <h1><a className="wordmark" href={benchmark ? '#benchmark-workspace' : '#live-workspace'}>MANDATE</a></h1>
+      <h1><a className="wordmark" href={workbench ? '#workbench-workspace' : benchmark ? '#benchmark-workspace' : '#live-workspace'}>MANDATE</a></h1>
       <nav aria-label="Primary">
         <div>
           <button
             type="button"
-            aria-current={!benchmark ? 'page' : undefined}
+            aria-current={activeView === 'live' ? 'page' : undefined}
             onClick={() => onViewChange('live')}
           >Live run</button>
           <button
@@ -39,6 +41,7 @@ export function AppHeader({
             aria-current={benchmark ? 'page' : undefined}
             onClick={() => onViewChange('benchmark')}
           >Benchmark</button>
+          <button type="button" aria-current={workbench ? 'page' : undefined} onClick={() => onViewChange('workbench')}>Workbench</button>
         </div>
       </nav>
       {benchmark ? (
@@ -48,7 +51,7 @@ export function AppHeader({
             {benchmarkStatus}
           </span>
         </div>
-      ) : (
+      ) : workbench ? <div className="scenario-picker benchmark-count"><span>Local · in memory</span><span className="wb-help">Advisory authority tools</span></div> : (
         <label className="scenario-picker">
           <span className="visually-hidden">Scenario</span>
           <select
@@ -67,9 +70,9 @@ export function AppHeader({
         type="button"
         onClick={onRun}
         disabled={running}
-        aria-label={benchmark ? 'Run benchmark' : 'Run comparison'}
+        aria-label={workbench ? 'Validate draft' : benchmark ? 'Run benchmark' : 'Run comparison'}
       >
-        {benchmark ? 'Run benchmark' : (
+        {workbench ? 'Validate draft' : benchmark ? 'Run benchmark' : (
           <>
             <span className="desktop-run-label">Run comparison</span>
             <span className="mobile-run-label">Run</span>
