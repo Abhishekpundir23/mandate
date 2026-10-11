@@ -21,7 +21,7 @@ export function sha256(text: string): string {
   const bitLength = bytes.length * 8;
   bytes.push(0x80);
   while (bytes.length % 64 !== 56) bytes.push(0);
-  const high = Math.floor(bitLength / 0x100000000);
+  const high = (bitLength / 0x100000000) >>> 0;
   const low = bitLength >>> 0;
   for (const word of [high, low]) {
     bytes.push((word >>> 24) & 255, (word >>> 16) & 255, (word >>> 8) & 255, word & 255);
@@ -59,7 +59,7 @@ export function sha256(text: string): string {
       d = c; c = b; b = a; a = (first + second) >>> 0;
     }
     const block = [a, b, c, d, e, f, g, h];
-    for (let index = 0; index < 8; index += 1) state[index] = (state[index]! + block[index]!) >>> 0;
+    for (const index of [0, 1, 2, 3, 4, 5, 6, 7] as const) state[index] = (state[index]! + block[index]!) >>> 0;
   }
   return state.map((word) => word.toString(16).padStart(8, '0')).join('');
 }

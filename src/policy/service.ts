@@ -40,7 +40,9 @@ export type AuthorityResult = z.infer<typeof authorityResultSchema>;
 export type ActionCheckResult = z.infer<typeof actionCheckResultSchema>;
 
 export class ActionCheckError extends Error {
-  constructor(readonly code: 'INVALID_REQUEST' | 'POLICY_MISMATCH') { super(code); }
+  get code(): 'INVALID_REQUEST' | 'POLICY_MISMATCH' {
+    return this.message === 'POLICY_MISMATCH' ? 'POLICY_MISMATCH' : 'INVALID_REQUEST';
+  }
 }
 function metadata(snapshot: AuthoritySnapshot) {
   return { mode: 'advisory' as const, executionPerformed: false as const, policyId: snapshot.policyId,

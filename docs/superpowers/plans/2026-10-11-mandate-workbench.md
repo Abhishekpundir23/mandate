@@ -101,7 +101,39 @@
 - [ ] Run UI/lab/session/CLI suites and desktop/mobile browser journeys with accessibility/offline checks; Expected: pass without console errors or host effects.
 - [ ] Verify identity and commit `feat: inspect sessions and sandbox scenarios in workbench`.
 
-### Task 8: Qualification, documentation and measured delivery
+### Task 8: Guided policy revisions
+
+**Files:** Create revision schema, authoring/preview/apply APIs and tests under `src/policy`; add browser authoring components and CLI revision commands.
+**Interfaces:** Consumes the validated policy snapshot and digest. Produces bounded revision JSON, deterministic preview and a new validated policy document after explicit Apply; no implicit grant from text.
+- [ ] Write stale digest/base version, strict input, provenance, duplicate IDs, protected replacement, revocation retirement and atomic failure tests; observe failures.
+- [ ] Implement pure revision construction and preview, then accessible browser editing and CLI validation/application to stdout.
+- [ ] Run revision, policy, browser and CLI suites with typecheck/lint; verify identity and commit the feature.
+
+### Task 9: Policy change impact and declared case suites
+
+**Files:** Create `src/impact` modules and tests, browser comparison/case editors and CLI impact commands.
+**Interfaces:** Consumes policy documents and up to 100 explicit coding action cases. Produces immutable decision-transition reports, expected-outcome qualification, historical-version comparisons and bounded queries.
+- [ ] Write outcome transitions, unchanged decisions under new provenance, scope isolation, invalid cases, bounds, expected-outcome mismatch and deterministic reports; observe failures.
+- [ ] Implement comparisons, suite import/export, report filters/summaries and browser/CLI flows.
+- [ ] Run impact, policy, session, browser and CLI suites with typecheck/lint; verify identity and commit.
+
+### Task 10: Evidence trace bundles and causal inspection
+
+**Files:** Create `src/inspection` modules/tests, trace browser components and CLI trace commands.
+**Interfaces:** Consumes strict lab scenarios and existing sandbox traces. Produces independently verified paired bundles, bounded event queries, world deltas, causal links, receipt diagnostics and redacted reports; integrity does not authenticate a run.
+- [ ] Write forged observations/claims/worlds/receipts, resealed hashes, strict schemas, unsupported capabilities, missing evidence, deterministic queries and disclosure tests; observe failures.
+- [ ] Implement bundle verification and causal inspection, browser event explorer and CLI verification/inspection.
+- [ ] Run inspection, evidence, benchmark, lab, browser and CLI suites with typecheck/lint; verify identity and commit.
+
+### Task 11: Reproducible adversarial campaigns
+
+**Files:** Create `src/campaigns` modules/tests, maintained mutation cases, browser campaign view and CLI commands.
+**Interfaces:** Consumes strict scenarios, trace inspection and policy experiments. Produces up to 100 explicit synthetic cases with transformation, literal invariant, result/rejection and reproducible export; canonical benchmark unchanged.
+- [ ] Write authority/evidence/receipt mutation expectations, input immutability, bounded campaign ingestion, deterministic reruns and false-positive/false-negative checks; observe failures.
+- [ ] Implement maintained mutation catalog, campaign runner, comparison/summary and browser/CLI flows.
+- [ ] Run campaign, lab, inspection, benchmark, browser and CLI suites with typecheck/lint; verify identity and commit.
+
+### Task 12: Qualification, documentation and measured delivery
 
 **Files:** Update README, architecture/CLI/workbench guides, changelog and scripts/config as needed for valid unchanged effect budgets; add exact tracked-source counter and regression tests for unresolved issues.
 **Interfaces:** Consumes all preceding tasks. Produces maintained release documentation, measured size and fresh validation evidence outside the repository.

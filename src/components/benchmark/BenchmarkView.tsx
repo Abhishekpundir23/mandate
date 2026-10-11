@@ -1,6 +1,6 @@
 import type { BenchmarkSnapshot } from '../../benchmark/snapshot';
 import { useAccessibleScrollTarget } from '../../platform/browser-capabilities';
-import { AppHeader } from '../AppHeader';
+import { AppHeader, type AppView } from '../AppHeader';
 import { BenchmarkMetrics } from './BenchmarkMetrics';
 import { ScenarioInspector } from './ScenarioInspector';
 import { ScenarioTable } from './ScenarioTable';
@@ -10,7 +10,7 @@ interface BenchmarkViewProps {
   readonly selectedScenarioId: string;
   readonly onSelectScenario: (scenarioId: string) => void;
   readonly onReplayScenario?: (scenarioId: string) => void;
-  readonly onNavigate: (view: 'live' | 'benchmark') => void;
+  readonly onNavigate: (view: AppView) => void;
   readonly onRun: () => void;
   readonly statusMessage?: string;
 }

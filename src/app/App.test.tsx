@@ -64,3 +64,16 @@ describe('App', () => {
     expect(screen.getByRole('row', { name: /Preview is not deploy/ })).toHaveAttribute('aria-selected', 'true');
   });
 });
+
+it('creates the workbench only on first navigation, then retains its local state', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  expect(document.querySelector('#workbench-workspace')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Workbench' }));
+  expect(screen.getByRole('heading', { name: 'Authority workbench' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Check action' }));
+  await user.click(screen.getByRole('button', { name: 'Live run' }));
+  expect(screen.queryByRole('heading', { name: 'Authority workbench' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Workbench' }));
+  expect(screen.getByText('1 recorded check')).toBeVisible();
+});

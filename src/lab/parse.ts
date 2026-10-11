@@ -54,7 +54,8 @@ export function parseLabScenario(text: string): ScenarioDefinition {
       const targets = op.op === 'REPLACE' ? op.targetClauseIds : clause.targetClauseIds ?? [];
       if (new Set(targets).size !== targets.length) throw new Error('Duplicate scenario targets');
       if (clause.evidenceRequirement !== undefined) evidenceTargets.push(clause.evidenceRequirement.forClauseId);
-      added.push(clause.id, ...(op.op === 'REPLACE' ? op.targetClauseIds.map((id) => turn.id + ':revoke:' + id) : []));
+      added.push(clause.id);
+      if (op.op === 'REPLACE') for (const id of op.targetClauseIds) added.push(turn.id + ':revoke:' + id);
     }
     if (new Set(added).size !== added.length || added.some((id) => known.has(id))) {
       throw new Error('Duplicate scenario clause ID');

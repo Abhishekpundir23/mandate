@@ -19,7 +19,7 @@ export type CodingAction = z.infer<typeof codingActionSchema>;
 export const actionCheckInputSchema = z.strictObject({ expectedPolicyDigest: digest, action: codingActionSchema });
 export type ActionCheckInput = z.infer<typeof actionCheckInputSchema>;
 
-export function deriveAction(snapshot: AuthoritySnapshot, input: CodingAction): ActionProposal & CapabilityValidationProposal {
+export function deriveAction(snapshot: Pick<AuthoritySnapshot, 'repositories'>, input: CodingAction): ActionProposal & CapabilityValidationProposal {
   const data = normalizeBoundedJson(input, actionJsonLimits);
   const action = codingActionSchema.parse(data);
   const repository = snapshot.repositories.find((r) => r.id === action.args.repositoryId);
@@ -39,9 +39,10 @@ export function deriveAction(snapshot: AuthoritySnapshot, input: CodingAction): 
 }
 
 export function validateCodingCapability(snapshot: AuthoritySnapshot): CapabilityValidationPort {
+  const scope = { repositories: snapshot.repositories };
   return (proposal) => {
     try {
-      const derived = deriveAction(snapshot, { operation: proposal.tool + '.' + proposal.operation, args: proposal.args } as CodingAction);
+      const derived = deriveAction(scope, { operation: proposal.tool + '.' + proposal.operation, args: proposal.args } as CodingAction);
       if (derived.effect !== proposal.effect || derived.resource !== proposal.resource) return { ok: false, reason: 'Capability metadata mismatch' };
       return { ok: true, effects: [derived.effect], resource: derived.resource };
     } catch { return { ok: false, reason: 'Unsupported coding capability' }; }

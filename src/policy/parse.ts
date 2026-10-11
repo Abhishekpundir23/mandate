@@ -78,7 +78,8 @@ export function parsePolicyJson(text: string): AuthoritySnapshot {
       if (new Set(targets).size !== targets.length || targets.some((id) => !knownIds.has(id))) throw new Error('Invalid targets');
       if (clause.kind === 'REVOKED' && targets.length === 0 && clause.revokedSelector === undefined) throw new Error('Empty revocation');
       if (clause.evidenceRequirement !== undefined) evidenceTargets.push(clause.evidenceRequirement.forClauseId);
-      newIds.push(clause.id, ...(op.op === 'REPLACE' ? targets.map((id) => diff.turnId + ':revoke:' + id) : []));
+      newIds.push(clause.id);
+      if (op.op === 'REPLACE') for (const id of targets) newIds.push(diff.turnId + ':revoke:' + id);
     }
     if (new Set(newIds).size !== newIds.length || newIds.some((id) => knownIds.has(id))) throw new Error('Duplicate clause ID');
     // Evidence describes the resulting version, including grants in this atomic diff.

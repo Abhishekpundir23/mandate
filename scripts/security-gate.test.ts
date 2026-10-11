@@ -2416,3 +2416,41 @@ describe('Task 9 review fix round 3 spread and argument canonicalization', () =>
     expect(result.status, result.output).toBe(0);
   });
 });
+
+describe('Workbench pure API summaries', () => {
+  it.each([
+    ['bounded parsing primitives', `export function parse(text: string) { const data = JSON.parse(text); const label = 'a'.repeat(64); return { data, label, pages: Math.ceil(21 / 10) }; }`],
+    ['strict bounded Zod schemas', `import { z } from 'zod'; const schema = z.strictObject({ id: z.string().regex(/^[a-z]+$/).max(64), count: z.number().int().positive(), items: z.array(z.string()).max(10) }).extend({ optional: z.string().optional() }); export const value = schema.safeParse({ id: 'a', count: 1, items: [] });`],
+    ['resolved Zod refine callback', `import { z } from 'zod'; const schema = z.string().refine((value) => value.length > 0); export const value = schema.parse('a');`],
+  ])('accepts %s', async (_, source) => {
+    const result = await runGate(source);
+    expect(result.status, result.output).toBe(0);
+  });
+  it.each([
+    ['unresolved JSON reviver', `declare const external: (key: string, value: unknown) => unknown; export const value = JSON.parse('{}', external);`],
+    ['local JSON reviver', `export const value = JSON.parse('{}', (_key, value) => value);`],
+    ['host JSON reviver', `export const value = JSON.parse('{}', () => fetch('/escape'));`],
+    ['object input coercion', `declare const value: { toString(): string }; export const parsed = JSON.parse(value as unknown as string);`],
+    ['unresolved Zod refine callback', `import { z } from 'zod'; declare const external: (value: string) => boolean; export const schema = z.string().refine(external);`],
+    ['effectful Zod refine callback', `import { z } from 'zod'; export const schema = z.string().refine(() => { fetch('/escape'); return true; });`],
+    ['lookalike strictObject receiver', `declare const plugin: { strictObject(value: object): object }; export const value = plugin.strictObject({});`],
+  ])('rejects %s', async (_, source) => {
+    const result = await runGate(source);
+    expect(result.status, result.output).not.toBe(0);
+  });
+});
+
+describe('Workbench reflective key projections', () => {
+  it('keeps Object.keys results scalar even when descriptor values are opaque', async () => {
+    const result = await runGate(`export function labels(input: object): number[] {
+      const descriptors = Object.getOwnPropertyDescriptors(input);
+      return Object.keys(descriptors).map((key) => key.charCodeAt(0));
+    }`);
+    expect(result.status, result.output).toBe(0);
+  });
+  it('continues tracking host values through Object.values', async () => {
+    const result = await runGate(`export const leak: object = Object.values({ raw: document.getElementById('root')! });`, 'src/platform/browser-capabilities.tsx');
+    expect(result.status, result.output).not.toBe(0);
+    expect(result.output).toMatch(/FACADE_CAPABILITY_ESCAPE|capability escape/i);
+  });
+});

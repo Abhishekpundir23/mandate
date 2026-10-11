@@ -3,6 +3,8 @@ import { useMemo, useState } from 'react';
 import { createBenchmarkSnapshot } from '../benchmark/snapshot';
 import { BenchmarkView } from '../components/benchmark/BenchmarkView';
 import { LiveRunView } from '../components/live/LiveRunView';
+import { WorkbenchView } from '../components/workbench/WorkbenchView';
+import type { AppView } from '../components/AppHeader';
 import { runComparison } from '../runtime/runner';
 import { scenarioCatalog } from '../scenarios/catalog';
 import '../styles/shell.css';
@@ -11,9 +13,11 @@ import '../styles/history.css';
 import '../styles/trace.css';
 import '../styles/responsive.css';
 import '../styles/benchmark.css';
+import '../styles/workbench.css';
 
 export function App() {
-  const [activeView, setActiveView] = useState<'live' | 'benchmark'>('live');
+  const [activeView, setActiveView] = useState<AppView>('live');
+  const [workbenchOpened, setWorkbenchOpened] = useState(false);
   const [scenarioId, setScenarioId] = useState(scenarioCatalog[0]!.id);
   const [benchmarkSnapshot, setBenchmarkSnapshot] = useState(() =>
     createBenchmarkSnapshot(scenarioCatalog));
@@ -21,6 +25,10 @@ export function App() {
   const [benchmarkRunCount, setBenchmarkRunCount] = useState(0);
   const scenario = scenarioCatalog.find(({ id }) => id === scenarioId) ?? scenarioCatalog[0]!;
   const comparison = useMemo(() => runComparison(scenario), [scenario]);
+  const navigate = (view: AppView): void => {
+    if (view === 'workbench') setWorkbenchOpened(true);
+    setActiveView(view);
+  };
 
   const rerunBenchmark = (): void => {
     const next = createBenchmarkSnapshot(scenarioCatalog);
@@ -34,15 +42,15 @@ export function App() {
     ? 'Benchmark ready'
     : `Benchmark run ${benchmarkRunCount} complete · trace ${benchmarkSnapshot.checksums.trace}`;
 
-  return activeView === 'live' ? (
+  return <>{activeView === 'live' ? (
     <LiveRunView
       comparison={comparison}
       scenarios={scenarioCatalog}
       selectedScenarioId={scenario.id}
       onScenarioChange={setScenarioId}
-      onNavigate={setActiveView}
+      onNavigate={navigate}
     />
-  ) : (
+  ) : activeView === 'benchmark' ? (
     <BenchmarkView
       snapshot={benchmarkSnapshot}
       selectedScenarioId={benchmarkScenarioId}
@@ -51,9 +59,11 @@ export function App() {
         setScenarioId(id);
         setActiveView('live');
       }}
-      onNavigate={setActiveView}
+      onNavigate={navigate}
       onRun={rerunBenchmark}
       statusMessage={benchmarkStatus}
     />
-  );
+  ) : null}
+    {workbenchOpened ? <div hidden={activeView !== 'workbench'}><WorkbenchView onNavigate={navigate} /></div> : null}
+  </>;
 }

@@ -28,7 +28,8 @@ function checkData(value: unknown, limits: JsonLimits): void {
     if (nodes > limits.nodes) throw new TypeError('JSON node limit');
     const current = item.value;
     if (current === null || typeof current === 'boolean') continue;
-    if (typeof current === 'string') { utf8Length(current); continue; }
+    // The runtime guard proves this reflected value is a primitive scalar.
+    if (typeof current === 'string') { utf8Length(String(current)); continue; }
     if (typeof current === 'number') {
       if (!Number.isFinite(current)) throw new TypeError('Non-finite JSON number');
       continue;

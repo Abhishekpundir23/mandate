@@ -28,7 +28,7 @@ A separate scenario lab validates bounded custom scenario JSON, runs the existin
 - Query and pagination are pure, bounded and deterministic. Redacted summaries omit policy prose, action arguments and raw resources.
 - CLI argument parsing rejects unknown/duplicate options and ambiguous action inputs. Stable exit codes: 0 successful command (including ALLOW), 2 invalid invocation/input, 3 BLOCK, 4 CONFIRM, 5 failed session integrity. JSON is the default; `--format text` produces readable output. Errors go to stderr and do not include file contents or stacks. No proposed action is executed.
 - Custom lab scenarios: 256 KiB UTF-8, 64 turns, 256 total proposals, existing supported capabilities only, strict lossless schema validation and deterministic evaluation. Reports distinguish validation failure from a valid run that fails its oracle.
-- Browser Apply atomically replaces the validated policy and starts a fresh session. Invalid drafts preserve the last valid policy/session. Changing an action invalidates its displayed decision until checked again. Version inspection is separate from the current policy used for checks.
+- Browser Apply atomically replaces the validated policy and starts a fresh session when the canonical policy digest changes. Equivalent JSON retains recorded checks. Invalid drafts preserve the last valid policy/session. Changing an action invalidates its displayed decision until checked again. Version inspection is separate from the current policy used for checks.
 - Browser text inputs have visible labels and bounded lengths. Tables use explicit headings; decisions have text labels; controls meet the existing 44px touch target. Keyboard, desktop, mobile and reduced-motion flows remain usable.
 
 ## Milestones and success criteria
@@ -42,3 +42,14 @@ A separate scenario lab validates bounded custom scenario JSON, runs the existin
 ## Non-goals
 
 No real file operation, Git commit/push, publication, live model, conversation extraction, authentication, database, automatic authority change or named coding-agent configuration. SDK/CLI/MCP results describe declared actions only. The browser's existing closed-world effect boundary remains in force.
+
+## Additional developer workflows for the size goal
+
+The measured SDK, CLI and first browser view bring maintained source to approximately 28k lines. Complete the following useful workflows before final qualification, then measure the complete tracked tree again.
+
+- Guided policy revisions: strictly validate an explicit revision draft, preview ADD/REVOKE/REPLACE/NO_CHANGE against the current digest and version, and produce a new policy document only on an explicit application. Preserve exact source provenance, protected clauses and permanent denial semantics. Do not infer permission from prose. Support bounded JSON interchange and a labeled browser authoring form.
+- Change impact: evaluate up to 100 declared action cases against two policy documents or selected historical versions. Report ALLOW/BLOCK/CONFIRM transitions, matched authority and explanations. Separate changed decisions from changes only to provenance or digest. Expected outcomes in case suites are explicit human-authored values, with pass/fail results. Provide browser and CLI comparisons without executing actions.
+- Evidence trace inspection: expose bounded filtering, world-state deltas, action-to-observation-to-claim links and receipt diagnostics for existing deterministic sandbox runs. Imported trace bundles must bind a strict scenario and complete paired comparison and pass independent reconstruction; consistency is never authentication. Provide readable and redacted reports, browser inspection and CLI verification.
+- Adversarial campaigns: maintain bounded, explicit scenario mutations for authority changes, proposal/receipt tampering and evidence loss. Every campaign records the transformation, recomputed run or rejection, and a literal invariant expectation. Keep these reports separate from the canonical benchmark and visibly label synthetic inputs. Cap campaigns at 100 cases, preserve the existing capability registry, and expose reproducible comparison/export flows.
+
+All new inputs use shared byte/depth/node checks before recursive parsing. New pure modules remain behind the same browser effect gate; Node file reads remain in integrations. Tests cover independently specified expected behavior and adversarial boundaries rather than copying implementation output.
