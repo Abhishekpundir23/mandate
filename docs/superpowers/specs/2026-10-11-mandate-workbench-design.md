@@ -53,3 +53,13 @@ The measured SDK, CLI and first browser view bring maintained source to approxim
 - Adversarial campaigns: maintain bounded, explicit scenario mutations for authority changes, proposal/receipt tampering and evidence loss. Every campaign records the transformation, recomputed run or rejection, and a literal invariant expectation. Keep these reports separate from the canonical benchmark and visibly label synthetic inputs. Cap campaigns at 100 cases, preserve the existing capability registry, and expose reproducible comparison/export flows.
 
 All new inputs use shared byte/depth/node checks before recursive parsing. New pure modules remain behind the same browser effect gate; Node file reads remain in integrations. Tests cover independently specified expected behavior and adversarial boundaries rather than copying implementation output.
+
+## Completing the reusable developer workflow
+
+The first ten completed tasks measure 31,039 tracked source lines. Add useful reusable workflows before final qualification:
+
+- Portable workspaces collect validated policies, sessions, case suites, paired trace bundles and campaigns in a bounded manifest. Unique entry IDs, per-entry SHA-256 digests and a root manifest detect changes; imports independently reconstruct every session and trace. Typed inventories, explicit immutable add/remove/rename, redaction and browser/CLI inspection make the artifacts portable. A selected policy can be staged only by an explicit action and still requires Apply in the main editor.
+- Guided scenario recipes remove redundant canonical metadata from fixture authoring. Users explicitly declare source turns, intent operations, proposal ordering, known capability arguments, recovery and literal oracle worlds. Construction derives version bases, fingerprints and registered effect/resource metadata, then uses the strict lab parser. The recipe never infers authority from source prose.
+- Declared-policy qualification profiles bind a policy, up to 100 explicit cases and literal acceptance criteria. Reports distinguish missing expectations, outcome mismatches, required-case omissions and threshold failures. Saved reports independently reconstruct their results and support baseline comparisons; qualification applies only to declared synthetic checks and does not authenticate human approval or enable execution.
+
+These modules remain pure and share existing bounded JSON ingestion and browser host-effect gates. Final size is measured from tracked maintained code after all workflows and tests are present.

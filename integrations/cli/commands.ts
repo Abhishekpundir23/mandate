@@ -1,3 +1,7 @@
+import { maintainedCampaign } from '../../src/campaigns/catalog';
+import { parseCampaign, serializeCampaign, campaignLimits } from '../../src/campaigns/schema';
+import { runCampaign } from '../../src/campaigns/run';
+import { redactCampaignReport } from '../../src/campaigns/report';
 import { createTraceBundle, serializeTraceBundle, verifyTraceBundle, traceBundleLimits } from '../../src/inspection/bundle';
 import { queryTraceEvents, summarizeTrace, redactTrace } from '../../src/inspection/query';
 import { buildCausalGraph, receiptDiagnostics } from '../../src/inspection/causal';
@@ -39,6 +43,13 @@ async function loadSession(file: string): Promise<Session> {
 
 export async function executeCommand(input: CliCommand): Promise<CommandResult> {
   const options = input.options;
+  if (input.group === 'campaign') {
+    if (input.command === 'example') return { code: 0, value: maintainedCampaign, json: serializeCampaign(maintainedCampaign) };
+    const campaign = parseCampaign(await readBoundedFile(options.campaign!, campaignLimits.bytes));
+    if (input.command === 'validate') return { code: 0, value: { valid: true, caseCount: campaign.cases.length, externalActionsPerformed: false } };
+    const report = runCampaign(campaign);
+    return { code: report.cases.every((row) => row.passed) ? 0 : 5, value: options.redacted === 'true' ? redactCampaignReport(report) : report };
+  }
   if (input.group === 'trace') {
     if (input.command === 'create') {
       const bundle = createTraceBundle(parseLabScenario(await readBoundedFile(options.scenario!, labLimits.bytes)));

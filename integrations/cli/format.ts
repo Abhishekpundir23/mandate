@@ -35,6 +35,9 @@ Usage:
   mandate session verify --session FILE
   mandate session inspect --session FILE [--redacted]
   mandate session diff --before FILE --after FILE
+  mandate campaign example
+  mandate campaign validate --campaign FILE
+  mandate campaign run --campaign FILE [--redacted]
   mandate trace create --scenario FILE
   mandate trace verify --bundle FILE
   mandate trace inspect --bundle FILE [--lane mandate|standard] [--redacted]

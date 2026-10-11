@@ -133,7 +133,31 @@
 - [ ] Implement maintained mutation catalog, campaign runner, comparison/summary and browser/CLI flows.
 - [ ] Run campaign, lab, inspection, benchmark, browser and CLI suites with typecheck/lint; verify identity and commit.
 
-### Task 12: Qualification, documentation and measured delivery
+### Task 12: Portable workspace bundles and inventories
+
+**Files:** Create `src/workspaces` schema, manifest, verification, mutation, inventory and redaction APIs with tests; browser workspace inspector and CLI workspace commands.
+**Interfaces:** Consumes validated policies, sessions, case suites, trace bundles and campaigns. Produces self-contained bounded workspaces with unique typed entries, SHA-256 manifests, independent nested verification, explicit policy staging and reproducible export. Consistency is not authentication.
+- [ ] Write cross-reference, manifest tampering, duplicate IDs, nested replay forgery, byte/depth/node limits, immutable add/remove/rename, inventory query and redaction tests; observe failures.
+- [ ] Implement workspace creation, verification and manipulation, then browser and CLI import/export/inventory flows. Stage policies only through an explicit user action.
+- [ ] Run workspace, policy, session, inspection, campaign, browser and CLI suites with typecheck/lint; verify identity and commit.
+
+### Task 13: Guided deterministic scenario authoring
+
+**Files:** Create `src/authoring` recipe schema, capability inventory, scenario construction, validation and preview APIs with tests; browser recipe authoring and CLI recipe commands.
+**Interfaces:** Consumes the existing sandbox capability registry and strict lab scenario boundary. Produces scenarios from explicit source turns, intent operations, known capability arguments and literal oracle expectations; fingerprints, effect/resource metadata and version bases are derived. No permission is inferred from prose.
+- [ ] Write provenance, capability metadata, fingerprint, ordering, recovery, ambiguous input, bounds and all supported capability-family tests; observe failures.
+- [ ] Implement bounded recipe import/export and pure scenario construction, preview and browser/CLI authoring flows.
+- [ ] Run authoring, sandbox, lab, benchmark, browser and CLI suites with typecheck/lint; verify identity and commit.
+
+### Task 14: Declared-policy qualification profiles
+
+**Files:** Create `src/qualification` profile schema, criteria evaluation, independent report verification, baseline comparison and redaction APIs with tests; browser qualification view and CLI commands.
+**Interfaces:** Consumes explicit policies, action case suites and literal acceptance criteria. Produces reproducible bounded qualification reports, missing-expectation diagnostics, per-case failures and profile-bound baseline comparisons. Qualification covers only declared synthetic checks and never authenticates approval or executes actions.
+- [ ] Write empty/partial expectations, all outcome thresholds, required-case coverage, scope errors, forged/resealed reports, baseline drift and redaction tests; observe failures.
+- [ ] Implement pure profile evaluation and report reconstruction, browser profile editing and CLI verification/qualification flows.
+- [ ] Run qualification, impact, policy, browser and CLI suites with typecheck/lint; verify identity and commit.
+
+### Task 15: Qualification, documentation and measured delivery
 
 **Files:** Update README, architecture/CLI/workbench guides, changelog and scripts/config as needed for valid unchanged effect budgets; add exact tracked-source counter and regression tests for unresolved issues.
 **Interfaces:** Consumes all preceding tasks. Produces maintained release documentation, measured size and fresh validation evidence outside the repository.

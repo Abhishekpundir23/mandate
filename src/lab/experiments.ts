@@ -22,8 +22,15 @@ export function getPolicyExperiment(id: string): PolicyExperiment {
   return experiment;
 }
 
-export function runPolicyExperiment(input: PolicyExperiment) {
+export function validatePolicyExperiment(input: unknown) {
   const experiment = experimentSchema.parse(normalizeBoundedJson(input, policyJsonLimits));
+  const snapshot = parsePolicyJson(JSON.stringify(experiment.policy));
+  if (experiment.steps.some((step) => !snapshot.versions.some((version) => version.version === step.version))) throw new Error('Unknown experiment version');
+  return freezeData(experiment);
+}
+
+export function runPolicyExperiment(input: PolicyExperiment) {
+  const experiment = validatePolicyExperiment(input);
   const full = parsePolicyJson(JSON.stringify(experiment.policy));
   const steps = experiment.steps.map((step, index) => {
     if (!full.versions.some((version) => version.version === step.version)) throw new Error('Unknown experiment version');
