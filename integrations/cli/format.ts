@@ -35,6 +35,9 @@ Usage:
   mandate session verify --session FILE
   mandate session inspect --session FILE [--redacted]
   mandate session diff --before FILE --after FILE
+  mandate impact validate --cases FILE
+  mandate impact run --before FILE --after FILE --cases FILE [--redacted]
+  mandate impact history --policy FILE --before N --after N --cases FILE [--redacted]
   mandate lab list
   mandate lab validate --scenario FILE
   mandate lab run (--scenario FILE | --experiment ID)

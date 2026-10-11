@@ -29,11 +29,11 @@ export function RevisionWorkbench({ snapshot, dirty, onApply }: {
     <div><h3>Guided policy revisions</h3><p>Declare ADD, REVOKE, REPLACE or NO_CHANGE operations explicitly. Source text alone never creates authority.</p></div>
     <div className="wb-field-grid">
       <label>Source turn<input value={turn} maxLength={256} onChange={(event) => { setTurn(event.target.value); setPreview(null); }} /></label>
-      <label>Exact source quote<textarea value={quote} maxLength={8192} onChange={(event) => { setQuote(event.target.value); setPreview(null); }} /></label>
+      <label>Exact source quote<textarea aria-label="Exact source quote" value={quote} maxLength={8192} onChange={(event) => { setQuote(event.target.value); setPreview(null); }} /></label>
     </div>
     <button type="button" className="wb-secondary" onClick={draft}>Create discussion draft</button>
-    <RevisionAuthor snapshot={snapshot} turnId={turn} quote={quote} onDraft={edit} />
-    <label>Revision JSON<textarea className="wb-json-editor" spellCheck={false} value={text} maxLength={65536}
+    <RevisionAuthor snapshot={snapshot} turnId={turn} quote={quote} onDraft={edit} onInvalidate={() => { setPreview(null); setError(''); }} />
+    <label>Revision JSON<textarea aria-label="Revision JSON" className="wb-json-editor" spellCheck={false} value={text} maxLength={65536}
       onChange={(event) => edit(event.target.value)} /></label>
     <div className="wb-secondary-row">
       <button type="button" className="wb-secondary" onClick={inspect}>Preview revision</button>

@@ -51,3 +51,13 @@ describe('guided revision workbench', () => {
     expect(screen.getByText('NO_AUTHORITY_CHANGE')).toBeInTheDocument();
   });
 });
+
+test('changing structured author fields invalidates the earlier preview before rebuilding', () => {
+  render(<RevisionWorkbench snapshot={snapshot} dirty={false} onApply={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText('Revision JSON'), { target: { value: valid } });
+  fireEvent.click(screen.getByRole('button', { name: 'Preview revision' }));
+  expect(screen.getByRole('button', { name: 'Apply revision' })).toBeEnabled();
+  fireEvent.change(screen.getByLabelText('New clause ID'), { target: { value: 'different-clause' } });
+  expect(screen.getByRole('button', { name: 'Apply revision' })).toBeDisabled();
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+});

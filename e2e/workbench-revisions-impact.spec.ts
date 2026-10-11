@@ -1,0 +1,43 @@
+import { expect, test } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import { getPolicyTemplate } from '../src/policy/templates';
+import { parsePolicyJson } from '../src/policy/parse';
+import { retireClause } from '../src/policy/revisions';
+test.beforeEach(async ({ page }) => {
+  await page.goto('/'); await page.getByRole('button', { name: 'Workbench', exact: true }).click();
+});
+test('previews then applies a revision and invalidates old action results', async ({ page }) => {
+  await page.getByRole('button', { name: 'Check action', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Action decision' }).getByText('ALLOW', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Revisions', exact: true }).click();
+  const snapshot = parsePolicyJson(JSON.stringify(getPolicyTemplate('draft-only').policy));
+  const revision = retireClause(snapshot, 'read', 'turn-2', 'Stop reading files', 'stop-read');
+  await page.getByLabel('Revision JSON', { exact: true }).fill(JSON.stringify(revision));
+  await page.getByRole('button', { name: 'Preview revision' }).click();
+  await expect(page.getByRole('status')).toContainText('Version 2 → 3');
+  await page.getByRole('button', { name: 'Apply revision' }).click();
+  await page.getByRole('tab', { name: 'Policy', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Action decision' }).getByText('ALLOW', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Check action', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Action decision' }).getByText('BLOCK', { exact: true })).toBeVisible();
+});
+test('builds structured revisions and compares explicit candidate outcomes offline', async ({ page, context }) => {
+  await context.setOffline(true);
+  await page.getByRole('tab', { name: 'Revisions', exact: true }).click();
+  await page.getByLabel('New clause ID', { exact: true }).fill('read-specific');
+  await page.getByRole('button', { name: 'Build revision JSON' }).click();
+  await page.getByRole('button', { name: 'Preview revision' }).click();
+  await expect(page.getByRole('status')).toContainText('Version 2 → 3');
+  await page.getByRole('tab', { name: 'Impact', exact: true }).click();
+  await page.getByLabel('Candidate policy JSON', { exact: true }).fill(JSON.stringify(getPolicyTemplate('review-required').policy));
+  await page.getByRole('button', { name: 'Compare declared cases' }).click();
+  await expect(page.getByRole('status')).toContainText('1 outcome changed');
+  await page.getByRole('combobox', { name: 'Impact filter', exact: true }).selectOption('changed');
+  await expect(page.getByRole('table', { name: 'Declared action impact' }).getByRole('row')).toHaveCount(2);
+  await page.getByLabel('Redact impact output', { exact: true }).check();
+  await expect(page.getByLabel('Impact report JSON')).not.toHaveValue(/README/);
+  const audit = await new AxeBuilder({ page }).include('#workbench-workspace').analyze();
+  expect(audit.violations).toEqual([]);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  expect(overflow).toBe(false);
+});

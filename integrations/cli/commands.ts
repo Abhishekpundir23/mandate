@@ -1,3 +1,6 @@
+import { parseCaseSuite, caseSuiteLimits } from '../../src/impact/cases';
+import { comparePolicyImpact, compareHistoricalImpact } from '../../src/impact/compare';
+import { redactImpact } from '../../src/impact/report';
 import { parseRevision, previewRevision, applyRevision, revisionLimits } from '../../src/policy/revisions';
 import { parsePolicyJson } from '../../src/policy/parse';
 import { getAuthority, checkAction } from '../../src/policy/service';
@@ -33,6 +36,15 @@ async function loadSession(file: string): Promise<Session> {
 
 export async function executeCommand(input: CliCommand): Promise<CommandResult> {
   const options = input.options;
+  if (input.group === 'impact') {
+    const suite = parseCaseSuite(await readBoundedFile(options.cases!, caseSuiteLimits.bytes));
+    if (input.command === 'validate') return { code: 0, value: { valid: true, caseCount: suite.cases.length, executionPerformed: false } };
+    const before = parsePolicyJson(await readBoundedFile(options.policy ?? options.before!, 256 * 1024));
+    const report = input.command === 'history'
+      ? compareHistoricalImpact(before, positiveVersion(options.before), positiveVersion(options.after), suite)
+      : comparePolicyImpact(before, parsePolicyJson(await readBoundedFile(options.after!, 256 * 1024)), suite);
+    return { code: report.cases.some((row) => row.passed === false) ? 5 : 0, value: options.redacted === 'true' ? redactImpact(report) : report };
+  }
   if (input.group === 'lab') {
     if (input.command === 'list') return { code: 0, value: {
       scenarios: scenarioCatalog.map(({ id, title, domain }) => ({ id, title, domain })),

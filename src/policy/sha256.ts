@@ -17,7 +17,7 @@ function rotate(value: number, bits: number): number {
 
 /** SHA-256 of strict UTF-8. A digest proves consistency, never human approval. */
 export function sha256(text: string): string {
-  const bytes = utf8Bytes(text);
+  const bytes = [...utf8Bytes(text)];
   const bitLength = bytes.length * 8;
   bytes.push(0x80);
   while (bytes.length % 64 !== 56) bytes.push(0);
