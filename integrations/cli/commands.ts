@@ -1,3 +1,4 @@
+import { executeRecipeCommand } from './recipe-commands';
 import { executeWorkspaceCommand } from './workspace-commands';
 import { maintainedCampaign } from '../../src/campaigns/catalog';
 import { parseCampaign, serializeCampaign, campaignLimits } from '../../src/campaigns/schema';
@@ -44,6 +45,7 @@ async function loadSession(file: string): Promise<Session> {
 
 export async function executeCommand(input: CliCommand): Promise<CommandResult> {
   const options = input.options;
+  if (input.group === 'recipe') return executeRecipeCommand(input);
   if (input.group === 'workspace') return executeWorkspaceCommand(input);
   if (input.group === 'campaign') {
     if (input.command === 'example') return { code: 0, value: maintainedCampaign, json: serializeCampaign(maintainedCampaign) };

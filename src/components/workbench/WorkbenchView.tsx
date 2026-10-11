@@ -1,3 +1,4 @@
+import { RecipeWorkbench } from './RecipeWorkbench';
 import { useState } from 'react';
 import { applyPolicy, checkWorkbenchAction, createWorkbenchState, editActionField, editPolicy,
   loadTemplateDraft, resetPolicyDraft, resetWorkbenchSession } from '../../app/workbench-model';
@@ -57,6 +58,7 @@ export function WorkbenchView({ onNavigate }: { readonly onNavigate: (view: AppV
         { id: 'campaigns', label: 'Campaigns', content: <CampaignWorkbench /> },
         { id: 'workspaces', label: 'Workspaces', content: <WorkspaceWorkbench snapshot={state.snapshot} session={state.session}
           onStagePolicy={(text) => setState((current) => editPolicy(current, text))} /> },
+        { id: 'recipes', label: 'Recipes', content: <RecipeWorkbench /> },
         { id: 'analysis', label: 'Analysis', content: <PolicyAnalysis snapshot={state.snapshot} /> },
       ]} />
     </main>

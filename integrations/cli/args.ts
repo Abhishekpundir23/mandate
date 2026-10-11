@@ -1,6 +1,6 @@
 export interface CliCommand {
   readonly kind: 'command';
-  readonly group: 'policy' | 'session' | 'lab' | 'impact' | 'trace' | 'campaign' | 'workspace';
+  readonly group: 'policy' | 'session' | 'lab' | 'impact' | 'trace' | 'campaign' | 'workspace' | 'recipe';
   readonly command: string;
   readonly format: 'json' | 'text';
   readonly options: Readonly<Record<string, string>>;
@@ -25,6 +25,11 @@ const definitions: Readonly<Record<string, Definition>> = Object.freeze({
   'session.verify': { required: ['session'], optional: [] },
   'session.inspect': { required: ['session'], optional: [], switches: ['redacted'] },
   'session.diff': { required: ['before', 'after'], optional: [] },
+  'recipe.example': { required: ['scenario-id'], optional: [] },
+  'recipe.capabilities': { required: [], optional: [] },
+  'recipe.validate': { required: ['recipe'], optional: [] },
+  'recipe.compile': { required: ['recipe'], optional: [] },
+  'recipe.run': { required: ['recipe'], optional: [] },
   'workspace.create': { required: ['policy', 'workspace-id'], optional: ['session', 'cases', 'trace', 'campaign', 'label'] },
   'workspace.verify': { required: ['workspace'], optional: [] },
   'workspace.inspect': { required: ['workspace'], optional: ['kind', 'search', 'page', 'page-size'], switches: ['redacted'] },
@@ -51,7 +56,7 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
   if (argv.length > 50 || argv.some((value) => value.length > 16 * 1024)) throw new Error('INVALID_ARGUMENTS');
   const group = argv[0];
   const command = argv[1];
-  if ((group !== 'policy' && group !== 'session' && group !== 'lab' && group !== 'impact' && group !== 'trace' && group !== 'campaign' && group !== 'workspace') || command === undefined) throw new Error('INVALID_ARGUMENTS');
+  if ((group !== 'policy' && group !== 'session' && group !== 'lab' && group !== 'impact' && group !== 'trace' && group !== 'campaign' && group !== 'workspace' && group !== 'recipe') || command === undefined) throw new Error('INVALID_ARGUMENTS');
   const key = group + '.' + command;
   if (!Object.hasOwn(definitions, key)) throw new Error('INVALID_ARGUMENTS');
   const definition = definitions[key]!;
