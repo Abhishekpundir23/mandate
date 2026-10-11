@@ -386,6 +386,100 @@
   font-size: 12px;
 }
 
+.wb-stack {
+  display: grid;
+  min-width: 0;
+  gap: 24px;
+}
+
+.wb-workspace .wb-short-editor,
+.wb-json-output .wb-json-editor {
+  min-height: 200px;
+  margin-top: 8px;
+}
+
+.wb-json-output {
+  margin: 20px 0;
+}
+
+.wb-table-scroll {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.wb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.wb-table th,
+.wb-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+.wb-table th {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.wb-table thead th {
+  background: #f6f6f4;
+}
+
+.wb-table tr:last-child td,
+.wb-table tr:last-child th {
+  border-bottom: 0;
+}
+
+.wb-table tr[aria-selected='true'] {
+  background: #f2f5ff;
+}
+
+.wb-table code {
+  overflow-wrap: anywhere;
+}
+
+.wb-outcome {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.wb-outcome-allow {
+  background: var(--green-pale);
+  color: var(--green-text);
+}
+
+.wb-outcome-block {
+  background: var(--red-pale);
+  color: var(--red-text);
+}
+
+.wb-outcome-confirm {
+  background: #f2f5ff;
+  color: var(--cobalt);
+}
+
+.wb-record-inspector {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+
+.wb-workspace button[aria-pressed='true'] {
+  border-color: var(--cobalt);
+  color: var(--cobalt);
+}
+
 @media (max-width: 1199px) {
   .app-header nav,
   .app-header nav > div {

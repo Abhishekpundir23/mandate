@@ -91,3 +91,8 @@ export function checkWorkbenchAction(state: WorkbenchState): WorkbenchState {
       : 'Enter valid action fields for a configured repository and remote.' });
   }
 }
+
+export function resetWorkbenchSession(state: WorkbenchState): WorkbenchState {
+  return freezeData({ ...state, result: null, actionError: null,
+    session: createSession(state.appliedText, 'workbench-session', 'Workbench checks') });
+}

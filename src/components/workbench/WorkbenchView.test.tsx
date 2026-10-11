@@ -141,3 +141,29 @@ describe('policy replacement boundaries', () => {
     expect(screen.getByRole('button', { name: 'Check action' })).toBeDisabled();
   });
 });
+
+describe('independent workbench tools', () => {
+  test('session inspection shares the active recorder and reset clears its displayed result', async () => {
+    const user = await open();
+    await user.click(screen.getByRole('button', { name: 'Check action' }));
+    await user.click(screen.getByRole('tab', { name: 'Sessions' }));
+    expect(screen.getByRole('heading', { name: 'Current session' })).toBeVisible();
+    expect(screen.getByRole('table', { name: 'Recorded action checks' })).toHaveTextContent('ALLOW');
+    await user.click(screen.getByRole('button', { name: 'Start new session' }));
+    expect(screen.getByText('0 recorded checks')).toBeVisible();
+    await user.click(screen.getByRole('tab', { name: 'Policy' }));
+    expect(screen.queryByRole('status', { name: 'Action decision' })).not.toBeInTheDocument();
+  });
+  test('invalid scenario drafts do not change the applied policy or current advisory records', async () => {
+    const user = await open();
+    await user.click(screen.getByRole('button', { name: 'Check action' }));
+    await user.click(screen.getByRole('tab', { name: 'Lab' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Scenario JSON' }), { target: { value: '{' } });
+    await user.click(screen.getByRole('button', { name: 'Run sandbox scenario' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Scenario validation failed');
+    await user.click(screen.getByRole('tab', { name: 'Policy' }));
+    expect(screen.getByText('Applied policy: draft-only')).toBeVisible();
+    expect(screen.getByText('1 recorded check')).toBeVisible();
+    expect(screen.getByRole('status', { name: 'Action decision' })).toHaveTextContent('ALLOW');
+  });
+});

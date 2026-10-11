@@ -113,3 +113,16 @@ describe('workbench state transitions', () => {
     expect(Object.isFrozen(checked.action)).toBe(true);
   });
 });
+
+test('explicit session reset retains applied authority and the current policy draft', async () => {
+  const { resetWorkbenchSession } = await import('./workbench-model');
+  const checked = checkWorkbenchAction(createWorkbenchState());
+  const draft = editPolicy(checked, '{');
+  const reset = resetWorkbenchSession(draft);
+  expect(reset.snapshot).toBe(checked.snapshot);
+  expect(reset.draftText).toBe('{');
+  expect(reset.session.recordCount).toBe(0);
+  expect(reset.session.policyDigest).toBe(checked.snapshot.policyDigest);
+  expect(reset.result).toBeNull();
+  expect(checked.session.recordCount).toBe(1);
+});

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { applyPolicy, checkWorkbenchAction, createWorkbenchState, editActionField, editPolicy,
-  loadTemplateDraft, resetPolicyDraft } from '../../app/workbench-model';
+  loadTemplateDraft, resetPolicyDraft, resetWorkbenchSession } from '../../app/workbench-model';
 import { AppHeader, type AppView } from '../AppHeader';
 import { AccessibleTabs } from '../primitives/AccessibleTabs';
 import { ActionComposer } from './ActionComposer';
@@ -9,6 +9,8 @@ import { DecisionExplanation } from './DecisionExplanation';
 import { PolicyAnalysis } from './PolicyAnalysis';
 import { PolicyEditor } from './PolicyEditor';
 import { VersionCompare } from './VersionCompare';
+import { SessionWorkbench } from './SessionWorkbench';
+import { LabWorkbench } from './LabWorkbench';
 
 export function WorkbenchView({ onNavigate }: { readonly onNavigate: (view: AppView) => void }) {
   const [state, setState] = useState(() => createWorkbenchState());
@@ -41,6 +43,8 @@ export function WorkbenchView({ onNavigate }: { readonly onNavigate: (view: AppV
         </div> },
         { id: 'history', label: 'History', content: <AuthorityTimeline key={state.snapshot.policyDigest} snapshot={state.snapshot} /> },
         { id: 'compare', label: 'Compare', content: <VersionCompare key={state.snapshot.policyDigest} snapshot={state.snapshot} /> },
+        { id: 'sessions', label: 'Sessions', content: <SessionWorkbench session={state.session} onReset={() => setState(resetWorkbenchSession)} /> },
+        { id: 'lab', label: 'Lab', content: <LabWorkbench /> },
         { id: 'analysis', label: 'Analysis', content: <PolicyAnalysis snapshot={state.snapshot} /> },
       ]} />
     </main>
